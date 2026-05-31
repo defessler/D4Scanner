@@ -41,9 +41,12 @@ D4Scanner/
   d4_compare.py               one step: Maxroll URL + your capture -> report + tracker
   schema/   build.schema.json    unified live-build (capture output)
             target.schema.json   target build (what you aim at)
-  dll/      saapi64.cpp          fake screen-reader DLL (logs D4's voiced text)
-            build-and-install.ps1  compile (VS2022) + self-sign + install into the game
-            uninstall.ps1        remove DLL + cert
+  csharp/   D4Scanner.App        LIVE WPF app — watches the log, shows per-slot have-vs-need (use this)
+            D4Scanner.Core/Cli   parser + diff engine + log watcher (+ CLI)
+  dll/      saapi64.cpp          SAAPI screen-reader shim (logs D4's voiced text)
+            build-and-install.ps1  build + self-sign + install to a PATH dir (OFF the game folder)
+            uninstall.ps1        remove the shim (all locations) + cert
+  nvda-addon/ + setup-nvda.ps1   alternative capture route via genuine NVDA (no forged DLL)
   parser/   d4_gear_capture.py   TTS log → gear JSON          (verified)
             d4_vision_capture.py screenshots → skills/paragon/aspects (Claude API or --stub)
             d4_maxroll_import.py  Maxroll build URL → target.json  (verified on live Maxroll)
@@ -77,18 +80,36 @@ key passives and some legendary aspects aren't in Maxroll's data and fall back t
 
 **Prereqs:** Visual Studio 2022 + "Desktop development with C++" (detected at install), Python 3, Node (optional, for the terminal report). D4 at `D:\Games\Blizzard\Diablo IV`.
 
-### 1. Gear (TTS)
+### 1. Gear (TTS) — two capture routes, **pick one**  ·  *current default: SAAPI shim*
+
+Both routes write the same `%LOCALAPPDATA%\d4scanner\d4_tts.log`. They're mutually exclusive at
+runtime: Tolk routes to NVDA when it's running, otherwise to the System Access (SAAPI) shim — so
+switching is mostly about whether NVDA is running.
+
+**Route A — SAAPI shim (default / current).** Simplest; no extra software. Installs a signed
+`saapi64.dll` to a user PATH dir — **nothing in the Diablo IV folder, no admin**:
 ```powershell
 cd D:\Projects\D4Scanner\dll
-.\build-and-install.ps1            # add -Machine if D4 refuses to load the DLL
+.\build-and-install.ps1     # -System32 if D4 restricts its DLL search path; -GameFolder for the old behavior
 ```
-Then in D4: Accessibility → **Use Screen Reader** + **Use 3rd Party Screen Reader** ON; Gameplay →
-**Advanced Tooltip Information** ON; Game Language **English**. Run the parser and hover each
-equipped item:
+To use this route: just **don't run NVDA**.
+
+**Route B — NVDA (alternative; no forged DLL, no cert).** Genuine NVDA + a logging add-on:
 ```powershell
-cd D:\Projects\D4Scanner\parser
-python d4_gear_capture.py --follow --out gear.json
+cd D:\Projects\D4Scanner
+.\setup-nvda.ps1            # then install d4scanner.nvda-addon into NVDA, and start NVDA BEFORE D4
 ```
+Switch back to the shim anytime by **closing NVDA**. (`dll\uninstall.ps1` removes the shim entirely
+if you want to commit to the NVDA route.)
+
+Then in D4: Accessibility → **Use Screen Reader** + **Use 3rd Party Screen Reader** ON; Gameplay →
+**Advanced Tooltip Information** ON; Game Language **English**.
+
+**The live front-end is the C# app** — it tails the log and shows the diff continuously:
+```powershell
+dotnet run --project D:\Projects\D4Scanner\csharp\D4Scanner.App
+```
+(Or the old script flow: `python parser\d4_gear_capture.py --once --equipped-only --out gear.json`.)
 
 ### 2. Vision (paragon / glyphs / skills / passives / aspects)
 Screenshot each paragon board, each socketed glyph (for its level), and the skill screen. Then:
@@ -128,12 +149,19 @@ cd D:\Projects\D4Scanner\dll ; .\uninstall.ps1
 
 ## Risk
 
-Enabling the accessibility settings is officially supported (zero risk). The shim reads no game
+Enabling the accessibility settings is officially supported (zero risk). Capture reads no game
 memory and injects nothing — it only receives text D4 hands to the OS accessibility layer, via a
-log file. Screenshots/vision touch nothing in the game. The one ToS-gray step is placing a
-self-signed `saapi64.dll` in the game folder; no documented bans exist for this tool class (d4lf
-has used the same mechanism publicly for years), and `uninstall.ps1` reverses it. A lower-risk
-alternative (run real NVDA + Speech Logger, no authored DLL) is in the research doc.
+log file. Screenshots/vision touch nothing in the game.
+
+- **SAAPI shim (default):** the one ToS-gray step is a self-signed `saapi64.dll`, now installed to a
+  **user PATH dir — not the Diablo IV folder**. No documented bans for this tool class (d4lf has used
+  the same mechanism publicly for years). `dll\uninstall.ps1` reverses it (DLL, PATH entry, cert).
+- **NVDA route:** no forged DLL and no self-signed cert at all — just genuine NVDA + a logging add-on.
+  Lowest footprint; nothing in the game folder.
+
+Either way the module/text path is the *sanctioned* 3rd-party-screen-reader behaviour D4 invites; the
+folder doesn't change the (low) exposure. Re-validate per season — 3rd-party readers broke once on the
+S12 PTR.
 
 ## Tests & maintenance
 
@@ -146,13 +174,14 @@ When the gear parser misreads, update the regexes in `parser/d4_gear_capture.py`
 
 ## Status
 
-- ✅ Gear parser — verified; hardened against real D4 menu/map noise + HTML entities
-- ✅ TTS DLL — compiles + exports the 4 SAAPI fns; **confirmed loading in live D4** (routes real UI text to the log)
-- ✅ Maxroll importer — **verified on a live Maxroll guide** (gear affixes, uniques, skills, boards, glyphs → target.json)
+- ✅ **Live C# app** (`csharp/D4Scanner.App`) — WPF window tails the log + shows per-slot have-vs-need
+  with rolled values; **per-affix value thresholds** flag under-rolled affixes (header slider). The
+  primary front-end now (the HTML tracker still works for the offline/report flow).
+- ✅ Gear parser — verified on **real live D4 gear**; hardened against menu/map noise + entities; equipped-only
+- ✅ Capture — two routes, both **off the game folder**: SAAPI shim (default, confirmed loading in live D4)
+  and the NVDA add-on (alternative, no forged DLL)
+- ✅ Maxroll importer — **verified on a live guide** (affixes, uniques, skills, boards, glyphs → target.json)
+- ✅ Diff engine — value-aware + thresholds; 25/25 tests pass (C# port output-verified identical)
 - ✅ Vision channel — stub verified; real Claude API path implemented (needs key + screenshots)
-- ✅ Merge + compare wrapper — verified
-- ✅ Diff engine — 25/25 tests pass
-- ✅ Tracker UI — render + override verified (DOM-shim test): demo loads at 54%, override bumps %
-- ✅ End-to-end: Maxroll target → diff vs live → per-category % (verified)
-- ⏳ Real item-tooltip format — confirm/adjust gear regexes once you hover an equipped item in-game
 - ⏳ Real vision call — implemented; run with your API key + screenshots
+- ⏳ Validate the chosen capture route on the current season (3rd-party readers broke once on the S12 PTR)
