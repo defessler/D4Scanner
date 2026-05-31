@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "name": "Ball Lightning Sorcerer",
+  "class": "Sorcerer",
+  "source": "SAMPLE target — same build as the original tracker template",
+  "gear": [
+    { "slot": "helm",    "label": "Helm",    "affixes": ["Maximum Life", "Cooldown Reduction", "Intelligence", "Total Armor"] },
+    { "slot": "chest",   "label": "Chest",   "affixes": ["Maximum Life", "Damage Reduction", "Intelligence", "Damage Reduction from Close"] },
+    { "slot": "gloves",  "label": "Gloves",  "affixes": ["Critical Strike Chance", "Attack Speed", "Ranks to Ball Lightning", "Lucky Hit Chance"] },
+    { "slot": "pants",   "label": "Pants",   "affixes": ["Maximum Life", "Damage Reduction", "Intelligence", "Dodge Chance"] },
+    { "slot": "boots",   "label": "Boots",   "affixes": ["Movement Speed", "Intelligence", "Ranks to Teleport", "Damage Reduction"] },
+    { "slot": "amulet",  "label": "Amulet",  "affixes": ["Cooldown Reduction", "Movement Speed", "Resistance to All Elements", "Lucky Hit Chance"] },
+    { "slot": "ring1",   "label": "Ring #1", "affixes": ["Critical Strike Chance", "Lucky Hit Chance", "Maximum Life", "Vulnerable Damage"] },
+    { "slot": "ring2",   "label": "Ring #2", "affixes": ["Critical Strike Chance", "Vulnerable Damage", "Resistance to All", "Intelligence"] },
+    { "slot": "weapon",  "label": "Weapon",  "affixes": ["Intelligence", "Critical Strike Damage", "Vulnerable Damage", "Core Skill Damage"] },
+    { "slot": "offhand", "label": "Offhand", "affixes": ["Cooldown Reduction", "Lucky Hit Chance", "Critical Strike Damage", "Resource Cost Reduction"] }
+  ],
+  "uniques": [
+    { "name": "Tal Rasha's Iridescent Loop", "slot": "ring", "mythic": false },
+    { "name": "Raiment of the Infinite", "slot": "chest" },
+    { "name": "Esu's Heirloom", "slot": "boots" },
+    { "name": "Shroud of False Death", "slot": "chest", "mythic": true }
+  ],
+  "aspects": [
+    "Aspect of Concentration", "Recharging Aspect", "Conceited Aspect",
+    "Aspect of Disobedience", "Storm Swell Aspect", "Prodigy's Aspect"
+  ],
+  "skills": [
+    { "name": "Spark", "rank": 1 },
+    { "name": "Frost Bolt", "rank": 1 },
+    { "name": "Ball Lightning", "rank": 5 },
+    { "name": "Teleport", "rank": 1 },
+    { "name": "Ice Armor", "rank": 1 },
+    { "name": "Unstable Currents", "rank": 1 }
+  ],
+  "keyPassives": ["Vyr's Mastery"],
+  "paragon": {
+    "boards": ["Starter Board", "Enchantment Master", "Elementalist", "Burning Instinct", "Ceaseless Conduit"],
+    "glyphs": [
+      { "name": "Tactician", "level": 15 },
+      { "name": "Control", "level": 15 },
+      { "name": "Destruction", "level": 15 },
+      { "name": "Exploit", "level": 15 },
+      { "name": "Elementalist", "level": 15 }
+    ]
+  }
+}

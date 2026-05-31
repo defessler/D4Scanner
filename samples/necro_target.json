@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "name": "Bone Spear Endgame Necromancer",
+  "class": "Necromancer",
+  "source": "serocifkre",
+  "gear": [
+    {
+      "slot": "chest",
+      "label": "Chest",
+      "affixes": [
+        "Intelligence",
+        "Maximum Life",
+        "Essence Regeneration",
+        "Armor",
+        "Maximum Resolve Stacks"
+      ]
+    },
+    {
+      "slot": "weapon",
+      "label": "Weapon",
+      "affixes": [
+        "Weapon Damage",
+        "Intelligence",
+        "Critical Strike Damage Multiplier",
+        "Maximum Life",
+        "Critical Strike Chance"
+      ]
+    },
+    {
+      "slot": "gloves",
+      "label": "Gloves",
+      "affixes": [
+        "Intelligence",
+        "Critical Strike Damage Multiplier",
+        "Vulnerable Damage Multiplier",
+        "Attack Speed",
+        "Damage Per Overpower Stack"
+      ]
+    },
+    {
+      "slot": "boots",
+      "label": "Boots",
+      "affixes": [
+        "Intelligence",
+        "Maximum Life",
+        "Movement Speed",
+        "Essence Regeneration"
+      ]
+    },
+    {
+      "slot": "ring1",
+      "label": "Ring #1",
+      "affixes": [
+        "Critical Strike Chance",
+        "Maximum Life",
+        "Critical Strike Damage Multiplier",
+        "Vulnerable Damage Multiplier",
+        "Damage Per Overpower Stack"
+      ]
+    },
+    {
+      "slot": "ring2",
+      "label": "Ring #2",
+      "affixes": [
+        "Attack Speed",
+        "Maximum Life",
+        "Critical Strike Damage Multiplier",
+        "Vulnerable Damage Multiplier",
+        "Damage Per Overpower Stack"
+      ]
+    }
+  ],
+  "uniques": [
+    {
+      "name": "Heir of Perdition",
+      "slot": "helm",
+      "mythic": false
+    },
+    {
+      "name": "Blood Moon Breeches",
+      "slot": "pants",
+      "mythic": false
+    },
+    {
+      "name": "Banished Lord's Talisman",
+      "slot": "amulet",
+      "mythic": false
+    },
+    {
+      "name": "Red Blessing",
+      "slot": "amulet",
+      "mythic": false
+    }
+  ],
+  "aspects": [],
+  "skills": [
+    {
+      "name": "Skeleton Warrior",
+      "rank": null
+    },
+    {
+      "name": "Bone Spear",
+      "rank": null
+    },
+    {
+      "name": "Golem",
+      "rank": null
+    },
+    {
+      "name": "Skeleton Mage",
+      "rank": null
+    },
+    {
+      "name": "Sever",
+      "rank": null
+    },
+    {
+      "name": "Bone Storm",
+      "rank": null
+    }
+  ],
+  "keyPassives": [],
+  "paragon": {
+    "boards": [
+      "Start",
+      "Blood Begets Blood",
+      "Scent of Death",
+      "Flesh-eater",
+      "Frailty"
+    ],
+    "glyphs": [
+      {
+        "name": "Corporeal",
+        "level": null
+      },
+      {
+        "name": "Essence",
+        "level": null
+      },
+      {
+        "name": "Amplify",
+        "level": null
+      },
+      {
+        "name": "Gravekeeper",
+        "level": null
+      },
+      {
+        "name": "Dominate",
+        "level": null
+      }
+    ]
+  }
+}

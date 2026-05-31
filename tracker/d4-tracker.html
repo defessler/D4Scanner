@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D4Scanner — Build Tracker</title>
+<style>
+  :root{
+    --bg:#f5f1e8; --panel:#fff; --panel-2:#faf7f0; --ink:#241e18; --ink-soft:#6b6256;
+    --line:#e4dccb; --crimson:#9e1b1b; --crimson-soft:#c0392b; --gold:#b7902f; --gold-soft:#d9b85a;
+    --green:#3e8e41; --green-bar:#5cb85c; --miss:#cdc4b0;
+    --shadow:0 1px 3px rgba(0,0,0,.08),0 6px 18px rgba(0,0,0,.05); --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.45;font-size:15px}
+  .wrap{max-width:960px;margin:0 auto;padding:18px 16px 60px}
+  .head{background:linear-gradient(135deg,#2a1212 0%,#4a1818 55%,#6e2320 100%);color:#f7efe6;
+    border-radius:var(--radius);padding:20px 22px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .head::after{content:"";position:absolute;inset:0;
+    background:radial-gradient(900px 200px at 90% -40%,rgba(217,184,90,.22),transparent 60%);pointer-events:none}
+  .head h1{margin:0;font-size:20px;letter-spacing:.3px}
+  .head .sub{margin-top:4px;color:#e7c9a0;font-size:13px}
+  .badges{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
+  .badge{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);color:#f3e3cf;
+    padding:3px 10px;border-radius:999px;font-size:12px}
+  .overall{margin-top:14px;background:rgba(0,0,0,.20);border:1px solid rgba(255,255,255,.12);
+    border-radius:10px;padding:12px 14px}
+  .overall .row{display:flex;justify-content:space-between;align-items:baseline}
+  .overall .pct{font-size:26px;font-weight:700;color:#fff}
+  .overall .count{font-size:12px;color:#e7c9a0}
+  .bar{height:10px;background:rgba(255,255,255,.16);border-radius:999px;overflow:hidden;margin-top:8px}
+  .bar>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold-soft));
+    transition:width .35s ease;border-radius:999px}
+
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 4px}
+  .drop{flex:1;min-width:200px;border:1.5px dashed var(--line);border-radius:10px;padding:10px 12px;
+    background:var(--panel);font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s}
+  .drop.over{border-color:var(--gold);background:#fff9ec;color:var(--ink)}
+  .drop b{color:var(--ink)}
+  .drop.loaded{border-style:solid;border-color:var(--green);background:#f3faf3}
+  button.tool{background:var(--panel);border:1px solid var(--line);color:var(--ink-soft);
+    padding:8px 12px;border-radius:8px;font-size:12.5px;cursor:pointer}
+  button.tool:hover{border-color:var(--gold);color:var(--ink)}
+  .hint{font-size:12px;color:var(--ink-soft);margin:6px 2px 0}
+  .legend{font-size:12px;color:var(--ink-soft);margin:8px 2px 0;display:flex;gap:14px;flex-wrap:wrap}
+  .legend .k{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .dot.t{background:var(--green-bar)} .dot.v{background:#4a90d9} .dot.m{background:var(--gold)} .dot.x{background:#d9c9c9}
+
+  .cat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);margin-top:14px;overflow:hidden}
+  .cat>header{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;
+    background:var(--panel-2);border-bottom:1px solid var(--line);user-select:none}
+  .cat>header h2{margin:0;font-size:15px;flex:1}
+  .cat>header .cpct{font-size:12.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
+  .cat>header .chev{color:var(--ink-soft);transition:transform .2s ease;font-size:12px}
+  .cat.collapsed .chev{transform:rotate(-90deg)}
+  .cat .cbar{height:4px;background:var(--line)}
+  .cat .cbar>span{display:block;height:100%;width:0;
+    background:linear-gradient(90deg,var(--crimson),var(--crimson-soft));transition:width .35s ease}
+  .cat .body{padding:6px 16px 14px}
+  .cat.collapsed .body,.cat.collapsed .cbar{display:none}
+  .group{margin-top:12px}
+  .group h3{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--crimson);font-weight:700;display:flex;justify-content:space-between}
+  .group h3 .gc{color:var(--ink-soft);font-weight:600}
+  ul.items{list-style:none;margin:0;padding:0}
+  ul.items li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;border:1px solid transparent}
+  ul.items li:hover{background:var(--panel-2)}
+  .mark{width:20px;height:20px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:800;color:#fff}
+  .mark.done{background:var(--green-bar)} .mark.miss{background:#e4d8d8;color:#a48}
+  .lbl{flex:1}
+  li.miss .lbl{color:var(--ink-soft)}
+  li.done .lbl{text-decoration:line-through;text-decoration-color:var(--green);color:var(--ink-soft)}
+  .src{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--ink-soft)}
+  .ovr{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-soft);cursor:pointer}
+  .ovr input{width:15px;height:15px}
+  .empty{margin-top:22px;text-align:center;color:var(--ink-soft);font-size:14px;
+    border:1.5px dashed var(--line);border-radius:12px;padding:34px 16px;background:var(--panel)}
+  .foot{margin-top:22px;text-align:center;color:var(--ink-soft);font-size:12px}
+  a{color:var(--crimson)}
+  textarea{width:100%;min-height:120px;font-family:ui-monospace,Consolas,monospace;font-size:12px;
+    border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:8px;display:none}
+
+  /* value-aware gear (HAVE vs NEED) */
+  .group.gear .yitem{font-size:12.5px;font-weight:700;color:var(--ink);margin:-2px 0 6px}
+  .group.gear .yitem .rare{font-weight:600;color:var(--ink-soft)}
+  .group.gear .yitem.none{color:#a4493e;font-weight:600;font-style:italic}
+  ul.items li .val{font-variant-numeric:tabular-nums;font-size:12.5px;color:#b9a;min-width:70px;text-align:right;white-space:nowrap}
+  ul.items li .val.has{color:var(--green);font-weight:700}
+  ul.items li .have{font-size:11.5px;color:#a4493e;font-style:italic}
+  .extras{font-size:11.5px;color:var(--ink-soft);margin:5px 2px 0;padding-top:5px;border-top:1px dashed var(--line)}
+  .extras b{color:var(--ink-soft);font-weight:700;text-transform:uppercase;letter-spacing:.4px;font-size:10.5px}
+  .srcbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 2px 0;font-size:12px;color:var(--ink-soft)}
+  .srcbar .pill{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+  .srcbar .pill b{color:var(--ink)}
+  button.tool.refresh{border-color:var(--gold);color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1 id="buildName">D4Scanner — Build Tracker</h1>
+    <div class="sub" id="buildSub">Load a target build and a captured live build to see your progress.</div>
+    <div class="badges" id="badges"></div>
+    <div class="overall">
+      <div class="row"><span class="pct" id="overallPct">0%</span>
+        <span class="count" id="overallCount">0 / 0 requirements met</span></div>
+      <div class="bar"><span id="overallBar"></span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label class="drop" id="dropTarget">🎯 <b>Target build</b> — click or drop a target JSON
+      <input type="file" accept=".json,application/json" id="fileTarget" hidden></label>
+    <label class="drop" id="dropLive">🧝 <b>Live build</b> — click or drop your captured build.json
+      <input type="file" accept=".json,application/json" id="fileLive" hidden></label>
+  </div>
+  <div class="controls">
+    <button class="tool" id="demoBtn">Load bundled demo</button>
+    <button class="tool" id="pasteBtn">Paste JSON…</button>
+    <button class="tool" id="expandAll">Expand all</button>
+    <button class="tool" id="collapseAll">Collapse all</button>
+    <button class="tool" id="resetBtn">Reset overrides</button>
+    <button class="tool" id="clearBtn">Clear all</button>
+  </div>
+  <textarea id="pasteArea" placeholder='Paste either a target or a live build JSON here, then press Ctrl+Enter…'></textarea>
+  <div class="legend">
+    <span class="k"><span class="dot t"></span>matched via TTS (gear)</span>
+    <span class="k"><span class="dot v"></span>matched via vision (paragon/skills)</span>
+    <span class="k"><span class="dot m"></span>manual override</span>
+    <span class="k"><span class="dot x"></span>missing</span>
+  </div>
+
+  <div id="cats"></div>
+  <div class="empty" id="emptyState">No build loaded yet. Click <b>Load bundled demo</b> to see it in action,
+    or load your <b>target</b> + <b>live</b> JSON above.</div>
+  <div class="foot" id="foot">D4Scanner • progress &amp; overrides saved locally in this browser</div>
+</div>
+
+<script src="diff.js"></script>
+<script>
+/* ---------------- bundled demo data (so it works on double-click) -------------- */
+const DEMO_TARGET = {
+  schemaVersion:1, name:"Ball Lightning Sorcerer", class:"Sorcerer", source:"bundled demo",
+  gear:[
+    {slot:"helm",label:"Helm",affixes:["Maximum Life","Cooldown Reduction","Intelligence","Total Armor"]},
+    {slot:"chest",label:"Chest",affixes:["Maximum Life","Damage Reduction","Intelligence","Damage Reduction from Close"]},
+    {slot:"gloves",label:"Gloves",affixes:["Critical Strike Chance","Attack Speed","Ranks to Ball Lightning","Lucky Hit Chance"]},
+    {slot:"pants",label:"Pants",affixes:["Maximum Life","Damage Reduction","Intelligence","Dodge Chance"]},
+    {slot:"boots",label:"Boots",affixes:["Movement Speed","Intelligence","Ranks to Teleport","Damage Reduction"]},
+    {slot:"amulet",label:"Amulet",affixes:["Cooldown Reduction","Movement Speed","Resistance to All Elements","Lucky Hit Chance"]},
+    {slot:"ring1",label:"Ring #1",affixes:["Critical Strike Chance","Lucky Hit Chance","Maximum Life","Vulnerable Damage"]},
+    {slot:"ring2",label:"Ring #2",affixes:["Critical Strike Chance","Vulnerable Damage","Resistance to All","Intelligence"]},
+    {slot:"weapon",label:"Weapon",affixes:["Intelligence","Critical Strike Damage","Vulnerable Damage","Core Skill Damage"]},
+    {slot:"offhand",label:"Offhand",affixes:["Cooldown Reduction","Lucky Hit Chance","Critical Strike Damage","Resource Cost Reduction"]}
+  ],
+  uniques:[
+    {name:"Tal Rasha's Iridescent Loop",slot:"ring"},{name:"Raiment of the Infinite",slot:"chest"},
+    {name:"Esu's Heirloom",slot:"boots"},{name:"Shroud of False Death",slot:"chest",mythic:true}
+  ],
+  aspects:["Aspect of Concentration","Recharging Aspect","Conceited Aspect","Aspect of Disobedience","Storm Swell Aspect","Prodigy's Aspect"],
+  skills:[{name:"Spark",rank:1},{name:"Frost Bolt",rank:1},{name:"Ball Lightning",rank:5},
+    {name:"Teleport",rank:1},{name:"Ice Armor",rank:1},{name:"Unstable Currents",rank:1}],
+  keyPassives:["Vyr's Mastery"],
+  paragon:{boards:["Starter Board","Enchantment Master","Elementalist","Burning Instinct","Ceaseless Conduit"],
+    glyphs:[{name:"Tactician",level:15},{name:"Control",level:15},{name:"Destruction",level:15},{name:"Exploit",level:15},{name:"Elementalist",level:15}]}
+};
+const DEMO_BUILD = {
+  schemaVersion:1, capturedAt:"demo", character:{name:"Zappy",class:"Sorcerer",level:100},
+  gear:[
+    {slot:"helm",name:"Archon Spellblade",rarity:"Legendary",masterworkRank:4,temperUsed:2,temperMax:2,
+      affixes:[{text:"Maximum Life"},{text:"Cooldown Reduction"},{text:"Intelligence"},{text:"Total Armor"}]},
+    {slot:"gloves",name:"Sorcerer's Grasp",rarity:"Legendary",
+      affixes:[{text:"Critical Strike Chance"},{text:"Attack Speed"},{text:"Ranks to Ball Lightning"},{text:"Lucky Hit Chance"}]},
+    {slot:"boots",name:"Tempest Striders",rarity:"Legendary",
+      affixes:[{text:"Movement Speed"},{text:"Intelligence"},{text:"Ranks to Teleport"},{text:"Lucky Hit Chance"}]},
+    {slot:"chest",name:"Raiment of the Infinite",rarity:"Unique",isUnique:true,
+      affixes:[{text:"Maximum Life"},{text:"Intelligence"}]},
+    {slot:"ring",name:"Tal Rasha's Iridescent Loop",rarity:"Mythic Unique",isUnique:true,isMythic:true,
+      affixes:[{text:"Intelligence"},{text:"Critical Strike Chance"},{text:"Vulnerable Damage"}]}
+  ],
+  aspects:["Aspect of Concentration","Storm Swell Aspect","Prodigy's Aspect"],
+  skills:[{name:"Ball Lightning",rank:5,slotted:true},{name:"Teleport",rank:1,slotted:true},
+    {name:"Frost Bolt",rank:1},{name:"Unstable Currents",rank:1,slotted:true},
+    {name:"Ice Armor",rank:1,slotted:true},{name:"Vyr's Mastery",rank:1,isKeyPassive:true}],
+  paragon:[{board:"Starter Board",glyph:"Exploit",glyphLevel:15},
+    {board:"Enchantment Master",glyph:"Tactician",glyphLevel:12},
+    {board:"Elementalist",glyph:"Destruction",glyphLevel:21},
+    {board:"Burning Instinct",glyph:"Control",glyphLevel:15}]
+};
+
+/* ---------------------------------- engine ------------------------------------ */
+const LS = "d4scanner:v1";
+let state = load();
+function load(){ try{ return JSON.parse(localStorage.getItem(LS)||"{}"); }catch(e){ return {}; } }
+function save(){ try{ localStorage.setItem(LS, JSON.stringify(state)); }catch(e){} }
+state.overrides = state.overrides || {};
+
+function setStatus(el, name){ el.classList.add("loaded"); el.innerHTML = el.dataset.icon + " <b>" + name + "</b> ✓ loaded — click to replace"; }
+function detectKind(obj){
+  // target builds have a top-level "name" + gear[].affixes (strings); live builds have gear[].affixes (objects) or skills/paragon arrays
+  if (obj && Array.isArray(obj.gear) && obj.gear.length && Array.isArray(obj.gear[0].affixes) &&
+      typeof obj.gear[0].affixes[0] === "string") return "target";
+  if (obj && (obj.schemaVersion===1) && obj.name && obj.gear && obj.gear[0] && typeof obj.gear[0].affixes[0]==="string") return "target";
+  if (obj && (obj.skills || obj.paragon || (obj.gear && obj.gear[0] && obj.gear[0].affixes && typeof obj.gear[0].affixes[0]==="object"))) return "live";
+  if (obj && obj.name && obj.gear) return "target";
+  return "live";
+}
+function ingest(obj){
+  const kind = detectKind(obj);
+  if (kind === "target"){ state.target = obj; setStatus(dropTarget, obj.name || "target"); }
+  else { state.live = obj; setStatus(dropLive, (obj.character&&obj.character.name) || "live build"); }
+  save(); render();
+}
+
+function okey(catId, gi, label){ return catId+"|"+gi+"|"+label; }
+
+function render(){
+  const root = document.getElementById("cats");
+  root.innerHTML = "";
+  if (!state.target){ document.getElementById("emptyState").style.display="block"; resetHeader(); return; }
+  document.getElementById("emptyState").style.display="none";
+
+  const report = D4Diff.diff(state.target, state.live || {});
+  document.getElementById("buildName").textContent = (report.target.name || "Build") + " — Tracker";
+  document.getElementById("buildSub").textContent = report.target.source || "";
+  const badges = document.getElementById("badges"); badges.innerHTML="";
+  [report.target.class, state.live ? "Live build loaded" : "No live build — load build.json"].forEach(t=>{
+    if(!t) return; const b=document.createElement("span"); b.className="badge"; b.textContent=t; badges.appendChild(b);
+  });
+
+  let mAll=0, tAll=0;
+  report.categories.forEach((cat, ci)=>{
+    let cm=0, ct=0;
+    const card=document.createElement("section"); card.className="cat";
+    const collapsedKey="collapsed:"+cat.id;
+    if(state.overrides[collapsedKey]) card.classList.add("collapsed");
+    const header=document.createElement("header");
+    const h2=document.createElement("h2"); h2.textContent=cat.name;
+    const cpctEl=document.createElement("span"); cpctEl.className="cpct";
+    const chev=document.createElement("span"); chev.className="chev"; chev.textContent="▼";
+    header.appendChild(h2); header.appendChild(cpctEl); header.appendChild(chev);
+    header.addEventListener("click",()=>{ card.classList.toggle("collapsed");
+      state.overrides[collapsedKey]=card.classList.contains("collapsed"); save(); });
+    card.appendChild(header);
+    const cbar=document.createElement("div"); cbar.className="cbar";
+    const cbarEl=document.createElement("span"); cbar.appendChild(cbarEl); card.appendChild(cbar);
+    const body=document.createElement("div"); body.className="body";
+
+    cat.groups.forEach((g, gi)=>{
+      const grp=document.createElement("div"); grp.className="group"+(g.kind==="gear"?" gear":"");
+      const h=document.createElement("h3");
+      const gname=document.createElement("span"); gname.textContent=g.name;
+      const gcount=document.createElement("span"); gcount.className="gc";
+      h.appendChild(gname); h.appendChild(gcount); grp.appendChild(h);
+
+      // gear: show YOUR item in this slot (name · rarity · item power)
+      if(g.kind==="gear"){
+        const yi=document.createElement("div"); yi.className="yitem";
+        const it=(g.liveItems&&g.liveItems[0]);
+        if(it){
+          yi.textContent=it.name+" ";
+          const meta=document.createElement("span"); meta.className="rare";
+          meta.textContent="· "+[it.rarity,it.itemPower].filter(Boolean).join(" · ");
+          yi.appendChild(meta);
+        } else { yi.className="yitem none"; yi.textContent="— no item captured for this slot —"; }
+        grp.appendChild(yi);
+      }
+
+      const ul=document.createElement("ul"); ul.className="items";
+      let gm=0;
+      g.items.forEach(it=>{
+        const key=okey(cat.id, g.name, it.label);
+        const overridden = state.overrides[key]===true;
+        const done = it.done || overridden;
+        if(done) gm++;
+        const li=document.createElement("li"); li.className=done?"done":"miss";
+        const mark=document.createElement("span"); mark.className="mark "+(done?"done":"miss"); mark.textContent=done?"✓":"";
+        const lbl=document.createElement("span"); lbl.className="lbl"; lbl.textContent=it.label;
+        li.appendChild(mark); li.appendChild(lbl);
+        // gear: show YOUR rolled value (green) or — when missing
+        if(g.kind==="gear"){
+          const val=document.createElement("span"); val.className="val"+(it.done?" has":"");
+          val.textContent=it.done?(it.val||"✓"):"—"; li.appendChild(val);
+        }
+        // uniques: show what you have instead
+        if(it.have){ const s=document.createElement("span"); s.className="have"; s.textContent="have: "+it.have; li.appendChild(s); }
+        if(it.done && it.source){ const s=document.createElement("span"); s.className="src"; s.textContent=it.source; li.appendChild(s); }
+        else if(overridden){ const s=document.createElement("span"); s.className="src"; s.textContent="manual"; li.appendChild(s); }
+        const ov=document.createElement("label"); ov.className="ovr"; ov.title="Manually mark as done";
+        const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=overridden; cb.disabled=it.done;
+        cb.addEventListener("change",()=>{ if(cb.checked) state.overrides[key]=true; else delete state.overrides[key]; save(); render(); });
+        ov.appendChild(cb); ov.appendChild(document.createTextNode("override"));
+        if(!it.done) li.appendChild(ov);
+        ul.appendChild(li);
+      });
+      gcount.textContent = gm+" / "+g.items.length;
+      grp.appendChild(ul);
+      // gear: list the OTHER affixes you have on this item
+      if(g.kind==="gear" && g.extras && g.extras.length){
+        const ex=document.createElement("div"); ex.className="extras";
+        const b=document.createElement("b"); b.textContent="also on your item: "; ex.appendChild(b);
+        ex.appendChild(document.createTextNode(g.extras.join(" · ")));
+        grp.appendChild(ex);
+      }
+      body.appendChild(grp);
+      cm+=gm; ct+=g.items.length;
+    });
+    card.appendChild(body); root.appendChild(card);
+
+    const pct = ct?Math.round(cm/ct*100):0;
+    cpctEl.textContent = cm+" / "+ct+"  ("+pct+"%)";
+    cbarEl.style.width = pct+"%";
+    mAll+=cm; tAll+=ct;
+  });
+
+  const pctAll = tAll?Math.round(mAll/tAll*100):0;
+  document.getElementById("overallPct").textContent = pctAll+"%";
+  document.getElementById("overallCount").textContent = mAll+" / "+tAll+" requirements met";
+  document.getElementById("overallBar").style.width = pctAll+"%";
+  document.getElementById("foot").textContent =
+    "D4Scanner • "+mAll+" of "+tAll+" requirements met • saved locally";
+}
+function resetHeader(){
+  document.getElementById("buildName").textContent="D4Scanner — Build Tracker";
+  document.getElementById("overallPct").textContent="0%";
+  document.getElementById("overallCount").textContent="0 / 0 requirements met";
+  document.getElementById("overallBar").style.width="0%";
+}
+
+/* ---------------------------------- wiring ------------------------------------ */
+const dropTarget=document.getElementById("dropTarget"); dropTarget.dataset.icon="🎯";
+const dropLive=document.getElementById("dropLive"); dropLive.dataset.icon="🧝";
+function readFile(file){ const r=new FileReader();
+  r.onload=()=>{ try{ ingest(JSON.parse(r.result)); }catch(e){ alert("Invalid JSON: "+e.message); } }; r.readAsText(file); }
+document.getElementById("fileTarget").addEventListener("change",e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+document.getElementById("fileLive").addEventListener("change",e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+[["dropTarget","fileTarget"],["dropLive","fileLive"]].forEach(([d,f])=>{
+  const el=document.getElementById(d);
+  el.addEventListener("dragover",e=>{ e.preventDefault(); el.classList.add("over"); });
+  el.addEventListener("dragleave",()=>el.classList.remove("over"));
+  el.addEventListener("drop",e=>{ e.preventDefault(); el.classList.remove("over");
+    if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+});
+document.getElementById("demoBtn").addEventListener("click",()=>{
+  state.target=DEMO_TARGET; state.live=DEMO_BUILD; setStatus(dropTarget,DEMO_TARGET.name); setStatus(dropLive,"Zappy"); save(); render();
+});
+const pasteArea=document.getElementById("pasteArea");
+document.getElementById("pasteBtn").addEventListener("click",()=>{ pasteArea.style.display = pasteArea.style.display==="block"?"none":"block"; pasteArea.focus(); });
+pasteArea.addEventListener("keydown",e=>{ if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){
+  try{ ingest(JSON.parse(pasteArea.value)); pasteArea.value=""; pasteArea.style.display="none"; }catch(err){ alert("Invalid JSON: "+err.message); } } });
+document.getElementById("expandAll").addEventListener("click",()=>{ document.querySelectorAll(".cat").forEach(c=>c.classList.remove("collapsed"));
+  document.querySelectorAll(".cat").forEach((c,i)=>{ /* clear collapse flags */ }); Object.keys(state.overrides).forEach(k=>{ if(k.indexOf("collapsed:")===0) delete state.overrides[k]; }); save(); });
+document.getElementById("collapseAll").addEventListener("click",()=>{ document.querySelectorAll(".cat").forEach(c=>c.classList.add("collapsed")); });
+document.getElementById("resetBtn").addEventListener("click",()=>{ if(confirm("Clear all manual overrides?")){
+  Object.keys(state.overrides).forEach(k=>{ if(k.indexOf("collapsed:")!==0) delete state.overrides[k]; }); save(); render(); } });
+document.getElementById("clearBtn").addEventListener("click",()=>{ if(confirm("Clear loaded builds and overrides?")){
+  state={overrides:{}}; save(); dropTarget.classList.remove("loaded"); dropLive.classList.remove("loaded");
+  dropTarget.innerHTML='🎯 <b>Target build</b> — click or drop a target JSON<input type="file" accept=".json" id="fileTarget" hidden>';
+  dropLive.innerHTML='🧝 <b>Live build</b> — click or drop your captured build.json<input type="file" accept=".json" id="fileLive" hidden>';
+  document.getElementById("fileTarget").addEventListener("change",e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+  document.getElementById("fileLive").addEventListener("change",e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+  render(); } });
+
+// Self-contained report mode: data baked in by d4_compare.py overrides saved state,
+// so the page opens already populated — no file dropping needed. Re-run + refresh to update.
+if(typeof window!=="undefined" && window.__D4_TARGET__){ state.target=window.__D4_TARGET__; }
+if(typeof window!=="undefined" && window.__D4_LIVE__){ state.live=window.__D4_LIVE__; }
+if(window.__D4_BAKED__){
+  // report mode: hide the file pickers (data is already baked in)
+  const ctrls=document.querySelectorAll(".controls"); if(ctrls&&ctrls.forEach) ctrls.forEach(c=>{ if(c&&c.style) c.style.display="none"; });
+  const legend=document.querySelector(".legend");
+  if(legend&&legend.after){ const note=document.createElement("div"); note.className="srcbar";
+    note.innerHTML='<span class="pill">📄 Self-contained report — regenerate with <b>d4_compare.py</b> and refresh to update</span>';
+    legend.after(note); }
+}
+if(state.target){ setStatus(dropTarget, state.target.name||"target"); }
+if(state.live){ setStatus(dropLive, (state.live.character&&state.live.character.name)||"live build"); }
+render();
+</script>
+</body>
+</html>

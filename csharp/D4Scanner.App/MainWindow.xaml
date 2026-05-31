@@ -1,0 +1,54 @@
+<Window x:Class="D4Scanner.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="D4Scanner — Live Build Tracker" Height="860" Width="660"
+        Background="#241E18" FontFamily="Segoe UI">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0" Padding="16,12">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+          <GradientStop Color="#2A1212" Offset="0"/>
+          <GradientStop Color="#6E2320" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <StackPanel>
+        <DockPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+            <Button x:Name="TargetBtn" Content="Target…" Margin="4,0" Padding="10,3"/>
+            <Button x:Name="LogBtn" Content="Log…" Margin="4,0" Padding="10,3"/>
+            <Button x:Name="TopmostBtn" Content="Pin" Margin="4,0" Padding="10,3"/>
+          </StackPanel>
+          <TextBlock x:Name="BuildName" Text="D4Scanner — Live Build Tracker"
+                     Foreground="#F7EFE6" FontSize="17" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+        <DockPanel Margin="0,8,0,0">
+          <TextBlock x:Name="OverallPct" Text="—" Foreground="#FFFFFF" FontSize="26" FontWeight="Bold"/>
+          <TextBlock x:Name="OverallCount" Text="" Foreground="#E7C9A0" FontSize="12.5"
+                     VerticalAlignment="Bottom" Margin="12,0,0,4" TextWrapping="Wrap"/>
+        </DockPanel>
+        <ProgressBar x:Name="OverallBar" Height="9" Minimum="0" Maximum="100" Value="0"
+                     Margin="0,8,0,0" Foreground="#D9B85A" Background="#3A241A" BorderThickness="0"/>
+        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+          <TextBlock Text="flag rolls under" Foreground="#E7C9A0" FontSize="11.5" VerticalAlignment="Center"/>
+          <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="50" TickFrequency="5"
+                  IsSnapToTickEnabled="True" Width="150" Margin="8,0,6,0" VerticalAlignment="Center"/>
+          <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="#FFD98C" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0">
+      <StackPanel x:Name="Body" Margin="14"/>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Background="#1E1813" Padding="14,7">
+      <TextBlock x:Name="Status" Foreground="#9A8A72" FontSize="11" Text="starting…" TextTrimming="CharacterEllipsis"/>
+    </Border>
+  </Grid>
+</Window>

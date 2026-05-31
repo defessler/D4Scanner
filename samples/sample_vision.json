@@ -1,0 +1,22 @@
+{
+  "source": "vision",
+  "aspects": [
+    "Aspect of Concentration",
+    "Storm Swell Aspect",
+    "Prodigy's Aspect"
+  ],
+  "skills": [
+    { "name": "Ball Lightning", "rank": 5, "isKeyPassive": false, "slotted": true },
+    { "name": "Teleport", "rank": 1, "isKeyPassive": false, "slotted": true },
+    { "name": "Frost Bolt", "rank": 1, "isKeyPassive": false, "slotted": false },
+    { "name": "Unstable Currents", "rank": 1, "isKeyPassive": false, "slotted": true },
+    { "name": "Ice Armor", "rank": 1, "isKeyPassive": false, "slotted": true },
+    { "name": "Vyr's Mastery", "rank": 1, "isKeyPassive": true, "slotted": true }
+  ],
+  "paragon": [
+    { "board": "Starter Board", "glyph": "Exploit", "glyphLevel": 15, "notables": [] },
+    { "board": "Enchantment Master", "glyph": "Tactician", "glyphLevel": 12, "notables": ["Enchantment Master"] },
+    { "board": "Elementalist", "glyph": "Destruction", "glyphLevel": 21, "notables": [] },
+    { "board": "Burning Instinct", "glyph": "Control", "glyphLevel": 15, "notables": [] }
+  ]
+}

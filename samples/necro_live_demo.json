@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1, "capturedAt": "demo", "character": {"name":"BoneDad","class":"Necromancer","level":85},
+  "gear": [
+    {"slot":"helm","name":"Heir of Perdition","rarity":"Unique","isUnique":true,"affixes":[{"text":"Intelligence"},{"text":"Critical Strike Chance"}]},
+    {"slot":"chest","name":"Sacred Carapace","rarity":"Legendary","affixes":[{"text":"Intelligence"},{"text":"Maximum Life"},{"text":"Armor"}]},
+    {"slot":"gloves","name":"Deathweave Grips","rarity":"Legendary","affixes":[{"text":"Intelligence"},{"text":"Attack Speed"},{"text":"Critical Strike Damage Multiplier"}]},
+    {"slot":"weapon","name":"Bonecarver","rarity":"Legendary","affixes":[{"text":"Intelligence"},{"text":"Maximum Life"}]}
+  ],
+  "aspects": [],
+  "skills": [
+    {"name":"Bone Spear","rank":5,"slotted":true},
+    {"name":"Skeleton Warrior","rank":1,"slotted":true},
+    {"name":"Golem","rank":1,"slotted":true},
+    {"name":"Bone Storm","rank":1,"slotted":true}
+  ],
+  "paragon": [
+    {"board":"Start","glyph":"Corporeal","glyphLevel":21},
+    {"board":"Blood Begets Blood","glyph":"Essence","glyphLevel":15}
+  ]
+}
