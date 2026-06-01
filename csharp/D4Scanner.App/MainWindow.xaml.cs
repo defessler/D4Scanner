@@ -114,6 +114,9 @@ public partial class MainWindow : Window
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
+    readonly HashSet<string> _pinned = new();   // slot keys pinned for side-by-side compare
+    readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
+    { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -598,8 +601,24 @@ public partial class MainWindow : Window
         Body.Children.Add(SummaryStrip(r));
         var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
         Body.Children.Add(PaperDoll(sections));
-        var sel = sections.FirstOrDefault(s => s.Key == _selectedKey);
-        if (sel != null) Body.Children.Add(DetailPanel(sel));
+
+        // pinned slots → compact side-by-side compares
+        var pins = _pinned.Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null)).Where(x => x != null).Cast<Section>().ToList();
+        if (pins.Count > 0)
+        {
+            var row = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var p in pins) row.Children.Add(PinnedCard(p));
+            Body.Children.Add(row);
+        }
+        // a selected category (Uniques/Skills/Paragon) shows its detail
+        var selCat = sections.FirstOrDefault(x => x.Key == _selectedKey && x.Cat != null);
+        if (selCat != null) Body.Children.Add(DetailPanel(selCat));
+        // nothing pinned and no category selected → show the first incomplete slot's full compare
+        if (pins.Count == 0 && selCat == null)
+        {
+            var def = sections.FirstOrDefault(x => x.Gear != null && x.Status != "met") ?? sections.FirstOrDefault(x => x.Gear != null);
+            if (def != null) Body.Children.Add(DetailPanel(def));
+        }
 
         Status.Text = $"● live  ·  log: {_log}  ·  target: {Path.GetFileName(_targetPath)}";
     }
@@ -807,11 +826,43 @@ public partial class MainWindow : Window
         return grid;
     }
 
-    // a Mobalytics-style slot row: icon + (slot label / wanted item name), clickable to open the compare
+    // floating compare card shown while hovering a slot
+    void ShowHover(Section s, UIElement target)
+    {
+        if (s.Gear == null) return;
+        var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+        _hoverPopup.PlacementTarget = target;
+        _hoverPopup.Child = new Border
+        {
+            Background = B("#0E0E11"), BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14), MaxWidth = 780, Child = CompareCard(s.Gear, it, s.Label),
+        };
+        _hoverPopup.IsOpen = true;
+    }
+
+    // compact pinned compare card (collected in a row so several slots compare side by side)
+    UIElement PinnedCard(Section s)
+    {
+        var g = s.Gear!;
+        var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
+        var (name, ncol, _, _, _) = WantedFor(s);
+        var inner = new StackPanel { Width = 290 };
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var x = TB("✕", Soft, 13, true); x.Cursor = System.Windows.Input.Cursors.Hand; x.VerticalAlignment = VerticalAlignment.Center;
+        x.MouseLeftButtonUp += (_, _) => { _pinned.Remove(s.Key); Render(); };
+        DockPanel.SetDock(x, Dock.Right); hdr.Children.Add(x);
+        hdr.Children.Add(TBs(s.Label, Ink, 13.5, true));
+        inner.Children.Add(hdr);
+        inner.Children.Add(TBs((it?.Name ?? name).ToUpperInvariant(), it != null ? RarityBrush(it.Rarity) : ncol, 12.5, true, new Thickness(0, 0, 0, 5)));
+        foreach (var i in g.Items) inner.Children.Add(EquippedRow(i));
+        return new Border { Child = inner, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 12, 14, 12), Margin = new Thickness(0, 0, 11, 11), VerticalAlignment = VerticalAlignment.Top };
+    }
+
+    // a Mobalytics-style slot row: icon + (slot label / wanted item name); hover to compare, click to pin
     UIElement SlotCell(Section s, int num, bool alignRight)
     {
         var (name, ncol, _, _, _) = WantedFor(s);
-        bool selected = s.Key == _selectedKey;
+        bool pinned = _pinned.Contains(s.Key);
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
@@ -832,13 +883,15 @@ public partial class MainWindow : Window
         var b = new Border
         {
             Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
-            Background = selected ? TileSel : System.Windows.Media.Brushes.Transparent,
-            BorderBrush = selected ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(1),
+            Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
+            BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(1),
             Cursor = System.Windows.Input.Cursors.Hand,
+            ToolTip = "hover to compare · click to pin",
         };
-        b.MouseEnter += (_, _) => { if (!selected) b.Background = Card; };
-        b.MouseLeave += (_, _) => { if (!selected) b.Background = System.Windows.Media.Brushes.Transparent; };
-        b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
+        // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
+        b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };
+        b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; _hoverPopup.IsOpen = false; };
+        b.MouseLeftButtonUp += (_, _) => { if (!_pinned.Remove(s.Key)) _pinned.Add(s.Key); _hoverPopup.IsOpen = false; Render(); };
         return b;
     }
 
