@@ -603,23 +603,22 @@ public partial class MainWindow : Window
         var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
         Body.Children.Add(PaperDoll(sections, r.TargetClass, r.Pct));
 
-        // pinned slots → compact side-by-side compares
-        var pins = _pinned.Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null)).Where(x => x != null).Cast<Section>().ToList();
-        if (pins.Count > 0)
+        // below the doll: ONLY pinned slots, each as a FULL compare (hover previews without pinning)
+        foreach (var key in _pinned.ToList())
         {
-            var row = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-            foreach (var p in pins) row.Children.Add(PinnedCard(p));
-            Body.Children.Add(row);
+            var p = sections.FirstOrDefault(x => x.Key == key && x.Gear != null);
+            if (p == null) continue;
+            var unpin = TB("✕  unpin " + p.Label, Soft, 11.5, false);
+            unpin.Cursor = System.Windows.Input.Cursors.Hand; unpin.HorizontalAlignment = HorizontalAlignment.Right;
+            unpin.Margin = new Thickness(0, 6, 4, 2);
+            var keyC = key;
+            unpin.MouseLeftButtonUp += (_, _) => { _pinned.Remove(keyC); Render(); };
+            Body.Children.Add(unpin);
+            Body.Children.Add(DetailPanel(p));
         }
         // a selected category (Uniques/Skills/Paragon) shows its detail
         var selCat = sections.FirstOrDefault(x => x.Key == _selectedKey && x.Cat != null);
         if (selCat != null) Body.Children.Add(DetailPanel(selCat));
-        // nothing pinned and no category selected → show the first incomplete slot's full compare
-        if (pins.Count == 0 && selCat == null)
-        {
-            var def = sections.FirstOrDefault(x => x.Gear != null && x.Status != "met") ?? sections.FirstOrDefault(x => x.Gear != null);
-            if (def != null) Body.Children.Add(DetailPanel(def));
-        }
 
         Status.Text = $"● live  ·  log: {_log}  ·  target: {Path.GetFileName(_targetPath)}";
     }
