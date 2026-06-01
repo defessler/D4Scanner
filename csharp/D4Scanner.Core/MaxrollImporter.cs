@@ -275,10 +275,11 @@ public static class MaxrollImporter
                 string? type = hasDef && idef.TryGetProperty("type", out var ty) ? ty.GetString() : null;
                 string slot = SlotForType(type) ?? SlotForType(itemId) ?? "unknown";
                 int magicType = hasDef && idef.TryGetProperty("magicType", out var mt) && mt.ValueKind == JsonValueKind.Number ? mt.GetInt32() : -1;
+                long? image = hasDef && idef.TryGetProperty("image", out var im) && im.ValueKind == JsonValueKind.Number ? im.GetInt64() : null;
                 bool isUnique = itemId.Contains("Unique", StringComparison.OrdinalIgnoreCase) || magicType is 4 or 5 or 6;
                 bool isMythic = itemId.Contains("Mythic", StringComparison.OrdinalIgnoreCase) || itemId.ToUpperInvariant().Contains("UBER");
 
-                if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic }); continue; }
+                if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic, Image = image, ItemId = itemId }); continue; }
 
                 string? aspectName = null;
                 if (item.TryGetProperty("aspect", out var asp) && asp.ValueKind == JsonValueKind.Object)
@@ -309,7 +310,7 @@ public static class MaxrollImporter
                 {
                     string sid = slot, label = char.ToUpper(slot[0]) + slot[1..];
                     if (slot == "ring") { ringN++; sid = "ring" + ringN; label = "Ring #" + ringN; }
-                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = affixes, Aspect = aspectName, Sockets = sockets });
+                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = affixes, Aspect = aspectName, Sockets = sockets, Image = image, ItemId = itemId });
                 }
             }
 

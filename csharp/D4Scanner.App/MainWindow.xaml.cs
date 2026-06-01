@@ -75,9 +75,9 @@ public partial class MainWindow : Window
     }
 
     // real D4 item art (runtime-fetched, cached) for a named item; null until it's downloaded
-    FrameworkElement? RealIcon(string? name, double w, double h)
+    FrameworkElement? RealIcon(string? name, double w, double h, string? id = null, long? image = null)
     {
-        var path = IconResolver.Get(name, _target?.Class);
+        var path = IconResolver.Get(name, id, image, _target?.Class);
         if (path == null) return null;
         try
         {
@@ -89,8 +89,8 @@ public partial class MainWindow : Window
     }
 
     // real item art if available, else the tinted slot silhouette
-    FrameworkElement SlotOrItemIcon(string? itemName, string slotKey, Brush tint, double size) =>
-        RealIcon(itemName, size, size) ?? SlotIcon(slotKey, tint, size) ?? TB("", tint, 1, false);
+    FrameworkElement SlotOrItemIcon(string? itemName, string slotKey, Brush tint, double size, string? id = null, long? image = null) =>
+        RealIcon(itemName, size, size, id, image) ?? SlotIcon(slotKey, tint, size) ?? TB("", tint, 1, false);
 
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
@@ -765,24 +765,26 @@ public partial class MainWindow : Window
         return b;
     }
 
-    // what the build wants in a slot: a targeted unique, else the wanted aspect, else "Any <slot>"
-    (string name, Brush col, string? iconName) WantedFor(Section s)
+    // what the build wants in a slot: a targeted unique, else the wanted aspect, else "Any <slot>".
+    // also returns the item id/image so icon sources keyed by id/image can resolve it.
+    (string name, Brush col, string? iconName, string? id, long? image) WantedFor(Section s)
     {
         var key = SlotKey(s.Label);
         var u = _target?.Uniques.FirstOrDefault(x => SlotKey(x.Slot ?? "") == key);
-        if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name);
-        if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null);
-        return ("Any " + s.Label, Soft, null);
+        if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
+        var tg = _target?.Gear.FirstOrDefault(g => SlotKey(g.Slot) == key);
+        if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null, tg?.ItemId, tg?.Image);
+        return ("Any " + s.Label, Soft, null, tg?.ItemId, tg?.Image);
     }
 
     // a framed item icon with a status-colored border and a priority number badge
     FrameworkElement IconBox(Section s, int num)
     {
         var (_, scol) = Look(s.Status);
-        var (_, _, iconName) = WantedFor(s);
+        var (_, _, iconName, wid, wimg) = WantedFor(s);
         var grid = new Grid { Width = 48, Height = 48 };
         grid.Children.Add(new Border { Background = B("#0C0C0F"), BorderBrush = scol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(4) });
-        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), Soft, 40);
+        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), Soft, 40, wid, wimg);
         art.Margin = new Thickness(4); art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(art);
         if (num > 0)
@@ -808,7 +810,7 @@ public partial class MainWindow : Window
     // a Mobalytics-style slot row: icon + (slot label / wanted item name), clickable to open the compare
     UIElement SlotCell(Section s, int num, bool alignRight)
     {
-        var (name, ncol, _) = WantedFor(s);
+        var (name, ncol, _, _, _) = WantedFor(s);
         bool selected = s.Key == _selectedKey;
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -1028,7 +1030,7 @@ public partial class MainWindow : Window
             it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
             it != null ? RarityBrush(it.Rarity) : Miss,
             it != null ? Sub(it) : "nothing scanned in this slot yet",
-            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label));
+            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label), null, null);
 
         // BUILD WANTS (right): the wanted item (a slot unique, if any) + the wanted affixes/thresholds
         var wantUnique = _target?.Uniques.FirstOrDefault(u => SlotKey(u.Slot ?? "") == SlotKey(label));
@@ -1043,7 +1045,7 @@ public partial class MainWindow : Window
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,
             wantUnique != null ? (myth ? "Mythic Unique" : "Unique") : "any item with these affixes",
-            wrc, wp, wantUnique?.Name, SlotKey(label));
+            wrc, wp, wantUnique?.Name, SlotKey(label), wantUnique?.ItemId, wantUnique?.Image);
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
@@ -1051,7 +1053,7 @@ public partial class MainWindow : Window
     }
 
     UIElement TooltipPanel(string title, string header, Brush headerBrush, string sub, Color rarity, StackPanel rows,
-                           string? iconName, string slotKey)
+                           string? iconName, string slotKey, string? iconId = null, long? iconImage = null)
     {
         // header band: real item art (or slot silhouette) beside the title/name/subtitle
         var head = new StackPanel();
@@ -1060,7 +1062,7 @@ public partial class MainWindow : Window
         head.Children.Add(TB(sub, Soft, 11, false));
 
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var icon = SlotOrItemIcon(iconName, slotKey, headerBrush, 50);
+        var icon = SlotOrItemIcon(iconName, slotKey, headerBrush, 50, iconId, iconImage);
         var iconBox = new Border { Width = 52, Height = 64, Child = icon, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 12, 0) };
         DockPanel.SetDock(iconBox, Dock.Left); top.Children.Add(iconBox);
         head.VerticalAlignment = VerticalAlignment.Center; top.Children.Add(head);

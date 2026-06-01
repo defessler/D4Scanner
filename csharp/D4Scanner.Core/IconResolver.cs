@@ -34,11 +34,17 @@ public static class IconResolver
     static readonly object _lock = new();
     static readonly HashSet<string> _inflight = new();
 
+    /// <summary>A user-configurable icon source: a URL template with a {key} placeholder, keyed by name|id|image.</summary>
+    public sealed record TemplateSource(string Name, string UrlTemplate, string Key, bool Enabled);
+    static List<TemplateSource> _templates = new();
+    static string SourcesPath => Path.Combine(CacheDir, "icon_sources.json");
+
     /// <summary>Raised (on a background thread) when a new icon finishes downloading.</summary>
     public static event Action? Changed;
 
     public static async Task LoadIndexAsync(CancellationToken ct = default)
     {
+        LoadSources();
         try
         {
             if (File.Exists(IndexPath) && DateTime.UtcNow - File.GetLastWriteTimeUtc(IndexPath) < MaxAge)
@@ -70,19 +76,59 @@ public static class IconResolver
     }
 
     static string Norm(string s) => new((s ?? "").ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+    static string Safe(string s) => new(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+
+    // Loads user-configurable icon sources from icon_sources.json (auto-created with disabled examples
+    // documenting the format). These are template sources tried AFTER the built-in diablo4icons index.
+    static void LoadSources()
+    {
+        try
+        {
+            Directory.CreateDirectory(CacheDir);
+            if (!File.Exists(SourcesPath))
+            {
+                var examples = new List<TemplateSource>
+                {
+                    new("example-by-name",  "https://your-cdn.example/d4/icons/{key}.webp", "name",  false),
+                    new("example-by-id",    "https://your-cdn.example/d4/items/{key}.webp", "id",    false),
+                    new("example-by-image", "https://your-cdn.example/d4/img/{key}.webp",   "image", false),
+                };
+                File.WriteAllText(SourcesPath, JsonSerializer.Serialize(examples, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            var list = JsonSerializer.Deserialize<List<TemplateSource>>(File.ReadAllText(SourcesPath));
+            _templates = list?.Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.UrlTemplate) && s.UrlTemplate.Contains("{key}")).ToList() ?? new();
+        }
+        catch { _templates = new(); }
+    }
+
+    /// <summary>Re-read icon_sources.json (after the user edits it).</summary>
+    public static void ReloadSources() { LoadSources(); Changed?.Invoke(); }
+
+    public static string? Get(string? name, string? klass = null) => Get(name, null, null, klass);
 
     /// <summary>
-    /// Returns a local file path for the item's icon if it is already cached; otherwise returns
-    /// null and (if the name is known) kicks off a background download that fires <see cref="Changed"/>.
+    /// Resolve an item's icon across the source chain — built-in diablo4icons (by name), then each
+    /// enabled template source (by name/id/image) — returning the first cached hit (by priority) and
+    /// kicking off background downloads for the rest. Null until something lands; UI fires <see cref="Changed"/>.
     /// </summary>
-    public static string? Get(string? name, string? klass = null)
+    public static string? Get(string? name, string? id, long? image, string? klass)
     {
-        if (!_loaded || string.IsNullOrWhiteSpace(name)) return null;
-        var repoPath = Resolve(name!, klass);
-        if (repoPath == null) return null;
-        var local = Path.Combine(IconDir, repoPath.Replace('/', Path.DirectorySeparatorChar));
-        if (File.Exists(local)) return local;
-        Download(repoPath, local);
+        // source 1 (built-in): diablo4icons index, keyed by item name
+        if (_loaded && !string.IsNullOrWhiteSpace(name) && Resolve(name!, klass) is string repoPath)
+        {
+            var local = Path.Combine(IconDir, repoPath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(local)) return local;
+            Download(RawBase + string.Join("/", repoPath.Split('/').Select(Uri.EscapeDataString)), local);
+        }
+        // sources 2+ : configurable template sources, in order
+        foreach (var s in _templates)
+        {
+            var val = s.Key.ToLowerInvariant() switch { "name" => name, "id" => id, "image" => image?.ToString(), _ => null };
+            if (string.IsNullOrWhiteSpace(val)) continue;
+            var cacheFile = Path.Combine(IconDir, "src", Safe(s.Name), Safe(val!) + ".img");
+            if (File.Exists(cacheFile)) return cacheFile;
+            Download(s.UrlTemplate.Replace("{key}", Uri.EscapeDataString(val!)), cacheFile);
+        }
         return null;
     }
 
@@ -94,21 +140,19 @@ public static class IconResolver
         return paths.FirstOrDefault(p => p.StartsWith("General/", StringComparison.OrdinalIgnoreCase)) ?? cls ?? paths[0];
     }
 
-    static void Download(string repoPath, string local)
+    static void Download(string url, string local)
     {
-        lock (_lock) { if (!_inflight.Add(repoPath)) return; }
+        lock (_lock) { if (!_inflight.Add(url)) return; }
         _ = Task.Run(async () =>
         {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(local)!);
-                var url = RawBase + string.Join("/", repoPath.Split('/').Select(Uri.EscapeDataString));
                 var bytes = await Http.GetByteArrayAsync(url);
-                await File.WriteAllBytesAsync(local, bytes);
-                Changed?.Invoke();
+                if (bytes.Length > 0) { await File.WriteAllBytesAsync(local, bytes); Changed?.Invoke(); }
             }
-            catch { /* leave uncached; UI keeps the silhouette */ }
-            finally { lock (_lock) { _inflight.Remove(repoPath); } }
+            catch { /* leave uncached; UI keeps the silhouette / next source */ }
+            finally { lock (_lock) { _inflight.Remove(url); } }
         });
     }
 }

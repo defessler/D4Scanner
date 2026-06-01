@@ -88,6 +88,8 @@ public class TargetGear
     public List<TargetAffix> Affixes { get; set; } = new();
     public string? Aspect { get; set; }   // legendary aspect the build wants on this slot
     public List<string> Sockets { get; set; } = new();   // wanted gems/runes socketed in this slot
+    public long? Image { get; set; }      // Maxroll icon hash (for icon sources keyed by image)
+    public string? ItemId { get; set; }   // game item id string (for icon sources keyed by id)
 }
 
 /// <summary>A wanted affix, optionally with a value threshold. Deserializes from either a bare
@@ -141,6 +143,8 @@ public class TargetUnique
     public string Name { get; set; } = "";
     public string? Slot { get; set; }
     public bool Mythic { get; set; }
+    public long? Image { get; set; }
+    public string? ItemId { get; set; }
 }
 
 public class TargetSkill
