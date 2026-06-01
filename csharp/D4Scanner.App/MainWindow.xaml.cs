@@ -551,6 +551,12 @@ public partial class MainWindow : Window
         var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
         BuildName.Text = r.TargetName + (r.TargetClass != null ? "  ·  " + r.TargetClass : "");
         OverallPct.Text = r.Pct + "%";
+
+        // progressive disclosure: only show the vision (Paragon/Skills) button when the build actually
+        // has something for it to fill — otherwise it does nothing useful yet.
+        bool hasVisionTargets = _target.Skills.Count > 0 || _target.KeyPassives.Count > 0 ||
+            (_target.Paragon?.Boards.Count ?? 0) > 0 || (_target.Paragon?.Glyphs.Count ?? 0) > 0 || _target.Aspects.Count > 0;
+        VisionBtn.Visibility = hasVisionTargets ? Visibility.Visible : Visibility.Collapsed;
         OverallCount.Text = $"{r.Matched} / {r.Total} met  ·  {_live.Gear.Count} equipped items"
             + (_vision != null ? "  ·  + vision" : "")
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
@@ -728,8 +734,9 @@ public partial class MainWindow : Window
         foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), true));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
-        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
-        foreach (var s in cats) center.Children.Add(CatCell(s));
+        var shownCats = cats.Where(s => s.Total > 0).ToList();   // hide empty/non-functional categories
+        if (shownCats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
+        foreach (var s in shownCats) center.Children.Add(CatCell(s));
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
