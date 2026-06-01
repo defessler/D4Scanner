@@ -13,6 +13,7 @@ public partial class MainWindow : Window
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
     static readonly Brush Ink = B("#F2E8D8"), Soft = B("#B9A88F"), Green = B("#5CB85C"),
         Amber = B("#E0A85A"), Miss = B("#D79A8C"), Card = B("#2E251C"), Line = B("#4A3A2A"), Crimson = B("#D2693E");
+    const double UI = 2.0;   // global size multiplier — everything ~2x larger
 
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
@@ -22,6 +23,7 @@ public partial class MainWindow : Window
     string? _targetPath;
     DateTime _targetMtime;
     double _minRollPct = 50;
+    string? _lastUrl;
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -30,6 +32,9 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         LoadSettings();
+        UrlBox.Text = _lastUrl ?? "";
+        ImportBtn.Click += async (_, _) => await DoImport();
+        UrlBox.KeyDown += async (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) await DoImport(); };
         TargetBtn.Click += (_, _) => PickTarget();
         LogBtn.Click += (_, _) => PickLog();
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
@@ -54,6 +59,7 @@ public partial class MainWindow : Window
                 {
                     if (s.TryGetValue("target", out var t)) _targetPath = t;
                     if (s.TryGetValue("log", out var l) && !string.IsNullOrEmpty(l)) _log = l;
+                    if (s.TryGetValue("url", out var u)) _lastUrl = u;
                 }
             }
         }
@@ -69,7 +75,7 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl }));
         }
         catch { }
     }
@@ -111,6 +117,32 @@ public partial class MainWindow : Window
         if (d.ShowDialog() == true) { _targetPath = d.FileName; SaveSettings(); ReloadTarget(); Render(); }
     }
 
+    async Task DoImport()
+    {
+        var url = (UrlBox.Text ?? "").Trim();
+        if (url.Length == 0) { Status.Text = "paste a Maxroll build URL first"; return; }
+        var profile = string.IsNullOrWhiteSpace(ProfileBox.Text) ? null : ProfileBox.Text.Trim();
+        var prev = ImportBtn.Content;
+        ImportBtn.IsEnabled = false; ImportBtn.Content = "…"; Status.Text = "importing build…";
+        try
+        {
+            var t = await MaxrollImporter.ImportAsync(url, profile, s => Dispatcher.Invoke(() => Status.Text = s));
+            var path = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "target.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
+            _target = t; _targetPath = path; _targetMtime = File.GetLastWriteTimeUtc(path);
+            _lastUrl = url; SaveSettings();
+            Render();
+            Status.Text = $"imported: {t.Name} ({t.Gear.Count} gear, {t.Uniques.Count} uniques)";
+        }
+        catch (Exception ex)
+        {
+            Status.Text = "import failed — " + ex.Message;
+            MessageBox.Show(ex.Message, "Import failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { ImportBtn.IsEnabled = true; ImportBtn.Content = prev; }
+    }
+
     void PickLog()
     {
         var d = new OpenFileDialog { Filter = "TTS log|*.log;*.txt|All files|*.*", Title = "Pick the d4_tts.log" };
@@ -120,7 +152,7 @@ public partial class MainWindow : Window
     // ---- rendering ----
     static TextBlock TB(string text, Brush brush, double size, bool bold, Thickness? m = null) => new()
     {
-        Text = text, Foreground = brush, FontSize = size,
+        Text = text, Foreground = brush, FontSize = size * UI,
         FontWeight = bold ? FontWeights.Bold : FontWeights.Normal,
         Margin = m ?? new Thickness(0), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
     };
@@ -159,8 +191,8 @@ public partial class MainWindow : Window
         return new Border
         {
             Background = Card, BorderBrush = Line, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10), Padding = new Thickness(13, 10, 13, 12),
-            Margin = new Thickness(0, 0, 0, 12), Child = sp,
+            CornerRadius = new CornerRadius(12), Padding = new Thickness(20, 14, 20, 16),
+            Margin = new Thickness(0, 0, 0, 18), Child = sp,
         };
     }
 
@@ -184,8 +216,8 @@ public partial class MainWindow : Window
 
         foreach (var i in g.Items)
         {
-            var row = new Grid { Margin = new Thickness(0, 1, 0, 1) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
+            var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18 * UI) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 

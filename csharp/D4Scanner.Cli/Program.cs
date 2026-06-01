@@ -1,8 +1,8 @@
 using D4Scanner.Core;
 
-// Verify/report CLI:  D4Scanner.Cli --target target.json [--log d4_tts.log] [--all] [--watch]
+// Verify/report CLI:  D4Scanner.Cli (--target t.json | --maxroll URL [--profile X]) [--log L] [--all] [--watch] [--save out.json]
 string log = TargetLoader.DefaultLogPath();
-string? targetPath = null;
+string? targetPath = null, maxroll = null, profile = null, save = null;
 bool equippedOnly = true, watch = false;
 for (int i = 0; i < args.Length; i++)
 {
@@ -10,13 +10,30 @@ for (int i = 0; i < args.Length; i++)
     {
         case "--log" when i + 1 < args.Length: log = args[++i]; break;
         case "--target" when i + 1 < args.Length: targetPath = args[++i]; break;
+        case "--maxroll" when i + 1 < args.Length: maxroll = args[++i]; break;
+        case "--profile" when i + 1 < args.Length: profile = args[++i]; break;
+        case "--save" when i + 1 < args.Length: save = args[++i]; break;
         case "--all": equippedOnly = false; break;
         case "--watch": watch = true; break;
     }
 }
-if (targetPath == null) { Console.Error.WriteLine("usage: --target <target.json> [--log <log>] [--all] [--watch]"); return 2; }
+if (targetPath == null && maxroll == null)
+{
+    Console.Error.WriteLine("usage: (--target <t.json> | --maxroll <URL> [--profile X]) [--log <L>] [--all] [--watch] [--save out.json]");
+    return 2;
+}
 
-var target = TargetLoader.Load(targetPath);
+TargetBuild target;
+if (maxroll != null)
+{
+    target = await MaxrollImporter.ImportAsync(maxroll, profile, s => Console.Error.WriteLine("  " + s));
+    if (save != null)
+    {
+        await File.WriteAllTextAsync(save, System.Text.Json.JsonSerializer.Serialize(target, D4Scanner.Core.Json.Opts));
+        Console.Error.WriteLine($"  saved target -> {save}");
+    }
+}
+else target = TargetLoader.Load(targetPath!);
 
 void Print(LiveBuild live)
 {
