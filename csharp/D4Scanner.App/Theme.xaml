@@ -1,23 +1,24 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- ============ palette: Diablo IV — warm stone + antique gold + rarity colors ============ -->
-  <SolidColorBrush x:Key="Bg"        Color="#121110"/>
-  <SolidColorBrush x:Key="Surface"   Color="#1A1714"/>
-  <SolidColorBrush x:Key="SurfaceHi" Color="#221E19"/>
-  <SolidColorBrush x:Key="SurfaceSel" Color="#271F15"/>
-  <SolidColorBrush x:Key="Line"      Color="#2C261E"/>
-  <SolidColorBrush x:Key="Edge"      Color="#4A4031"/>
-  <SolidColorBrush x:Key="EdgeHi"    Color="#6E5E45"/>
-  <SolidColorBrush x:Key="Ink"       Color="#E9E1D2"/>
-  <SolidColorBrush x:Key="Soft"      Color="#9C907C"/>
-  <SolidColorBrush x:Key="Faint"     Color="#6B5F4D"/>
-  <SolidColorBrush x:Key="Accent"    Color="#C8A24E"/>
-  <SolidColorBrush x:Key="AccentHi"  Color="#E6C873"/>
-  <SolidColorBrush x:Key="AccentDim" Color="#7E6630"/>
-  <SolidColorBrush x:Key="Green"     Color="#6CBF5E"/>
+  <!-- ============ palette: Diablo IV menu — cool grey/black + red accent (rarity colors for items only) ============ -->
+  <SolidColorBrush x:Key="Bg"        Color="#0E0E11"/>
+  <SolidColorBrush x:Key="Surface"   Color="#16171B"/>
+  <SolidColorBrush x:Key="SurfaceHi" Color="#1E2026"/>
+  <SolidColorBrush x:Key="SurfaceSel" Color="#262029"/>
+  <SolidColorBrush x:Key="Line"      Color="#2A2C33"/>
+  <SolidColorBrush x:Key="Edge"      Color="#3A3D45"/>
+  <SolidColorBrush x:Key="EdgeHi"    Color="#565A64"/>
+  <SolidColorBrush x:Key="Ink"       Color="#E7E8EC"/>
+  <SolidColorBrush x:Key="Soft"      Color="#9DA1AB"/>
+  <SolidColorBrush x:Key="Faint"     Color="#6B6E78"/>
+  <SolidColorBrush x:Key="Accent"    Color="#D23B3B"/>
+  <SolidColorBrush x:Key="AccentHi"  Color="#E85C5C"/>
+  <SolidColorBrush x:Key="AccentDim" Color="#8E2A2A"/>
+  <SolidColorBrush x:Key="Steel"     Color="#6E8CA8"/>
+  <SolidColorBrush x:Key="Green"     Color="#4FB05A"/>
   <SolidColorBrush x:Key="Amber"     Color="#E0A52E"/>
-  <SolidColorBrush x:Key="Red"       Color="#D14A35"/>
+  <SolidColorBrush x:Key="Red"       Color="#D23B3B"/>
   <!-- rarity -->
   <SolidColorBrush x:Key="Magic"     Color="#6E9BD6"/>
   <SolidColorBrush x:Key="Rare"      Color="#E5C84A"/>
@@ -57,17 +58,17 @@
     </Setter>
   </Style>
 
-  <!-- primary (antique-gold) button -->
+  <!-- primary (crimson) button -->
   <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-    <Setter Property="Foreground" Value="#1B1408"/>
+    <Setter Property="Foreground" Value="#FFFFFF"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="b" CornerRadius="3" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="#7E6630">
+          <Border x:Name="b" CornerRadius="3" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="#8E2A2A">
             <Border.Background>
               <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                <GradientStop Color="#E6C873" Offset="0"/><GradientStop Color="#B8902F" Offset="1"/>
+                <GradientStop Color="#E04C4C" Offset="0"/><GradientStop Color="#B22F2F" Offset="1"/>
               </LinearGradientBrush>
             </Border.Background>
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -97,7 +98,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="b" Property="Background" Value="#26C8A24E"/>
+              <Setter TargetName="b" Property="Background" Value="#26D23B3B"/>
               <Setter Property="Foreground" Value="{StaticResource AccentHi}"/>
             </Trigger>
           </ControlTemplate.Triggers>
@@ -110,7 +111,7 @@
   <Style TargetType="TextBox">
     <Setter Property="Foreground" Value="{StaticResource Ink}"/>
     <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
-    <Setter Property="Background" Value="#0D0B09"/>
+    <Setter Property="Background" Value="#0C0C0F"/>
     <Setter Property="BorderBrush" Value="{StaticResource Edge}"/>
     <Setter Property="FontSize" Value="15"/>
     <Setter Property="Padding" Value="10,7"/>
@@ -150,7 +151,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="Slider">
           <Grid VerticalAlignment="Center">
-            <Border Height="5" CornerRadius="2" Background="#2C261E" BorderBrush="#100E0B" BorderThickness="1"/>
+            <Border Height="5" CornerRadius="2" Background="#2A2C33" BorderBrush="#0A0A0C" BorderThickness="1"/>
             <Track x:Name="PART_Track">
               <Track.Thumb><Thumb Style="{StaticResource AccentThumb}"/></Track.Thumb>
             </Track>
@@ -200,7 +201,7 @@
                 <Thumb>
                   <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                      <Border CornerRadius="3" Background="#473C2C"/>
+                      <Border CornerRadius="3" Background="#3A3D45"/>
                     </ControlTemplate>
                   </Thumb.Template>
                 </Thumb>
@@ -212,18 +213,18 @@
     </Setter>
   </Style>
 
-  <!-- ============ ProgressBar (rounded, antique gold) ============ -->
+  <!-- ============ ProgressBar (rounded, crimson) ============ -->
   <Style TargetType="ProgressBar">
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ProgressBar">
-          <Border CornerRadius="3" Background="#241F18" BorderBrush="#100E0B" BorderThickness="1" ClipToBounds="True">
+          <Border CornerRadius="3" Background="#1A1B20" BorderBrush="#0A0A0C" BorderThickness="1" ClipToBounds="True">
             <Grid>
               <Border x:Name="PART_Track"/>
               <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="2">
                 <Border.Background>
                   <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#9C7B2C" Offset="0"/><GradientStop Color="#E6C873" Offset="1"/>
+                    <GradientStop Color="#B22F2F" Offset="0"/><GradientStop Color="#E85C5C" Offset="1"/>
                   </LinearGradientBrush>
                 </Border.Background>
               </Border>

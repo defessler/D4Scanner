@@ -13,10 +13,11 @@ public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
     // Diablo IV palette — warm stone + antique gold + rarity colors
-    static readonly Brush Ink = B("#E9E1D2"), Soft = B("#9C907C"), Faint = B("#6B5F4D"), Green = B("#6CBF5E"),
-        Amber = B("#E0A52E"), Miss = B("#D14A35"), Card = B("#1A1714"), CardHi = B("#221E19"),
-        Line = B("#2C261E"), Edge = B("#4A4031"), EdgeHi = B("#6E5E45"),
-        Crimson = B("#D14A35"), Gold = B("#C8A24E"), GoldHi = B("#E6C873"), TileSel = B("#271F15");
+    // cool grey/black + red accent (the "Gold"/"GoldHi" names are kept but now hold the red accent)
+    static readonly Brush Ink = B("#E7E8EC"), Soft = B("#9DA1AB"), Faint = B("#6B6E78"), Green = B("#4FB05A"),
+        Amber = B("#E0A52E"), Miss = B("#D23B3B"), Card = B("#16171B"), CardHi = B("#1E2026"),
+        Line = B("#2A2C33"), Edge = B("#3A3D45"), EdgeHi = B("#565A64"), Steel = B("#6E8CA8"),
+        Crimson = B("#D23B3B"), Gold = B("#D23B3B"), GoldHi = B("#E85C5C"), TileSel = B("#262029");
     // item-rarity colors (match D4's itemization)
     static readonly Brush RMagic = B("#6E9BD6"), RRare = B("#E5C84A"), RLegend = B("#E08A3C"),
         RUnique = B("#C9A45C"), RMythic = B("#D1492E");
@@ -213,11 +214,11 @@ public partial class MainWindow : Window
     UIElement ClassChip(string label, string? cls)
     {
         bool on = _classFilter == cls;
-        var t = TB(label, on ? B("#14110D") : ClassColor(cls), 12, on);
+        var t = TB(label, on ? B("#0C0C0F") : ClassColor(cls), 12, on);
         var b = new Border
         {
             Child = t, CornerRadius = new CornerRadius(999), Padding = new Thickness(11, 4, 11, 5), Margin = new Thickness(0, 0, 6, 6),
-            Background = on ? (cls == null ? Gold : ClassColor(cls)) : B("#14110D"),
+            Background = on ? (cls == null ? Gold : ClassColor(cls)) : B("#0C0C0F"),
             BorderBrush = Edge, BorderThickness = new Thickness(1), Cursor = System.Windows.Input.Cursors.Hand,
         };
         b.MouseLeftButtonUp += (_, _) => { _classFilter = on ? null : cls; UpdateAutocomplete(); };
@@ -655,7 +656,7 @@ public partial class MainWindow : Window
         {
             var (_, col) = Look(i.Status);
             var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-            var numT = TB(n.ToString(), B("#14110D"), 10.5, true);
+            var numT = TB(n.ToString(), B("#0C0C0F"), 10.5, true);
             numT.HorizontalAlignment = HorizontalAlignment.Center; numT.TextAlignment = TextAlignment.Center;
             var numB = new Border { Background = col, CornerRadius = new CornerRadius(3), Width = 20, Height = 18, Margin = new Thickness(0, 0, 10, 0), Child = numT };
             DockPanel.SetDock(numB, Dock.Left); row.Children.Add(numB);
@@ -773,7 +774,7 @@ public partial class MainWindow : Window
         var (_, scol) = Look(s.Status);
         var (_, _, iconName) = WantedFor(s);
         var grid = new Grid { Width = 48, Height = 48 };
-        grid.Children.Add(new Border { Background = B("#14110D"), BorderBrush = scol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(4) });
+        grid.Children.Add(new Border { Background = B("#0C0C0F"), BorderBrush = scol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(4) });
         var art = SlotOrItemIcon(iconName, SlotKey(s.Label), Soft, 40);
         art.Margin = new Thickness(4); art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(art);
@@ -783,7 +784,7 @@ public partial class MainWindow : Window
             {
                 Background = scol, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1),
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, -4, -5), Child = TB(num.ToString(), B("#14110D"), 10.5, true),
+                Margin = new Thickness(0, 0, -4, -5), Child = TB(num.ToString(), B("#0C0C0F"), 10.5, true),
             };
             grid.Children.Add(badge);
         }
@@ -792,7 +793,7 @@ public partial class MainWindow : Window
             {
                 Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(3, 0, 3, 1),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(-4, -5, 0, 0), Child = TB("↑", B("#14110D"), 10.5, true),
+                Margin = new Thickness(-4, -5, 0, 0), Child = TB("↑", B("#0C0C0F"), 10.5, true),
             });
         return grid;
     }
@@ -1063,7 +1064,7 @@ public partial class MainWindow : Window
         inner.Children.Add(rows);
         return new Border
         {
-            Background = new LinearGradientBrush(Color.FromArgb(0x22, rarity.R, rarity.G, rarity.B), Col("#1A1714"), 90),
+            Background = new LinearGradientBrush(Color.FromArgb(0x22, rarity.R, rarity.G, rarity.B), Col("#16171B"), 90),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0xC8, rarity.R, rarity.G, rarity.B)),
             BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(7),
             Padding = new Thickness(18, 14, 18, 16), VerticalAlignment = VerticalAlignment.Top, Child = inner,
@@ -1120,7 +1121,7 @@ public partial class MainWindow : Window
         p.Children.Add(SegBtn("List", "list"));
         return new Border
         {
-            Background = B("#0E0C0A"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            Background = B("#0A0A0D"), BorderBrush = Edge, BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4), Padding = new Thickness(2),
             VerticalAlignment = VerticalAlignment.Center, Child = p,
         };
@@ -1175,7 +1176,7 @@ public partial class MainWindow : Window
     FrameworkElement RollBar(double pct, Brush fill, double w = 190, double h = 12, double? threshold = null)
     {
         var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
-        g.Children.Add(new Border { Background = B("#241F18"), BorderBrush = B("#100E0B"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(h / 2) });
+        g.Children.Add(new Border { Background = B("#1A1B20"), BorderBrush = B("#0A0A0C"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(h / 2) });
 
         var fc = ((SolidColorBrush)fill).Color;
         var grad = new LinearGradientBrush(Lighten(fc, 0.22), fc, 0);
@@ -1213,13 +1214,13 @@ public partial class MainWindow : Window
         if (m.Success) { name = m.Groups[1].Value.Trim(); badge = m.Groups[2].Value + "/" + m.Groups[3].Value; }
 
         var box = new Grid { Width = 54, Height = 54, HorizontalAlignment = HorizontalAlignment.Center };
-        box.Children.Add(new Border { Background = B("#14110D"), BorderBrush = col, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(6) });
+        box.Children.Add(new Border { Background = B("#0C0C0F"), BorderBrush = col, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(6) });
         var art = RealIcon(name, 44, 44);
         if (art != null) { art.Margin = new Thickness(4); box.Children.Add(art); }
         else { var mono = TB(Monogram(name), col, 17, true); mono.HorizontalAlignment = HorizontalAlignment.Center; mono.VerticalAlignment = VerticalAlignment.Center; box.Children.Add(mono); }
         if (badge != null)
         {
-            var bt = TB(badge, B("#14110D"), 9.5, true);
+            var bt = TB(badge, B("#0C0C0F"), 9.5, true);
             box.Children.Add(new Border { Background = col, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -3, -4), Child = bt });
         }
         var cap = TB(name, i.Done ? Soft : Ink, 11, false);

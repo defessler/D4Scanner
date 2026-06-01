@@ -18,7 +18,7 @@
       </Grid.RowDefinitions>
 
       <!-- title bar (drag region) -->
-      <Grid Grid.Row="0" Height="48" Background="#16120E">
+      <Grid Grid.Row="0" Height="48" Background="#121316">
         <StackPanel Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
           <TextBlock Text="◆" Foreground="{StaticResource Accent}" FontSize="15" VerticalAlignment="Center"/>
           <TextBlock Text="D4Scanner" Foreground="{StaticResource Ink}" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
@@ -35,12 +35,12 @@
       <Border Grid.Row="1" Padding="24,18,24,20" BorderThickness="0,0,0,1">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#1C1712" Offset="0"/><GradientStop Color="#121110" Offset="1"/>
+            <GradientStop Color="#1A1B20" Offset="0"/><GradientStop Color="#0E0E11" Offset="1"/>
           </LinearGradientBrush>
         </Border.Background>
         <Border.BorderBrush>
           <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#00C8A24E" Offset="0"/><GradientStop Color="#88C8A24E" Offset="0.5"/><GradientStop Color="#00C8A24E" Offset="1"/>
+            <GradientStop Color="#00D23B3B" Offset="0"/><GradientStop Color="#88D23B3B" Offset="0.5"/><GradientStop Color="#00D23B3B" Offset="1"/>
           </LinearGradientBrush>
         </Border.BorderBrush>
         <StackPanel>
@@ -113,14 +113,14 @@
       <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
         <ScrollViewer.Background>
           <RadialGradientBrush GradientOrigin="0.5,0.28" Center="0.5,0.28" RadiusX="0.9" RadiusY="0.95">
-            <GradientStop Color="#1A1611" Offset="0"/><GradientStop Color="#0E0C0A" Offset="1"/>
+            <GradientStop Color="#17181D" Offset="0"/><GradientStop Color="#0E0E11" Offset="1"/>
           </RadialGradientBrush>
         </ScrollViewer.Background>
         <StackPanel x:Name="Body" Margin="24,20,24,24"/>
       </ScrollViewer>
 
       <!-- status bar -->
-      <Border Grid.Row="3" Background="#0E0C0A" BorderBrush="{StaticResource Edge}" BorderThickness="0,1,0,0" Padding="22,10">
+      <Border Grid.Row="3" Background="#0A0A0D" BorderBrush="{StaticResource Edge}" BorderThickness="0,1,0,0" Padding="22,10">
         <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…" TextTrimming="CharacterEllipsis"/>
       </Border>
     </Grid>
