@@ -520,6 +520,7 @@ public partial class MainWindow : Window
     }
 
     static UIElement Right(FrameworkElement e) { DockPanel.SetDock(e, Dock.Right); return e; }
+    static T Center<T>(T e) where T : FrameworkElement { e.HorizontalAlignment = HorizontalAlignment.Center; return e; }
 
     sealed class Section
     {
@@ -600,7 +601,7 @@ public partial class MainWindow : Window
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
         var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
-        Body.Children.Add(PaperDoll(sections));
+        Body.Children.Add(PaperDoll(sections, r.TargetClass, r.Pct));
 
         // pinned slots → compact side-by-side compares
         var pins = _pinned.Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null)).Where(x => x != null).Cast<Section>().ToList();
@@ -723,7 +724,7 @@ public partial class MainWindow : Window
 
     // Diablo IV character-screen layout: armor down the left, weapons/jewelry down the right,
     // build-wide categories (uniques / skills / paragon) in the middle.
-    UIElement PaperDoll(List<Section> sections)
+    UIElement PaperDoll(List<Section> sections, string? className, int pct)
     {
         var gear = sections.Where(s => s.Gear != null).ToList();
         var cats = sections.Where(s => s.Cat != null).ToList();
@@ -753,6 +754,17 @@ public partial class MainWindow : Window
         foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), true));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
+        // center crest: class + overall completion %, framed (the character-screen centerpiece)
+        var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+        if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 14, true, new Thickness(0, 0, 0, 2))));
+        crest.Children.Add(Center(TBs(pct + "%", Gold, 30, true)));
+        crest.Children.Add(Center(TB("complete", Soft, 11, false)));
+        center.Children.Add(new Border
+        {
+            Child = crest, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14),
+        });
+
         var shownCats = cats.Where(s => s.Total > 0).ToList();   // hide empty/non-functional categories
         if (shownCats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
         foreach (var s in shownCats) center.Children.Add(CatCell(s));
