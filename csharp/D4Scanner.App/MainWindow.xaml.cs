@@ -540,7 +540,7 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
-        Body.Children.Add(SlotGrid(sections));
+        Body.Children.Add(PaperDoll(sections));
         var sel = sections.FirstOrDefault(s => s.Key == _selectedKey);
         if (sel != null) Body.Children.Add(DetailPanel(sel));
 
@@ -599,6 +599,40 @@ public partial class MainWindow : Window
         var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         foreach (var s in sections) wp.Children.Add(SlotTile(s));
         return wp;
+    }
+
+    // Diablo IV character-screen layout: armor down the left, weapons/jewelry down the right,
+    // build-wide categories (uniques / skills / paragon) in the middle.
+    UIElement PaperDoll(List<Section> sections)
+    {
+        var gear = sections.Where(s => s.Gear != null).ToList();
+        var cats = sections.Where(s => s.Cat != null).ToList();
+
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var used = new HashSet<Section>();
+        var left = new StackPanel();
+        var right = new StackPanel();
+        void Place(StackPanel col, string[] order)
+        {
+            foreach (var k in order)
+                foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k)) { col.Children.Add(SlotTile(s)); used.Add(s); }
+        }
+        Place(left, new[] { "helm", "chest", "gloves", "pants", "boots" });
+        Place(right, new[] { "amulet", "ring", "weapon", "offhand" });
+        foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotTile(s));   // any leftovers
+
+        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(10, 0, 10, 0) };
+        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(6, 2, 0, 6)));
+        foreach (var s in cats) center.Children.Add(SlotTile(s));
+
+        Grid.SetColumn(left, 0); grid.Children.Add(left);
+        Grid.SetColumn(center, 1); grid.Children.Add(center);
+        Grid.SetColumn(right, 2); grid.Children.Add(right);
+        return grid;
     }
 
     UIElement SlotTile(Section s)
