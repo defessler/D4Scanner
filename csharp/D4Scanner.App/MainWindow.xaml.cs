@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using D4Scanner.Core;
 using Microsoft.Win32;
 
@@ -72,6 +73,24 @@ public partial class MainWindow : Window
         return new Viewbox { Width = size, Height = size, Child = path, VerticalAlignment = VerticalAlignment.Center };
     }
 
+    // real D4 item art (runtime-fetched, cached) for a named item; null until it's downloaded
+    FrameworkElement? RealIcon(string? name, double w, double h)
+    {
+        var path = IconResolver.Get(name, _target?.Class);
+        if (path == null) return null;
+        try
+        {
+            var bi = new BitmapImage();
+            bi.BeginInit(); bi.UriSource = new Uri(path); bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit();
+            return new Image { Source = bi, Width = w, Height = h, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
+        }
+        catch { return null; }
+    }
+
+    // real item art if available, else the tinted slot silhouette
+    FrameworkElement SlotOrItemIcon(string? itemName, string slotKey, Brush tint, double size) =>
+        RealIcon(itemName, size, size) ?? SlotIcon(slotKey, tint, size) ?? TB("", tint, 1, false);
+
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
@@ -99,7 +118,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         LoadSettings();
-        SetUrlText(_lastUrl ?? "");
+        SetUrlText("");   // start empty with the placeholder; the loaded build shows in the header
         ImportBtn.Click += async (_, _) => await DoImport();
         VisionBtn.Click += async (_, _) => await DoVision();
         TargetBtn.Click += (_, _) => PickTarget();
@@ -204,6 +223,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("detailView", out var dv) && !string.IsNullOrEmpty(dv)) _detailView = dv;
                     if (s.TryGetValue("minRoll", out var mr) && double.TryParse(mr, System.Globalization.CultureInfo.InvariantCulture, out var mrv))
                         _minRollPct = Math.Clamp(mrv, 0, 100);
+                    if (s.TryGetValue("src", out var sr) && !string.IsNullOrEmpty(sr)) _lastImportInput = sr;
                 }
             }
         }
@@ -219,7 +239,7 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
         }
         catch { }
     }
@@ -230,9 +250,24 @@ public partial class MainWindow : Window
         catch { _buildIndex = new(); }
     }
 
+    bool _iconRefreshQueued;
+    async void LoadIconIndex()
+    {
+        try { await IconResolver.LoadIndexAsync(); Dispatcher.Invoke(Render); } catch { }
+    }
+    void OnIconReady()
+    {
+        // coalesce many icon downloads into a single background re-render
+        if (_iconRefreshQueued) return;
+        _iconRefreshQueued = true;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => { _iconRefreshQueued = false; Render(); });
+    }
+
     void StartWatching()
     {
         LoadBuildIndex();
+        IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
+        LoadIconIndex();
         ReloadTarget();
         LoadVision();
         _watcher?.Dispose();
@@ -288,9 +323,25 @@ public partial class MainWindow : Window
 
     async Task SwitchProfile(string profile)
     {
-        if (_target?.Profile == profile || string.IsNullOrEmpty(_lastImportInput)) return;
+        if (_target?.Profile == profile) return;        // already on it
+        var src = _lastImportInput ?? ResolveSrc();      // works even when the build was loaded from disk
+        if (string.IsNullOrEmpty(src))
+        {
+            Status.Text = "re-import this build (paste its URL/slug) to switch profiles";
+            return;
+        }
         _profile = profile;
-        await ImportFrom(_lastImportInput!, profile);
+        await ImportFrom(src!, profile);
+    }
+
+    // best-effort recovery of the import source from the remembered URL/last build name
+    string? ResolveSrc()
+    {
+        var u = (_lastUrl ?? "").Trim();
+        if (u.Length == 0) return null;
+        if (LooksLikeUrl(u)) return u;
+        var m = _buildIndex.FirstOrDefault(b => b.Display == u || b.Title == u);
+        return m?.Slug ?? u;
     }
 
     void PickTarget()
@@ -528,9 +579,10 @@ public partial class MainWindow : Window
         var sp = new StackPanel();
         var top = new DockPanel();
         top.Children.Add(Right(TB(s.Total > 0 ? $"{s.Matched}/{s.Total}" : "", Soft, 12.5, false)));
-        // gear slots show a (status-tinted) equipment icon; non-gear categories keep the diamond marker
-        FrameworkElement marker = (s.Gear != null ? SlotIcon(SlotKey(s.Label), col, 24) : null)
-                                  ?? TB(glyph, col, 13.5, true);
+        // gear slots show real item art (or a status-tinted silhouette); categories keep the diamond
+        string? eqName = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0].Name : null;
+        FrameworkElement marker = s.Gear != null ? SlotOrItemIcon(eqName, SlotKey(s.Label), col, 26)
+                                                 : TB(glyph, col, 13.5, true);
         marker.Margin = new Thickness(0, 0, 10, 0);
         DockPanel.SetDock(marker, Dock.Left); top.Children.Add(marker);
         top.Children.Add(TBs(s.Label, Ink, 14, true));
@@ -641,7 +693,7 @@ public partial class MainWindow : Window
             it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
             it != null ? RarityBrush(it.Rarity) : Miss,
             it != null ? Sub(it) : "nothing scanned in this slot yet",
-            RarityColor(it?.Rarity), eq);
+            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label));
 
         // BUILD WANTS (right): the wanted item (a slot unique, if any) + the wanted affixes/thresholds
         var wantUnique = _target?.Uniques.FirstOrDefault(u => SlotKey(u.Slot ?? "") == SlotKey(label));
@@ -654,19 +706,30 @@ public partial class MainWindow : Window
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,
             wantUnique != null ? (myth ? "Mythic Unique" : "Unique") : "any item with these affixes",
-            wrc, wp);
+            wrc, wp, wantUnique?.Name, SlotKey(label));
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
         return grid;
     }
 
-    UIElement TooltipPanel(string title, string header, Brush headerBrush, string sub, Color rarity, StackPanel rows)
+    UIElement TooltipPanel(string title, string header, Brush headerBrush, string sub, Color rarity, StackPanel rows,
+                           string? iconName, string slotKey)
     {
+        // header band: real item art (or slot silhouette) beside the title/name/subtitle
+        var head = new StackPanel();
+        head.Children.Add(TB(title, Faint, 10.5, true, new Thickness(0, 0, 0, 4)));
+        head.Children.Add(TBs(header, headerBrush, 15.5, true, new Thickness(0, 0, 0, 1)));
+        head.Children.Add(TB(sub, Soft, 11, false));
+
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var icon = SlotOrItemIcon(iconName, slotKey, headerBrush, 50);
+        var iconBox = new Border { Width = 52, Height = 64, Child = icon, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 12, 0) };
+        DockPanel.SetDock(iconBox, Dock.Left); top.Children.Add(iconBox);
+        head.VerticalAlignment = VerticalAlignment.Center; top.Children.Add(head);
+
         var inner = new StackPanel();
-        inner.Children.Add(TB(title, Faint, 10.5, true, new Thickness(0, 0, 0, 4)));
-        inner.Children.Add(TBs(header, headerBrush, 15.5, true, new Thickness(0, 0, 0, 1)));
-        inner.Children.Add(TB(sub, Soft, 11, false, new Thickness(0, 0, 0, 8)));
+        inner.Children.Add(top);
         inner.Children.Add(Divider(rarity, 0xAA));
         inner.Children.Add(rows);
         return new Border

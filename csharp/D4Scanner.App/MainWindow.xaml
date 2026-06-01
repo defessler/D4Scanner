@@ -70,10 +70,11 @@
           <Grid Margin="0,18,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
-              <TextBox x:Name="UrlBox" ToolTip="Type a build name to search, or paste a Maxroll build-guide / planner URL"/>
+              <TextBox x:Name="UrlBox" HorizontalContentAlignment="Left" TextAlignment="Left"
+                       ToolTip="Type a build name to search, or paste a Maxroll build-guide / planner URL"/>
               <TextBlock x:Name="UrlPlaceholder" IsHitTestVisible="False" Foreground="{StaticResource Faint}"
                          Text="Search builds  (e.g. dance of knives)  or paste a Maxroll URL…"
-                         FontSize="14.5" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                         FontSize="15" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="11,0,0,0"/>
               <Popup x:Name="AcPopup" PlacementTarget="{Binding ElementName=UrlBox}" Placement="Bottom"
                      StaysOpen="False" AllowsTransparency="True" Width="{Binding ActualWidth, ElementName=UrlBox}">
                 <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"
