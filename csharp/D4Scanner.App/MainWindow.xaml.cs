@@ -717,6 +717,13 @@ public partial class MainWindow : Window
             };
             grid.Children.Add(badge);
         }
+        if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)   // an upgrade is sitting in your bags
+            grid.Children.Add(new Border
+            {
+                Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(3, 0, 3, 1),
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(-4, -5, 0, 0), Child = TB("↑", B("#14110D"), 10.5, true),
+            });
         return grid;
     }
 
@@ -841,7 +848,26 @@ public partial class MainWindow : Window
             if (g.Extras.Count > 0)
                 sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
         }
-        else sp.Children.Add(CompareCard(g, it, label));
+        else
+        {
+            sp.Children.Add(CompareCard(g, it, label));
+            if (g.UpgradeItems.Count > 0) sp.Children.Add(StashUpgrades(g.UpgradeItems));
+        }
+    }
+
+    // green "better in your bags" block: non-equipped items that beat the equipped one for this slot
+    UIElement StashUpgrades(List<string> ups)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TBs("↑  BETTER IN YOUR BAGS", Green, 12, true, new Thickness(0, 0, 0, 5)));
+        foreach (var u in ups) inner.Children.Add(TB("◆  " + u, Ink, 12.5, false, new Thickness(0, 2, 0, 2)));
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1E, 0x6C, 0xBF, 0x5E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x6C, 0xBF, 0x5E)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 11, 14, 11), Margin = new Thickness(0, 10, 0, 0), Child = inner,
+        };
     }
 
     void ItemHeader(StackPanel sp, GearLiveItem? it)

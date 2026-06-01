@@ -195,6 +195,7 @@ public class Group
     public List<GearLiveItem> LiveItems { get; set; } = new();
     public List<string> Extras { get; set; } = new();
     public string? WantAspect { get; set; }           // aspect the build wants in this slot
+    public List<string> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
 }
 
 public class Category

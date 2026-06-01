@@ -59,6 +59,29 @@ public static class DiffEngine
         return Math.Max(0, Math.Min(100, (v - lo) / (hi - lo) * 100.0));
     }
 
+    /// <summary>How many of a target slot's affixes a given item meets (presence + threshold). For upgrade-finding.</summary>
+    public static int ScoreSlot(TargetGear g, Item item, double gate)
+    {
+        var pool = item.Affixes;
+        var used = new bool[pool.Count];
+        int met = 0;
+        foreach (var aff in g.Affixes)
+        {
+            Affix? match = null;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
+            }
+            if (match == null) continue;
+            bool ok;
+            if (aff.Min != null) ok = (match.Value ?? 0) >= aff.Min.Value;
+            else { var pct = RollPct(match); double thr = aff.MinPercent ?? gate; ok = pct == null || pct.Value >= thr; }
+            if (ok) met++;
+        }
+        return met;
+    }
+
     public static DiffReport Diff(TargetBuild target, LiveBuild live, double defaultMinRollPercent = 50)
     {
         var cats = new List<Category>();
@@ -148,6 +171,16 @@ public static class DiffEngine
                     : new();
                 grp.Extras = extras;
                 grp.WantAspect = g.Aspect;
+
+                // upgrade-finding: non-equipped items of this slot that meet MORE target affixes
+                int eqMet = items.Count(x => x.Status == "met");
+                var baseSlot = SlotBase(g.Slot);
+                foreach (var inv in live.Inventory)
+                {
+                    if (SlotBase(inv.Slot) != baseSlot) continue;
+                    int met = ScoreSlot(g, inv, gate);
+                    if (met > eqMet) grp.UpgradeItems.Add($"{inv.Name}  ({met}/{g.Affixes.Count})");
+                }
                 gearGroups.Add(grp);
             }
             cats.Add(MakeCategory("gear", "Gear & Affixes", gearGroups));

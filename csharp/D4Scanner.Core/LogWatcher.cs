@@ -13,6 +13,7 @@ public sealed class LogWatcher : IDisposable
     readonly bool _equippedOnly;
     readonly GearParser _seg = new();
     readonly Dictionary<string, Item> _items = new();
+    readonly Dictionary<string, Item> _inv = new();
     long _pos;
     string _buf = "";
     System.Threading.Timer? _timer;
@@ -37,7 +38,7 @@ public sealed class LogWatcher : IDisposable
         {
             if (!File.Exists(_path)) return;
             long size = new FileInfo(_path).Length;
-            if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); }  // log cleared/rotated
+            if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); }  // log cleared/rotated
             if (size <= _pos) return;
 
             using var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -54,13 +55,14 @@ public sealed class LogWatcher : IDisposable
             {
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
-                if (_equippedOnly && !item.Equipped) continue;
-                _items[(item.Slot ?? "?") + ":" + item.RawName] = item;
+                // equipped items are the live build; non-equipped (bags/stash) feed upgrade-finding
+                if (item.Equipped || !_equippedOnly) _items[(item.Slot ?? "?") + ":" + item.RawName] = item;
+                else _inv[(item.Slot ?? "?") + ":" + item.RawName] = item;
                 changed = true;
             }
             if (changed)
             {
-                Build = new LiveBuild { Gear = _items.Values.ToList() };
+                Build = new LiveBuild { Gear = _items.Values.ToList(), Inventory = _inv.Values.ToList() };
                 Updated?.Invoke(Build);
             }
         }
