@@ -727,13 +727,34 @@ public partial class MainWindow : Window
         foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), true));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
-        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(6, 0, 0, 6)));
-        foreach (var s in cats) center.Children.Add(SlotTile(s));
+        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
+        foreach (var s in cats) center.Children.Add(CatCell(s));
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
         return grid;
+    }
+
+    // slim framed cell for a build-wide category (uniques / skills / paragon), matching the slot cells
+    UIElement CatCell(Section s)
+    {
+        var (glyph, col) = Look(s.Status);
+        bool selected = s.Key == _selectedKey;
+        var dp = new DockPanel { Width = 196 };
+        var cnt = TB($"{s.Matched}/{s.Total}", Soft, 12, false); cnt.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(cnt, Dock.Right); dp.Children.Add(cnt);
+        var mk = TB(glyph, col, 12.5, true, new Thickness(0, 0, 9, 0)); mk.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(mk, Dock.Left); dp.Children.Add(mk);
+        var nm = TBs(s.Label, Ink, 13, true); nm.VerticalAlignment = VerticalAlignment.Center; dp.Children.Add(nm);
+        var b = new Border
+        {
+            Child = dp, Padding = new Thickness(11, 8, 11, 8), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
+            Background = selected ? TileSel : Card, BorderBrush = selected ? Gold : Edge, BorderThickness = new Thickness(1),
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
+        return b;
     }
 
     // what the build wants in a slot: a targeted unique, else the wanted aspect, else "Any <slot>"
