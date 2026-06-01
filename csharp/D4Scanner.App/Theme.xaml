@@ -1,21 +1,20 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- ============ palette ============ -->
-  <SolidColorBrush x:Key="Bg"        Color="#14100C"/>
-  <SolidColorBrush x:Key="Surface"   Color="#211912"/>
-  <SolidColorBrush x:Key="SurfaceHi" Color="#2C2219"/>
-  <SolidColorBrush x:Key="SurfaceSel" Color="#3A2C1F"/>
-  <SolidColorBrush x:Key="Line"      Color="#3B2E22"/>
-  <SolidColorBrush x:Key="Ink"       Color="#F1E7D7"/>
-  <SolidColorBrush x:Key="Soft"      Color="#A89077"/>
-  <SolidColorBrush x:Key="Faint"     Color="#6E5C49"/>
-  <SolidColorBrush x:Key="Gold"      Color="#E2B85C"/>
-  <SolidColorBrush x:Key="GoldDim"   Color="#7E6532"/>
-  <SolidColorBrush x:Key="Crimson"   Color="#C0432F"/>
-  <SolidColorBrush x:Key="Green"     Color="#67C05C"/>
-  <SolidColorBrush x:Key="Amber"     Color="#E6A646"/>
-  <SolidColorBrush x:Key="Red"       Color="#D15B49"/>
+  <!-- ============ palette: cool charcoal + crimson accent ============ -->
+  <SolidColorBrush x:Key="Bg"        Color="#0E1014"/>
+  <SolidColorBrush x:Key="Surface"   Color="#181B21"/>
+  <SolidColorBrush x:Key="SurfaceHi" Color="#21252E"/>
+  <SolidColorBrush x:Key="SurfaceSel" Color="#2A3140"/>
+  <SolidColorBrush x:Key="Line"      Color="#2B313B"/>
+  <SolidColorBrush x:Key="Ink"       Color="#E9EBEF"/>
+  <SolidColorBrush x:Key="Soft"      Color="#99A1AE"/>
+  <SolidColorBrush x:Key="Faint"     Color="#5C636F"/>
+  <SolidColorBrush x:Key="Accent"    Color="#E24A40"/>
+  <SolidColorBrush x:Key="AccentDim" Color="#8E3029"/>
+  <SolidColorBrush x:Key="Green"     Color="#48C95C"/>
+  <SolidColorBrush x:Key="Amber"     Color="#E3A92F"/>
+  <SolidColorBrush x:Key="Red"       Color="#E24A40"/>
 
   <!-- ============ Button ============ -->
   <Style TargetType="Button">
@@ -36,14 +35,12 @@
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="b" Property="Background" Value="{StaticResource SurfaceHi}"/>
-              <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource GoldDim}"/>
+              <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Faint}"/>
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
               <Setter TargetName="b" Property="Background" Value="{StaticResource SurfaceSel}"/>
             </Trigger>
-            <Trigger Property="IsEnabled" Value="False">
-              <Setter Property="Opacity" Value="0.5"/>
-            </Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -52,7 +49,7 @@
 
   <!-- primary (accent) button -->
   <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-    <Setter Property="Foreground" Value="#221A10"/>
+    <Setter Property="Foreground" Value="#FFFFFF"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Template">
       <Setter.Value>
@@ -60,7 +57,7 @@
           <Border x:Name="b" CornerRadius="7" Padding="{TemplateBinding Padding}">
             <Border.Background>
               <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                <GradientStop Color="#ECC368" Offset="0"/><GradientStop Color="#C99B3E" Offset="1"/>
+                <GradientStop Color="#EC5A50" Offset="0"/><GradientStop Color="#C53A30" Offset="1"/>
               </LinearGradientBrush>
             </Border.Background>
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -75,7 +72,7 @@
     </Setter>
   </Style>
 
-  <!-- a flat icon button for the window caption -->
+  <!-- caption (window) buttons -->
   <Style x:Key="Caption" TargetType="Button">
     <Setter Property="Foreground" Value="{StaticResource Soft}"/>
     <Setter Property="Background" Value="Transparent"/>
@@ -85,12 +82,12 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="b" Background="{TemplateBinding Background}">
+          <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="6">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="b" Property="Background" Value="#33FFFFFF"/>
+              <Setter TargetName="b" Property="Background" Value="#2620242C"/>
               <Setter Property="Foreground" Value="{StaticResource Ink}"/>
             </Trigger>
           </ControlTemplate.Triggers>
@@ -102,8 +99,8 @@
   <!-- ============ TextBox ============ -->
   <Style TargetType="TextBox">
     <Setter Property="Foreground" Value="{StaticResource Ink}"/>
-    <Setter Property="CaretBrush" Value="{StaticResource Gold}"/>
-    <Setter Property="Background" Value="#191309"/>
+    <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
+    <Setter Property="Background" Value="#0D0F13"/>
     <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
     <Setter Property="FontSize" Value="15"/>
     <Setter Property="Padding" Value="10,7"/>
@@ -117,7 +114,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Gold}"/>
+              <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -126,11 +123,11 @@
   </Style>
 
   <!-- ============ Slider ============ -->
-  <Style TargetType="Thumb" x:Key="GoldThumb">
+  <Style TargetType="Thumb" x:Key="AccentThumb">
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Thumb">
-          <Ellipse Width="18" Height="18" Fill="{StaticResource Gold}" Stroke="#22190E" StrokeThickness="1"/>
+          <Ellipse Width="18" Height="18" Fill="{StaticResource Accent}" Stroke="#11141A" StrokeThickness="1.5"/>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -141,9 +138,9 @@
       <Setter.Value>
         <ControlTemplate TargetType="Slider">
           <Grid VerticalAlignment="Center">
-            <Border Height="6" CornerRadius="3" Background="#34281D"/>
+            <Border Height="6" CornerRadius="3" Background="#2B313B"/>
             <Track x:Name="PART_Track">
-              <Track.Thumb><Thumb Style="{StaticResource GoldThumb}"/></Track.Thumb>
+              <Track.Thumb><Thumb Style="{StaticResource AccentThumb}"/></Track.Thumb>
             </Track>
           </Grid>
         </ControlTemplate>
@@ -164,7 +161,7 @@
                 <Thumb>
                   <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                      <Border CornerRadius="4" Background="#4E3D2B"/>
+                      <Border CornerRadius="4" Background="#3A4250"/>
                     </ControlTemplate>
                   </Thumb.Template>
                 </Thumb>
@@ -176,18 +173,18 @@
     </Setter>
   </Style>
 
-  <!-- ============ ProgressBar (rounded gold) ============ -->
+  <!-- ============ ProgressBar (rounded, accent) ============ -->
   <Style TargetType="ProgressBar">
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ProgressBar">
-          <Border CornerRadius="6" Background="#34281D" ClipToBounds="True">
+          <Border CornerRadius="6" Background="#2B313B" ClipToBounds="True">
             <Grid>
               <Border x:Name="PART_Track"/>
               <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="6">
                 <Border.Background>
                   <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#C99B3E" Offset="0"/><GradientStop Color="#ECC368" Offset="1"/>
+                    <GradientStop Color="#C53A30" Offset="0"/><GradientStop Color="#EC5A50" Offset="1"/>
                   </LinearGradientBrush>
                 </Border.Background>
               </Border>

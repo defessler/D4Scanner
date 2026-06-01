@@ -11,9 +11,9 @@ namespace D4Scanner.App;
 public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-    static readonly Brush Ink = B("#F1E7D7"), Soft = B("#A89077"), Faint = B("#6E5C49"), Green = B("#67C05C"),
-        Amber = B("#E6A646"), Miss = B("#D15B49"), Card = B("#211912"), CardHi = B("#2C2219"),
-        Line = B("#3B2E22"), Crimson = B("#C0432F"), Gold = B("#E2B85C"), TileSel = B("#3A2C1F");
+    static readonly Brush Ink = B("#E9EBEF"), Soft = B("#99A1AE"), Faint = B("#5C636F"), Green = B("#48C95C"),
+        Amber = B("#E3A92F"), Miss = B("#E24A40"), Card = B("#181B21"), CardHi = B("#21252E"),
+        Line = B("#2B313B"), Crimson = B("#E24A40"), Gold = B("#E24A40"), TileSel = B("#2A3140");
     const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
 
     LogWatcher? _watcher;
@@ -256,12 +256,21 @@ public partial class MainWindow : Window
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
         OverallBar.Value = r.Pct;
 
-        // build sections: one per gear slot + one per non-gear category
+        // build sections: one per gear slot + one per non-gear category.
+        // gear slots get a unique key by index (several slots share the label "Weapon",
+        // so keying by label would select/highlight all of them at once), and any
+        // duplicated label is numbered — "Weapon 1", "Weapon 2", "Weapon 3".
         var sections = new List<Section>();
-        foreach (var c in r.Categories)
-            if (c.Id == "gear")
-                foreach (var g in c.Groups)
-                    sections.Add(new Section { Key = "gear:" + g.Name, Label = g.Name, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
+        var gearGroups = r.Categories.FirstOrDefault(c => c.Id == "gear")?.Groups ?? new List<Group>();
+        var dupLabels = gearGroups.GroupBy(g => g.Name).Where(grp => grp.Count() > 1).Select(grp => grp.Key).ToHashSet();
+        var seen = new Dictionary<string, int>();
+        for (int gi = 0; gi < gearGroups.Count; gi++)
+        {
+            var g = gearGroups[gi];
+            string label = g.Name;
+            if (dupLabels.Contains(g.Name)) { int n = seen.GetValueOrDefault(g.Name) + 1; seen[g.Name] = n; label = $"{g.Name} {n}"; }
+            sections.Add(new Section { Key = "gear:" + gi, Label = label, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
+        }
         foreach (var c in r.Categories)
             if (c.Id != "gear")
                 sections.Add(new Section { Key = "cat:" + c.Id, Label = ShortName(c.Id), Matched = c.Matched, Total = c.Total, Under = c.Under, Cat = c });
@@ -423,7 +432,7 @@ public partial class MainWindow : Window
 
     void GroupRows(StackPanel sp, Group g)
     {
-        sp.Children.Add(TB($"{g.Name.ToUpperInvariant()}   {g.Matched}/{g.Total}", Crimson, 11.5, true, new Thickness(0, 8, 0, 4)));
+        sp.Children.Add(TB($"{g.Name.ToUpperInvariant()}   {g.Matched}/{g.Total}", Soft, 11.5, true, new Thickness(0, 8, 0, 4)));
         foreach (var i in g.Items)
         {
             var (glyph, col) = Look(i.Status);

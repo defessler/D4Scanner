@@ -18,9 +18,9 @@
       </Grid.RowDefinitions>
 
       <!-- title bar (drag region) -->
-      <Grid Grid.Row="0" Height="48" Background="#1B150F">
+      <Grid Grid.Row="0" Height="48" Background="#14171D">
         <StackPanel Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
-          <TextBlock Text="◆" Foreground="{StaticResource Gold}" FontSize="15" VerticalAlignment="Center"/>
+          <TextBlock Text="◆" Foreground="{StaticResource Accent}" FontSize="15" VerticalAlignment="Center"/>
           <TextBlock Text="D4Scanner" Foreground="{StaticResource Ink}" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
           <TextBlock Text="live build tracker" Foreground="{StaticResource Faint}" FontSize="13" Margin="11,1,0,0" VerticalAlignment="Center"/>
         </StackPanel>
@@ -35,7 +35,7 @@
       <Border Grid.Row="1" Padding="24,18,24,20">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#2C1B14" Offset="0"/><GradientStop Color="#1A120C" Offset="1"/>
+            <GradientStop Color="#181C24" Offset="0"/><GradientStop Color="#0E1014" Offset="1"/>
           </LinearGradientBrush>
         </Border.Background>
         <StackPanel>
@@ -64,14 +64,14 @@
           <Grid Margin="0,20,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
-              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Gold}" FontSize="50" FontWeight="Bold"/>
+              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Accent}" FontSize="50" FontWeight="Bold"/>
               <TextBlock x:Name="OverallCount" Text="" Foreground="{StaticResource Soft}" FontSize="15"
                          VerticalAlignment="Bottom" Margin="18,0,0,11" TextWrapping="Wrap" MaxWidth="360"/>
             </StackPanel>
             <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="28,0,0,8">
               <ProgressBar x:Name="OverallBar" Height="14" Minimum="0" Maximum="100" Value="0"/>
               <DockPanel Margin="0,14,0,0">
-                <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="{StaticResource Gold}" FontSize="14.5" FontWeight="SemiBold"
+                <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="{StaticResource Accent}" FontSize="14.5" FontWeight="SemiBold"
                            DockPanel.Dock="Right" Width="46" TextAlignment="Right" VerticalAlignment="Center"/>
                 <TextBlock Text="flag rolls under" Foreground="{StaticResource Soft}" FontSize="14.5" VerticalAlignment="Center" Margin="0,0,14,0"/>
                 <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="50" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
@@ -87,7 +87,7 @@
       </ScrollViewer>
 
       <!-- status bar -->
-      <Border Grid.Row="3" Background="#100C08" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="22,10">
+      <Border Grid.Row="3" Background="#0B0D11" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="22,10">
         <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…" TextTrimming="CharacterEllipsis"/>
       </Border>
     </Grid>
