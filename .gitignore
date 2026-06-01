@@ -3,6 +3,10 @@ bin/
 obj/
 *.user
 
+# --- IDE ---
+.idea/
+.vs/
+
 # --- caches / scratch ---
 .cache/
 .verify/

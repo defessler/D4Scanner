@@ -17,19 +17,19 @@ csharp/
 
 ## Run it
 
+**Easiest: download the released .exe** — https://github.com/defessler/D4Scanner/releases (self-contained,
+no .NET needed). Or run from source:
 ```powershell
-# the live app:
 dotnet run --project D:\Projects\D4Scanner\csharp\D4Scanner.App
-#   or run the built exe: csharp\D4Scanner.App\bin\Debug\net8.0-windows\D4Scanner.exe
 ```
 
-1. Click **Target…** once and pick your `target.json` (from `d4_compare.py` / the Maxroll import).
-   It's remembered (saved in `%LOCALAPPDATA%\d4scanner\app.json`), and the app **auto-reloads** it if
-   you re-import, so the target stays current too.
-2. The log defaults to `%LOCALAPPDATA%\d4scanner\d4_tts.log` (use **Log…** to change).
-3. Play. As you hover equipped items, the window updates live: overall %, and per slot your item +
-   ✓/✗ for each needed affix **with your rolled value**, plus the extra affixes you have. **Pin** keeps
-   it on top.
+1. **Maxroll build:** paste a build URL in the box and click **Import** — it grabs the build live and
+   becomes your target (remembered across launches; optional profile box, e.g. `Endgame`).
+2. **Paragon/Skills…:** pick screenshots of your paragon boards / glyph tooltips / skill tree to fill in
+   the non-gear half via Claude vision (needs `ANTHROPIC_API_KEY`; result saved + reloaded).
+3. Play. As you hover equipped items the window updates live: overall %, per slot your item + ✓/⚠/✗ for
+   each needed affix **with your rolled value**, **under-rolled** flagged (roll-% slider), plus your extra
+   affixes. **Pin** keeps it on top. (**Target…** / **Log…** override the files if needed.)
 
 ## Terminal version (handy for verifying)
 

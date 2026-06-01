@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     DateTime _targetMtime;
     double _minRollPct = 50;
     string? _lastUrl;
+    VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -35,6 +36,7 @@ public partial class MainWindow : Window
         UrlBox.Text = _lastUrl ?? "";
         ImportBtn.Click += async (_, _) => await DoImport();
         UrlBox.KeyDown += async (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) await DoImport(); };
+        VisionBtn.Click += async (_, _) => await DoVision();
         TargetBtn.Click += (_, _) => PickTarget();
         LogBtn.Click += (_, _) => PickLog();
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
@@ -83,6 +85,7 @@ public partial class MainWindow : Window
     void StartWatching()
     {
         ReloadTarget();
+        LoadVision();
         _watcher?.Dispose();
         _watcher = new LogWatcher(_log, equippedOnly: true);
         _watcher.Updated += b => Dispatcher.Invoke(() => { _live = b; Render(); });
@@ -143,6 +146,59 @@ public partial class MainWindow : Window
         finally { ImportBtn.IsEnabled = true; ImportBtn.Content = prev; }
     }
 
+    // gear comes live from the TTS log; paragon/skills/aspects come from the vision channel
+    LiveBuild EffectiveLive() => new()
+    {
+        Gear = _live.Gear,
+        Skills = _vision?.Skills ?? new(),
+        Paragon = _vision?.Paragon ?? new(),
+        Aspects = _vision?.Aspects ?? new(),
+    };
+
+    string VisionPath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "vision.json");
+    void LoadVision()
+    {
+        try { if (File.Exists(VisionPath)) _vision = JsonSerializer.Deserialize<VisionResult>(File.ReadAllText(VisionPath), D4Scanner.Core.Json.Opts); }
+        catch { }
+    }
+    void SaveVision()
+    {
+        try { Directory.CreateDirectory(Path.GetDirectoryName(VisionPath)!); File.WriteAllText(VisionPath, JsonSerializer.Serialize(_vision, D4Scanner.Core.Json.Opts)); }
+        catch { }
+    }
+
+    async Task DoVision()
+    {
+        var key = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            MessageBox.Show("Set the ANTHROPIC_API_KEY environment variable, then restart the app.\n\n" +
+                "This reads paragon boards, glyph levels, skills and aspects from screenshots via Claude vision.",
+                "API key needed", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var d = new OpenFileDialog
+        {
+            Title = "Pick screenshots — paragon boards, glyph tooltips, skill tree",
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.webp|All files|*.*",
+            Multiselect = true,
+        };
+        if (d.ShowDialog() != true || d.FileNames.Length == 0) return;
+        var prev = VisionBtn.Content; VisionBtn.IsEnabled = false; VisionBtn.Content = "…"; Status.Text = "reading screenshots…";
+        try
+        {
+            var res = await VisionCapture.CaptureAsync(d.FileNames, key!, null, s => Dispatcher.Invoke(() => Status.Text = s));
+            _vision = res; SaveVision(); Render();
+            Status.Text = $"vision: {res.Skills.Count} skills, {res.Paragon.Count} boards, {res.Aspects.Count} aspects";
+        }
+        catch (Exception ex)
+        {
+            Status.Text = "vision failed — " + ex.Message;
+            MessageBox.Show(ex.Message, "Vision capture failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { VisionBtn.IsEnabled = true; VisionBtn.Content = prev; }
+    }
+
     void PickLog()
     {
         var d = new OpenFileDialog { Filter = "TTS log|*.log;*.txt|All files|*.*", Title = "Pick the d4_tts.log" };
@@ -168,10 +224,11 @@ public partial class MainWindow : Window
             Status.Text = $"log: {_log}";
             return;
         }
-        var r = DiffEngine.Diff(_target, _live, _minRollPct);
+        var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
         BuildName.Text = r.TargetName + (r.TargetClass != null ? "  ·  " + r.TargetClass : "");
         OverallPct.Text = r.Pct + "%";
         OverallCount.Text = $"{r.Matched} / {r.Total} met  ·  {_live.Gear.Count} equipped items"
+            + (_vision != null ? "  ·  + vision" : "")
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
         OverallBar.Value = r.Pct;
         Body.Children.Clear();

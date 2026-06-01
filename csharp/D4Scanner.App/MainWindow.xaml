@@ -32,6 +32,7 @@
       <StackPanel>
         <DockPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+            <Button x:Name="VisionBtn" Content="Paragon/Skills…" ToolTip="capture paragon + skills from screenshots (needs ANTHROPIC_API_KEY)"/>
             <Button x:Name="TargetBtn" Content="Target…"/>
             <Button x:Name="LogBtn" Content="Log…"/>
             <Button x:Name="TopmostBtn" Content="Pin"/>
