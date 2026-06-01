@@ -816,7 +816,12 @@ public partial class MainWindow : Window
         sp.Children.Add(hdr);
 
         if (s.Gear != null) GearDetail(sp, s.Gear, s.Label);
-        else if (s.Cat != null) foreach (var g in s.Cat.Groups) GroupRows(sp, g);
+        else if (s.Cat != null)
+        {
+            if (s.Cat.Id == "skills") SkillsView(sp, s.Cat);
+            else if (s.Cat.Id == "paragon") ParagonView(sp, s.Cat);
+            else foreach (var g in s.Cat.Groups) GroupRows(sp, g);
+        }
 
         return new Border
         {
@@ -1076,6 +1081,81 @@ public partial class MainWindow : Window
                 Margin = new Thickness(w * t / 100.0 - 1, -2.5, 0, 0), Opacity = 0.85,
             });
         return g;
+    }
+
+    // ---- game-styled skills & paragon ----
+    static string Monogram(string name)
+    {
+        var w = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (w.Length == 0) return "?";
+        return w.Length == 1 ? w[0][..Math.Min(2, w[0].Length)].ToUpperInvariant()
+                             : ("" + w[0][0] + w[^1][0]).ToUpperInvariant();
+    }
+
+    // a square icon tile (skill / glyph): real art or a monogram, status border, optional rank/level badge
+    UIElement IconTile(ReqItem i)
+    {
+        var col = i.Done ? Green : Miss;
+        string name = i.Label; string? badge = null;
+        var m = System.Text.RegularExpressions.Regex.Match(i.Label, @"^(.*?)\s+(\d+)\s*/\s*(\d+)$");
+        if (m.Success) { name = m.Groups[1].Value.Trim(); badge = m.Groups[2].Value + "/" + m.Groups[3].Value; }
+
+        var box = new Grid { Width = 54, Height = 54, HorizontalAlignment = HorizontalAlignment.Center };
+        box.Children.Add(new Border { Background = B("#14110D"), BorderBrush = col, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(6) });
+        var art = RealIcon(name, 44, 44);
+        if (art != null) { art.Margin = new Thickness(4); box.Children.Add(art); }
+        else { var mono = TB(Monogram(name), col, 17, true); mono.HorizontalAlignment = HorizontalAlignment.Center; mono.VerticalAlignment = VerticalAlignment.Center; box.Children.Add(mono); }
+        if (badge != null)
+        {
+            var bt = TB(badge, B("#14110D"), 9.5, true);
+            box.Children.Add(new Border { Background = col, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -3, -4), Child = bt });
+        }
+        var cap = TB(name, i.Done ? Soft : Ink, 11, false);
+        cap.TextWrapping = TextWrapping.Wrap; cap.TextAlignment = TextAlignment.Center; cap.Width = 82; cap.Margin = new Thickness(0, 5, 0, 0);
+        var stack = new StackPanel { Width = 90, Margin = new Thickness(0, 0, 6, 12) };
+        stack.Children.Add(box); stack.Children.Add(cap);
+        return stack;
+    }
+
+    UIElement Chip(ReqItem i)
+    {
+        var col = i.Done ? Green : Miss;
+        var sp2 = new StackPanel { Orientation = Orientation.Horizontal };
+        var dot = TB("◆", col, 11, true, new Thickness(0, 0, 7, 0)); dot.VerticalAlignment = VerticalAlignment.Center;
+        var t = TB(i.Label, i.Done ? Soft : Ink, 12.5, false); t.VerticalAlignment = VerticalAlignment.Center;
+        sp2.Children.Add(dot); sp2.Children.Add(t);
+        return new Border { Child = sp2, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(12, 7, 14, 7), Margin = new Thickness(0, 0, 8, 8) };
+    }
+
+    void SkillsView(StackPanel sp, Category cat)
+    {
+        foreach (var g in cat.Groups)
+        {
+            sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Gold, 11.5, true, new Thickness(0, 10, 0, 6)));
+            if (g.Name == "Key Passives")
+            {
+                var wrap = new WrapPanel();
+                foreach (var i in g.Items) wrap.Children.Add(Chip(i));
+                sp.Children.Add(wrap);
+            }
+            else
+            {
+                var bar = new WrapPanel();
+                foreach (var i in g.Items) bar.Children.Add(IconTile(i));
+                sp.Children.Add(bar);
+            }
+        }
+    }
+
+    void ParagonView(StackPanel sp, Category cat)
+    {
+        foreach (var g in cat.Groups)
+        {
+            sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Gold, 11.5, true, new Thickness(0, 10, 0, 6)));
+            var wrap = new WrapPanel();
+            foreach (var i in g.Items) wrap.Children.Add(g.Name == "Glyphs" ? IconTile(i) : Chip(i));
+            sp.Children.Add(wrap);
+        }
     }
 
     void GroupRows(StackPanel sp, Group g)
