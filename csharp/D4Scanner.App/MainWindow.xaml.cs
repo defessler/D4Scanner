@@ -33,6 +33,21 @@ public partial class MainWindow : Window
         return Ink;
     }
 
+    static Color Col(string hex) => (Color)ColorConverter.ConvertFromString(hex);
+    static Color RarityColor(string? rarity) => ((SolidColorBrush)RarityBrush(rarity)).Color;
+    static Color Lighten(Color c, double f) =>
+        Color.FromRgb((byte)(c.R + (255 - c.R) * f), (byte)(c.G + (255 - c.G) * f), (byte)(c.B + (255 - c.B) * f));
+
+    // a horizontal transparent→color→transparent gradient (ornamental dividers / tints)
+    static Brush HGrad(Color c, byte midAlpha)
+    {
+        var b = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(0, c.R, c.G, c.B), 0));
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(midAlpha, c.R, c.G, c.B), 0.5));
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(0, c.R, c.G, c.B), 1));
+        return b;
+    }
+
     // map a slot/group label to a slot-icon key (see Icons.Geom)
     static string SlotKey(string label)
     {
@@ -74,7 +89,8 @@ public partial class MainWindow : Window
     bool _settingText;                     // guard: programmatic UrlBox edits shouldn't trigger autocomplete
     string? _profile;                      // active profile name (for re-import)
     string? _lastImportInput;              // the slug/url last imported (for profile re-import)
-    string _detailView = "compare";        // "compare" (3-pane) | "list"
+    string _detailView = "compare";        // "compare" (tooltip card) | "list"
+    bool _rawView;                         // body shows the raw build details instead of the grid
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -88,6 +104,7 @@ public partial class MainWindow : Window
         VisionBtn.Click += async (_, _) => await DoVision();
         TargetBtn.Click += (_, _) => PickTarget();
         LogBtn.Click += (_, _) => PickLog();
+        RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); };
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
@@ -282,7 +299,12 @@ public partial class MainWindow : Window
     {
         AcPopup.IsOpen = false;
         var input = _pickedSlug ?? (UrlBox.Text ?? "").Trim();
-        if (input.Length == 0) { Status.Text = "type a build name to search, or paste a Maxroll URL"; return Task.CompletedTask;
+        if (input.Length == 0) { Status.Text = "type a build name to search, or paste a Maxroll URL"; return Task.CompletedTask; }
+        // resolve a typed/pre-filled build name (e.g. "Flurry · Rogue") back to its slug
+        if (_pickedSlug == null && !LooksLikeUrl(input))
+        {
+            var m = _buildIndex.FirstOrDefault(b => b.Display == input || b.Title == input);
+            if (m != null) input = m.Slug;
         }
         return ImportFrom(input, _profile);
     }
@@ -428,6 +450,14 @@ public partial class MainWindow : Window
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
         OverallBar.Value = r.Pct;
 
+        if (_rawView)
+        {
+            Body.Children.Clear();
+            Body.Children.Add(RawView());
+            Status.Text = $"build details  ·  target: {Path.GetFileName(_targetPath)}";
+            return;
+        }
+
         // build sections: one per gear slot + one per non-gear category.
         // gear slots get a unique key by index (several slots share the label "Weapon",
         // so keying by label would select/highlight all of them at once), and any
@@ -557,9 +587,20 @@ public partial class MainWindow : Window
     void GearDetail(StackPanel sp, Group g)
     {
         var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
+        if (_detailView == "list")
+        {
+            ItemHeader(sp, it);
+            foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
+            if (g.Extras.Count > 0)
+                sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
+        }
+        else sp.Children.Add(CompareCard(g, it));
+    }
+
+    void ItemHeader(StackPanel sp, GearLiveItem? it)
+    {
         if (it != null)
         {
-            // tooltip-style header: rarity-colored serif caps name + a muted subtitle
             sp.Children.Add(TBs(it.Name.ToUpperInvariant(), RarityBrush(it.Rarity), 16, true, new Thickness(0, 0, 0, 1)));
             var parts = new List<string>();
             if (!string.IsNullOrEmpty(it.Rarity)) parts.Add(it.Rarity!);
@@ -567,68 +608,76 @@ public partial class MainWindow : Window
             sp.Children.Add(TB(string.Join("   ·   ", parts), Soft, 12, false, new Thickness(0, 0, 0, 12)));
         }
         else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 10)));
+    }
 
-        if (_detailView == "list") foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
-        else CompareTable(sp, g);
+    // ---- compare view: a D4/Maxroll-style item tooltip (rarity-tinted card, affix lines, gain/loss coloring) ----
+    UIElement CompareCard(Group g, GearLiveItem? it)
+    {
+        var rc = RarityColor(it?.Rarity);
+        var inner = new StackPanel();
+
+        // header: rarity-colored serif name + a muted subtitle (rarity · item power)
+        inner.Children.Add(TBs(it != null ? it.Name.ToUpperInvariant() : "— NO ITEM CAPTURED —",
+            it != null ? RarityBrush(it.Rarity) : Miss, 16.5, true, new Thickness(0, 0, 0, 1)));
+        var sub = it != null
+            ? string.Join("   ·   ", new[] { it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0))
+            : "this slot hasn’t been scanned yet";
+        inner.Children.Add(TB(sub, Soft, 11.5, false, new Thickness(0, 0, 0, 8)));
+        inner.Children.Add(Divider(rc, 0xAA));
+
+        foreach (var i in g.Items) inner.Children.Add(TipRow(i));
 
         if (g.Extras.Count > 0)
-            sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
+        {
+            inner.Children.Add(Divider(rc, 0x55));
+            inner.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false));
+        }
+
+        return new Border
+        {
+            Background = new LinearGradientBrush(Color.FromArgb(0x26, rc.R, rc.G, rc.B), Col("#1A1714"), 90),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0xD0, rc.R, rc.G, rc.B)),
+            BorderThickness = new Thickness(1.4), CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(20, 16, 20, 18), Child = inner,
+        };
     }
 
-    // ---- compare view: Yours | Δ | Target ----
-    Grid CompareCols()
-    {
-        var g = new Grid();
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // affix
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(165) });                  // yours
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });                  // delta
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });                  // target
-        return g;
-    }
+    UIElement Divider(Color c, byte alpha) =>
+        new Border { Height = 1, Margin = new Thickness(0, 2, 0, 9), Background = HGrad(c, alpha) };
 
-    void CompareTable(StackPanel sp, Group g)
-    {
-        var head = CompareCols(); head.Margin = new Thickness(0, 2, 0, 5);
-        void H(int c, string t, HorizontalAlignment a)
-        { var x = TB(t, Faint, 11, true); x.HorizontalAlignment = a; Grid.SetColumn(x, c); head.Children.Add(x); }
-        H(0, "AFFIX", HorizontalAlignment.Left); H(1, "YOURS", HorizontalAlignment.Left);
-        H(2, "Δ", HorizontalAlignment.Left); H(3, "TARGET", HorizontalAlignment.Left);
-        sp.Children.Add(new Border { Child = head, BorderBrush = Line, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(0, 0, 0, 5) });
-
-        foreach (var i in g.Items) sp.Children.Add(CompareRow(i));
-    }
-
-    UIElement CompareRow(ReqItem i)
+    // a tooltip affix line: bullet + "value affix-name" with roll bar, gain/loss colored, target on the right
+    UIElement TipRow(ReqItem i)
     {
         var (glyph, col) = Look(i.Status);
-        var g = CompareCols(); g.Margin = new Thickness(0, 6, 0, 6);
+        var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // affix label + marker
-        var lab = new DockPanel();
-        var mk = TB(glyph, col, 13, true, new Thickness(0, 0, 8, 0)); DockPanel.SetDock(mk, Dock.Left); lab.Children.Add(mk);
-        lab.Children.Add(TB(i.Label, i.Status == "met" ? Soft : Ink, 13.5, false));
-        Grid.SetColumn(lab, 0); g.Children.Add(lab);
+        var mk = TB(glyph, col, 13, true); mk.VerticalAlignment = VerticalAlignment.Top; mk.Margin = new Thickness(0, 1, 0, 0);
+        Grid.SetColumn(mk, 0); g.Children.Add(mk);
 
-        // yours: value + a small roll bar
-        var yours = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        yours.Children.Add(TB(i.Status == "missing" ? "—" : (i.Val ?? "ok"), i.Status == "missing" ? Faint : Ink, 13.5, true));
+        // value + name (value first, like a D4 tooltip), then a thin roll bar
+        var mid = new StackPanel();
+        var line = new StackPanel { Orientation = Orientation.Horizontal };
+        if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val))
+            line.Children.Add(TB(i.Val + "  ", col, 13.5, true));
+        line.Children.Add(TB(i.Label, Ink, 13.5, false));
+        mid.Children.Add(line);
         if (i.Status != "missing" && i.RollPct != null)
         {
-            var bar = RollBar(i.RollPct.Value, col, 138, 7);
-            bar.HorizontalAlignment = HorizontalAlignment.Left; bar.Margin = new Thickness(0, 4, 0, 0);
-            yours.Children.Add(bar);
+            var bar = RollBar(i.RollPct.Value, col, 250, 8, _minRollPct); bar.Margin = new Thickness(0, 5, 0, 0);
+            mid.Children.Add(bar);
         }
-        Grid.SetColumn(yours, 1); g.Children.Add(yours);
+        Grid.SetColumn(mid, 1); g.Children.Add(mid);
 
-        // delta vs the target threshold
-        var (arrow, word) = i.Status == "met" ? ("▲", "ok") : i.Status == "under" ? ("▼", "low") : ("✕", "missing");
-        var d = TB(arrow + "  " + word, col, 12.5, true); d.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(d, 2); g.Children.Add(d);
-
-        // target requirement
-        var tt = TB(i.Need ?? (i.Status == "missing" ? "required" : "any roll"), Soft, 12.5, false);
-        tt.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(tt, 3); g.Children.Add(tt);
+        // right: delta vs target + threshold
+        var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(14, 0, 0, 0) };
+        var (arrow, word) = i.Status == "met" ? ("▲", "meets") : i.Status == "under" ? ("▼", "low roll") : ("✕", "missing");
+        var d = TB(arrow + "  " + word, col, 12, true); d.HorizontalAlignment = HorizontalAlignment.Right; right.Children.Add(d);
+        var need = i.Need ?? (i.Status == "missing" ? "required" : null);
+        if (need != null) { var n = TB(need, Soft, 11, false); n.HorizontalAlignment = HorizontalAlignment.Right; n.Margin = new Thickness(0, 1, 0, 0); right.Children.Add(n); }
+        Grid.SetColumn(right, 2); g.Children.Add(right);
         return g;
     }
 
@@ -662,42 +711,56 @@ public partial class MainWindow : Window
     UIElement AffixRow(ReqItem i)
     {
         var (glyph, col) = Look(i.Status);
-        var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26 * UI) });           // mark
+        var row = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });               // mark
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                   // bar
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                   // value
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });              // bar (fixed → aligned)
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });              // value (fixed → aligned)
 
-        var mark = TB(glyph, col, 14, true); Grid.SetColumn(mark, 0); row.Children.Add(mark);
-        var lbl = TB(i.Label, i.Status == "met" ? Soft : Ink, 14, false); Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+        var mark = TB(glyph, col, 14, true); mark.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB(i.Label, i.Status == "met" ? Soft : Ink, 14, false); lbl.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
 
         if (i.Status != "missing" && i.RollPct != null)
         {
-            var bar = RollBar(i.RollPct.Value, col);
-            bar.Margin = new Thickness(8, 0, 8, 0); Grid.SetColumn(bar, 2); row.Children.Add(bar);
+            var bar = RollBar(i.RollPct.Value, col, 190, 12, _minRollPct);
+            bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
         }
 
         string vtext = i.Status == "missing"
             ? "—"
             : (i.Val ?? "ok")
-              + (i.RollPct != null ? $"  {Math.Round(i.RollPct.Value)}%" : "")
-              + (i.Status == "under" && i.Need != null ? "  " + i.Need : "");
-        var val = TB(vtext, i.Status == "missing" ? Soft : col, 12.5, i.Status != "missing", new Thickness(8, 0, 0, 0));
-        val.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(val, 3); row.Children.Add(val);
+              + (i.RollPct != null ? $"   {Math.Round(i.RollPct.Value)}%" : "")
+              + (i.Status == "under" && i.Need != null ? "   " + i.Need : "");
+        var val = TB(vtext, i.Status == "missing" ? Soft : col, 12.5, i.Status != "missing");
+        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
 
-    // a roll-quality bar: track + left-aligned fill at pct% of width
-    FrameworkElement RollBar(double pct, Brush fill, double w = 170, double h = 14)
+    // a roll-quality bar: inset track + gradient fill at pct% of width, with an optional
+    // target-threshold tick so you can see how far the roll is from where the build wants it.
+    FrameworkElement RollBar(double pct, Brush fill, double w = 190, double h = 12, double? threshold = null)
     {
-        var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center };
-        g.Children.Add(new Border { Background = Line, CornerRadius = new CornerRadius(h / 2) });
+        var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
+        g.Children.Add(new Border { Background = B("#241F18"), BorderBrush = B("#100E0B"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(h / 2) });
+
+        var fc = ((SolidColorBrush)fill).Color;
+        var grad = new LinearGradientBrush(Lighten(fc, 0.22), fc, 0);
         g.Children.Add(new Border
         {
-            Width = Math.Max(3, w * Math.Clamp(pct, 0, 100) / 100.0),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Background = fill, CornerRadius = new CornerRadius(h / 2),
+            Width = Math.Max(4, w * Math.Clamp(pct, 0, 100) / 100.0),
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0),
+            Background = grad, CornerRadius = new CornerRadius(h / 2),
         });
+
+        if (threshold is double t && t > 0 && t < 100)
+            g.Children.Add(new Border
+            {
+                Width = 2, Height = h + 5, Background = Gold, HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(w * t / 100.0 - 1, -2.5, 0, 0), Opacity = 0.85,
+            });
         return g;
     }
 
@@ -714,4 +777,66 @@ public partial class MainWindow : Window
             sp.Children.Add(row);
         }
     }
+
+    // ---- raw build details ----
+    UIElement RawView()
+    {
+        var t = _target!;
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("BUILD DETAILS", Gold, 16, true, new Thickness(0, 0, 0, 2)));
+        var meta = new[] { t.Class, t.Profile, t.Source }.Where(x => !string.IsNullOrEmpty(x));
+        sp.Children.Add(TB(t.Name + (meta.Any() ? "   ·   " + string.Join("   ·   ", meta) : ""), Soft, 12.5, false, new Thickness(0, 0, 0, 4)));
+
+        RawHeader(sp, "GEAR & AFFIX TARGETS");
+        foreach (var ge in t.Gear)
+        {
+            sp.Children.Add(TBs((ge.Label ?? ge.Slot).ToUpperInvariant(), Ink, 12.5, true, new Thickness(0, 9, 0, 2)));
+            if (ge.Affixes.Count == 0) sp.Children.Add(RawLine("—"));
+            foreach (var a in ge.Affixes)
+            {
+                string thr = a.MinPercent != null ? $"   ≥ {a.MinPercent}% roll" : a.Min != null ? $"   ≥ {a.Min}" : "";
+                sp.Children.Add(RawLine("◆  " + a.Name + thr));
+            }
+        }
+        if (t.Uniques.Count > 0)
+        {
+            RawHeader(sp, "UNIQUES");
+            foreach (var u in t.Uniques)
+                sp.Children.Add(RawLine("◆  " + u.Name + (u.Slot != null ? "   —   " + u.Slot : "") + (u.Mythic ? "   (Mythic)" : "")));
+        }
+        if (t.Aspects.Count > 0) { RawHeader(sp, "ASPECTS"); foreach (var a in t.Aspects) sp.Children.Add(RawLine("◆  " + a)); }
+        if (t.Skills.Count > 0)
+        {
+            RawHeader(sp, "SKILLS");
+            foreach (var s in t.Skills) sp.Children.Add(RawLine("◆  " + s.Name + (s.Rank != null ? $"   (rank {s.Rank})" : "")));
+        }
+        if (t.KeyPassives.Count > 0) { RawHeader(sp, "KEY PASSIVES"); foreach (var k in t.KeyPassives) sp.Children.Add(RawLine("◆  " + k)); }
+        if (t.Paragon != null && (t.Paragon.Boards.Count > 0 || t.Paragon.Glyphs.Count > 0))
+        {
+            RawHeader(sp, "PARAGON");
+            foreach (var b in t.Paragon.Boards) sp.Children.Add(RawLine("▸  " + b));
+            foreach (var gl in t.Paragon.Glyphs)
+                sp.Children.Add(RawLine("◆  glyph: " + gl.Name + (gl.Level != null ? $"   (lvl {gl.Level})" : "")));
+        }
+
+        RawHeader(sp, "RAW JSON");
+        string json; try { json = JsonSerializer.Serialize(t, new JsonSerializerOptions { WriteIndented = true }); } catch { json = "(unavailable)"; }
+        sp.Children.Add(new TextBox
+        {
+            Text = json, IsReadOnly = true, IsReadOnlyCaretVisible = false,
+            FontFamily = new FontFamily("Consolas, Cascadia Mono, Courier New"), FontSize = 12, Foreground = Soft,
+            Background = B("#0D0B09"), BorderBrush = Edge, BorderThickness = new Thickness(1), Padding = new Thickness(12),
+            TextWrapping = TextWrapping.NoWrap, MaxHeight = 460, Margin = new Thickness(0, 4, 0, 0),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+        });
+
+        return new Border
+        {
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5), Padding = new Thickness(22, 18, 22, 20), Child = sp,
+        };
+    }
+
+    void RawHeader(StackPanel sp, string t) => sp.Children.Add(TBs(t, Gold, 12.5, true, new Thickness(0, 16, 0, 4)));
+    UIElement RawLine(string text) => TB(text, Soft, 12.5, false, new Thickness(14, 2, 0, 2));
 }
