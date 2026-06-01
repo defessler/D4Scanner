@@ -219,6 +219,18 @@ public static class MaxrollImporter
         return null;
     }
 
+    // resolve a socketed gem/rune id ("Gem_Diamond_03", "Rune_Effect_MobilityBuff") to a readable name
+    static string SocketName(string id, JsonElement dm)
+    {
+        var n = Lookup(dm, "items", id, "");
+        if (n.Length > 0) return (id.StartsWith("Rune", StringComparison.OrdinalIgnoreCase) ? "Rune: " : "Gem: ") + n;
+        var s = Regex.Replace(id, @"^(Gem|Rune)_(Condition|Effect)?_?", "");
+        s = Regex.Replace(s, @"_\d+$", "");
+        s = Regex.Replace(s, @"_", " ");
+        s = Regex.Replace(s, @"(?<=[a-z])(?=[A-Z])", " ").Trim();
+        return (id.StartsWith("Rune", StringComparison.OrdinalIgnoreCase) ? "Rune: " : "Gem: ") + s;
+    }
+
     static string Lookup(JsonElement dm, string map, string id, string fallback)
     {
         if (dm.TryGetProperty(map, out var m) && m.TryGetProperty(id, out var e) && e.TryGetProperty("name", out var n))
@@ -287,11 +299,17 @@ public static class MaxrollImporter
                             if (an != null && seenAff.Add(an)) affixes.Add(new TargetAffix { Name = an, Tempered = tempered });
                         }
 
-                if ((affixes.Count > 0 || aspectName != null) && slot != "unknown")
+                var sockets = new List<string>();
+                if (item.TryGetProperty("sockets", out var sk) && sk.ValueKind == JsonValueKind.Array)
+                    foreach (var so in sk.EnumerateArray())
+                        if (so.ValueKind == JsonValueKind.String)
+                        { var soid = so.GetString(); if (!string.IsNullOrEmpty(soid)) sockets.Add(SocketName(soid!, dm)); }
+
+                if ((affixes.Count > 0 || aspectName != null || sockets.Count > 0) && slot != "unknown")
                 {
                     string sid = slot, label = char.ToUpper(slot[0]) + slot[1..];
                     if (slot == "ring") { ringN++; sid = "ring" + ringN; label = "Ring #" + ringN; }
-                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = affixes, Aspect = aspectName });
+                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = affixes, Aspect = aspectName, Sockets = sockets });
                 }
             }
 

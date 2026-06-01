@@ -944,6 +944,21 @@ public partial class MainWindow : Window
         return t;
     }
 
+    // wanted gems / runes for the slot (live socket contents aren't readable via TTS — target-only)
+    UIElement SocketsBox(List<string> sockets)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TB("SOCKETS", Faint, 9.5, true, new Thickness(0, 0, 0, 2)));
+        foreach (var s in sockets) inner.Children.Add(TB("◆  " + s, B("#6E9BD6"), 12, false, new Thickness(0, 1, 0, 1)));
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1A, 0x6E, 0x9B, 0xD6)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0x6E, 0x9B, 0xD6)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 8, 0, 0), Child = inner,
+        };
+    }
+
     // the item's legendary aspect / special ability, shown in a D4-style orange box
     UIElement AspectBox(string aspect)
     {
@@ -994,6 +1009,7 @@ public partial class MainWindow : Window
         var wp = new StackPanel();
         foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
+        if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
         var right = TooltipPanel("BUILD WANTS",
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,

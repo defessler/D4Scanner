@@ -171,6 +171,7 @@ public static class DiffEngine
                     : new();
                 grp.Extras = extras;
                 grp.WantAspect = g.Aspect;
+                grp.WantSockets = g.Sockets;
 
                 // upgrade-finding: non-equipped items of this slot that meet MORE target affixes
                 int eqMet = items.Count(x => x.Status == "met");

@@ -87,6 +87,7 @@ public class TargetGear
     public string? Label { get; set; }
     public List<TargetAffix> Affixes { get; set; } = new();
     public string? Aspect { get; set; }   // legendary aspect the build wants on this slot
+    public List<string> Sockets { get; set; } = new();   // wanted gems/runes socketed in this slot
 }
 
 /// <summary>A wanted affix, optionally with a value threshold. Deserializes from either a bare
@@ -195,6 +196,7 @@ public class Group
     public List<GearLiveItem> LiveItems { get; set; } = new();
     public List<string> Extras { get; set; } = new();
     public string? WantAspect { get; set; }           // aspect the build wants in this slot
+    public List<string> WantSockets { get; set; } = new();   // gems/runes the build wants socketed here
     public List<string> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
 }
 
