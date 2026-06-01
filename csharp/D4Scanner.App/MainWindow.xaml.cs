@@ -608,31 +608,106 @@ public partial class MainWindow : Window
         var gear = sections.Where(s => s.Gear != null).ToList();
         var cats = sections.Where(s => s.Cat != null).ToList();
 
-        var grid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        // equipment priority: missing first, then under-rolled, then met; number 1..N
+        var ordered = gear
+            .OrderBy(s => s.Status == "missing" ? 0 : s.Status == "under" ? 1 : 2)
+            .ThenByDescending(s => s.Total - s.Matched)
+            .ToList();
+        var prio = new Dictionary<Section, int>();
+        for (int i = 0; i < ordered.Count; i++) prio[ordered[i]] = i + 1;
+
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 8), HorizontalAlignment = HorizontalAlignment.Center };
+        for (int i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var used = new HashSet<Section>();
         var left = new StackPanel();
         var right = new StackPanel();
-        void Place(StackPanel col, string[] order)
+        void Place(StackPanel col, string[] order, bool alignRight)
         {
             foreach (var k in order)
-                foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k)) { col.Children.Add(SlotTile(s)); used.Add(s); }
+                foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k))
+                { col.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), alignRight)); used.Add(s); }
         }
-        Place(left, new[] { "helm", "chest", "gloves", "pants", "boots" });
-        Place(right, new[] { "amulet", "ring", "weapon", "offhand" });
-        foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotTile(s));   // any leftovers
+        Place(left, new[] { "helm", "chest", "gloves", "pants", "boots", "weapon" }, false);
+        Place(right, new[] { "amulet", "ring", "offhand" }, true);
+        foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), true));
 
-        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(10, 0, 10, 0) };
-        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(6, 2, 0, 6)));
+        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
+        if (cats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(6, 0, 0, 6)));
         foreach (var s in cats) center.Children.Add(SlotTile(s));
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
         return grid;
+    }
+
+    // what the build wants in a slot: a targeted unique, else the wanted aspect, else "Any <slot>"
+    (string name, Brush col, string? iconName) WantedFor(Section s)
+    {
+        var key = SlotKey(s.Label);
+        var u = _target?.Uniques.FirstOrDefault(x => SlotKey(x.Slot ?? "") == key);
+        if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name);
+        if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null);
+        return ("Any " + s.Label, Soft, null);
+    }
+
+    // a framed item icon with a status-colored border and a priority number badge
+    FrameworkElement IconBox(Section s, int num)
+    {
+        var (_, scol) = Look(s.Status);
+        var (_, _, iconName) = WantedFor(s);
+        var grid = new Grid { Width = 48, Height = 48 };
+        grid.Children.Add(new Border { Background = B("#14110D"), BorderBrush = scol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(4) });
+        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), Soft, 40);
+        art.Margin = new Thickness(4); art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(art);
+        if (num > 0)
+        {
+            var badge = new Border
+            {
+                Background = scol, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, -4, -5), Child = TB(num.ToString(), B("#14110D"), 10.5, true),
+            };
+            grid.Children.Add(badge);
+        }
+        return grid;
+    }
+
+    // a Mobalytics-style slot row: icon + (slot label / wanted item name), clickable to open the compare
+    UIElement SlotCell(Section s, int num, bool alignRight)
+    {
+        var (name, ncol, _) = WantedFor(s);
+        bool selected = s.Key == _selectedKey;
+
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var lbl = TB(s.Label, Soft, 11.5, false);
+        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 200;
+        if (alignRight)
+        {
+            lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
+            lbl.TextAlignment = nm.TextAlignment = TextAlignment.Right;
+        }
+        text.Children.Add(lbl); text.Children.Add(nm);
+
+        var icon = IconBox(s, num);
+        var dp = new DockPanel { Width = 286 };
+        if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
+        else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
+        dp.Children.Add(icon); dp.Children.Add(text);
+
+        var b = new Border
+        {
+            Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
+            Background = selected ? TileSel : System.Windows.Media.Brushes.Transparent,
+            BorderBrush = selected ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(1),
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        b.MouseEnter += (_, _) => { if (!selected) b.Background = Card; };
+        b.MouseLeave += (_, _) => { if (!selected) b.Background = System.Windows.Media.Brushes.Transparent; };
+        b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
+        return b;
     }
 
     UIElement SlotTile(Section s)

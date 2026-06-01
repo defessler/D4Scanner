@@ -57,6 +57,7 @@ public class LiveParagon
 public class LiveBuild
 {
     public List<Item> Gear { get; set; } = new();
+    public List<Item> Inventory { get; set; } = new();   // non-equipped items seen in bags/stash
     public List<string> Aspects { get; set; } = new();
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
