@@ -18,7 +18,7 @@
       </Grid.RowDefinitions>
 
       <!-- title bar (drag region) -->
-      <Grid Grid.Row="0" Height="48" Background="#14171D">
+      <Grid Grid.Row="0" Height="48" Background="#16120E">
         <StackPanel Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
           <TextBlock Text="◆" Foreground="{StaticResource Accent}" FontSize="15" VerticalAlignment="Center"/>
           <TextBlock Text="D4Scanner" Foreground="{StaticResource Ink}" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
@@ -32,17 +32,23 @@
       </Grid>
 
       <!-- header -->
-      <Border Grid.Row="1" Padding="24,18,24,20">
+      <Border Grid.Row="1" Padding="24,18,24,20" BorderThickness="0,0,0,1">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#181C24" Offset="0"/><GradientStop Color="#0E1014" Offset="1"/>
+            <GradientStop Color="#1C1712" Offset="0"/><GradientStop Color="#121110" Offset="1"/>
           </LinearGradientBrush>
         </Border.Background>
+        <Border.BorderBrush>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#00C8A24E" Offset="0"/><GradientStop Color="#88C8A24E" Offset="0.5"/><GradientStop Color="#00C8A24E" Offset="1"/>
+          </LinearGradientBrush>
+        </Border.BorderBrush>
         <StackPanel>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="BuildName" Grid.Column="0" Text="No build loaded" Foreground="{StaticResource Ink}"
-                       FontSize="27" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                       FontFamily="Book Antiqua, Palatino Linotype, Georgia" FontSize="29" FontWeight="Bold"
+                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <Button x:Name="VisionBtn" Content="Paragon / Skills" FontSize="14"/>
               <Button x:Name="TargetBtn" Content="Target" FontSize="14" Margin="9,0,0,0"/>
@@ -87,7 +93,7 @@
       </ScrollViewer>
 
       <!-- status bar -->
-      <Border Grid.Row="3" Background="#0B0D11" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="22,10">
+      <Border Grid.Row="3" Background="#0E0C0A" BorderBrush="{StaticResource Edge}" BorderThickness="0,1,0,0" Padding="22,10">
         <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…" TextTrimming="CharacterEllipsis"/>
       </Border>
     </Grid>

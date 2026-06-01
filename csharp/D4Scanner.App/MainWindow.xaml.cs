@@ -11,10 +11,27 @@ namespace D4Scanner.App;
 public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-    static readonly Brush Ink = B("#E9EBEF"), Soft = B("#99A1AE"), Faint = B("#5C636F"), Green = B("#48C95C"),
-        Amber = B("#E3A92F"), Miss = B("#E24A40"), Card = B("#181B21"), CardHi = B("#21252E"),
-        Line = B("#2B313B"), Crimson = B("#E24A40"), Gold = B("#E24A40"), TileSel = B("#2A3140");
+    // Diablo IV palette — warm stone + antique gold + rarity colors
+    static readonly Brush Ink = B("#E9E1D2"), Soft = B("#9C907C"), Faint = B("#6B5F4D"), Green = B("#6CBF5E"),
+        Amber = B("#E0A52E"), Miss = B("#D14A35"), Card = B("#1A1714"), CardHi = B("#221E19"),
+        Line = B("#2C261E"), Edge = B("#4A4031"), EdgeHi = B("#6E5E45"),
+        Crimson = B("#D14A35"), Gold = B("#C8A24E"), GoldHi = B("#E6C873"), TileSel = B("#271F15");
+    // item-rarity colors (match D4's itemization)
+    static readonly Brush RMagic = B("#6E9BD6"), RRare = B("#E5C84A"), RLegend = B("#E08A3C"),
+        RUnique = B("#C9A45C"), RMythic = B("#D1492E");
+    static readonly FontFamily Serif = new("Book Antiqua, Palatino Linotype, Georgia");
     const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
+
+    static Brush RarityBrush(string? rarity)
+    {
+        var s = (rarity ?? "").ToLowerInvariant();
+        if (s.Contains("mythic")) return RMythic;
+        if (s.Contains("unique")) return RUnique;
+        if (s.Contains("legend")) return RLegend;
+        if (s.Contains("rare")) return RRare;
+        if (s.Contains("magic")) return RMagic;
+        return Ink;
+    }
 
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
@@ -217,6 +234,14 @@ public partial class MainWindow : Window
         Margin = m ?? new Thickness(0), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
     };
 
+    // serif variant — for build name, item names, slot/section headers (the D4 "carved" look)
+    static TextBlock TBs(string text, Brush brush, double size, bool bold, Thickness? m = null)
+    {
+        var t = TB(text, brush, size, bold, m);
+        t.FontFamily = Serif;
+        return t;
+    }
+
     static UIElement Right(FrameworkElement e) { DockPanel.SetDock(e, Dock.Right); return e; }
 
     sealed class Section
@@ -228,8 +253,9 @@ public partial class MainWindow : Window
         public string Status => (Total - Matched) > 0 ? "missing" : Under > 0 ? "under" : "met";
     }
 
+    // D4-style markers: filled diamond when present, hollow diamond when missing (like an empty socket)
     (string glyph, Brush col) Look(string status) =>
-        status == "met" ? ("✓", Green) : status == "under" ? ("⚠", Amber) : ("✗", Miss);
+        status == "met" ? ("◆", Green) : status == "under" ? ("◆", Amber) : ("◇", Miss);
 
     static string ShortName(string id) => id switch
     {
@@ -297,8 +323,8 @@ public partial class MainWindow : Window
                 c.Under > 0 ? Amber : (c.Matched == c.Total ? Green : Soft), 13, true);
             wp.Children.Add(new Border
             {
-                Background = Card, BorderBrush = Line, BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(999), Padding = new Thickness(16, 7, 16, 7),
+                Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4), Padding = new Thickness(16, 7, 16, 7),
                 Margin = new Thickness(0, 0, 10, 8), Child = tb,
             });
         }
@@ -314,28 +340,24 @@ public partial class MainWindow : Window
 
     UIElement SlotTile(Section s)
     {
-        var (_, col) = Look(s.Status);
+        var (glyph, col) = Look(s.Status);
         bool selected = s.Key == _selectedKey;
         double pct = s.Total > 0 ? 100.0 * s.Matched / s.Total : 0;
 
         var sp = new StackPanel();
         var top = new DockPanel();
         top.Children.Add(Right(TB(s.Total > 0 ? $"{s.Matched}/{s.Total}" : "", Soft, 12.5, false)));
-        var dot = new Border
-        {
-            Width = 12 * UI, Height = 12 * UI, CornerRadius = new CornerRadius(99),
-            Background = col, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0),
-        };
-        DockPanel.SetDock(dot, Dock.Left); top.Children.Add(dot);
-        top.Children.Add(TB(s.Label, Ink, 14, true));
+        var mark = TB(glyph, col, 13.5, true, new Thickness(0, 0, 9, 0));
+        DockPanel.SetDock(mark, Dock.Left); top.Children.Add(mark);
+        top.Children.Add(TBs(s.Label, Ink, 14, true));
         sp.Children.Add(top);
         sp.Children.Add(MiniBar(pct, s.Status == "missing" ? Crimson : col));
 
         var b = new Border
         {
             Background = selected ? TileSel : Card,
-            BorderBrush = selected ? Gold : Line, BorderThickness = new Thickness(selected ? 2 : 1),
-            CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 13, 16, 14),
+            BorderBrush = selected ? Gold : Edge, BorderThickness = new Thickness(selected ? 1.5 : 1),
+            CornerRadius = new CornerRadius(4), Padding = new Thickness(16, 13, 16, 14),
             Margin = new Thickness(0, 0, 11, 11), Width = 208, Child = sp,
             Cursor = System.Windows.Input.Cursors.Hand,
         };
@@ -362,7 +384,7 @@ public partial class MainWindow : Window
     {
         var sp = new StackPanel();
         var (glyph, col) = Look(s.Status);
-        sp.Children.Add(TB(glyph + "  " + s.Label + $"     {s.Matched} / {s.Total} met"
+        sp.Children.Add(TBs(glyph + "  " + s.Label + $"     {s.Matched} / {s.Total} met"
             + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true, new Thickness(0, 0, 0, 8)));
 
         if (s.Gear != null) GearDetail(sp, s.Gear);
@@ -370,8 +392,8 @@ public partial class MainWindow : Window
 
         return new Border
         {
-            Background = Card, BorderBrush = Line, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12), Padding = new Thickness(22, 16, 22, 20),
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5), Padding = new Thickness(22, 16, 22, 20),
             Margin = new Thickness(0, 4, 0, 8), Child = sp,
         };
     }
@@ -379,9 +401,16 @@ public partial class MainWindow : Window
     void GearDetail(StackPanel sp, Group g)
     {
         var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
-        sp.Children.Add(it != null
-            ? TB($"{it.Name}  ·  {it.Rarity}{(it.ItemPower != null ? "  ·  " + it.ItemPower : "")}", Ink, 13.5, true, new Thickness(0, 0, 0, 8))
-            : TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 8)));
+        if (it != null)
+        {
+            // tooltip-style header: rarity-colored serif caps name + a muted subtitle
+            sp.Children.Add(TBs(it.Name.ToUpperInvariant(), RarityBrush(it.Rarity), 16, true, new Thickness(0, 0, 0, 1)));
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(it.Rarity)) parts.Add(it.Rarity!);
+            if (it.ItemPower != null) parts.Add("Item Power " + it.ItemPower);
+            sp.Children.Add(TB(string.Join("   ·   ", parts), Soft, 12, false, new Thickness(0, 0, 0, 10)));
+        }
+        else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 8)));
         foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
         if (g.Extras.Count > 0)
             sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 8, 0, 0)));
@@ -432,7 +461,7 @@ public partial class MainWindow : Window
 
     void GroupRows(StackPanel sp, Group g)
     {
-        sp.Children.Add(TB($"{g.Name.ToUpperInvariant()}   {g.Matched}/{g.Total}", Soft, 11.5, true, new Thickness(0, 8, 0, 4)));
+        sp.Children.Add(TBs($"{g.Name.ToUpperInvariant()}   {g.Matched}/{g.Total}", Gold, 11.5, true, new Thickness(0, 10, 0, 4)));
         foreach (var i in g.Items)
         {
             var (glyph, col) = Look(i.Status);
