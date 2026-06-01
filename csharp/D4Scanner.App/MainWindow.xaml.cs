@@ -538,12 +538,43 @@ public partial class MainWindow : Window
             _selectedKey = (sections.FirstOrDefault(s => s.Status != "met") ?? sections.FirstOrDefault())?.Key;
 
         Body.Children.Clear();
+        if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
         Body.Children.Add(SlotGrid(sections));
         var sel = sections.FirstOrDefault(s => s.Key == _selectedKey);
         if (sel != null) Body.Children.Add(DetailPanel(sel));
 
         Status.Text = $"● live  ·  log: {_log}  ·  target: {Path.GetFileName(_targetPath)}";
+    }
+
+    // shown when the TTS capture shim isn't installed — one-click install into the Diablo IV folder
+    UIElement CaptureBanner()
+    {
+        var dp = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var btn = new Button { Content = "Install capture DLL", Style = (Style)FindResource("Primary"), Padding = new Thickness(18, 7, 18, 7), VerticalAlignment = VerticalAlignment.Center };
+        btn.Click += (_, _) =>
+        {
+            btn.IsEnabled = false; var prev = btn.Content; btn.Content = "installing…";
+            var (ok, msg) = CaptureSetup.Install();
+            MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
+                MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            btn.IsEnabled = true; btn.Content = prev; Render();
+        };
+        DockPanel.SetDock(btn, Dock.Right); dp.Children.Add(btn);
+
+        var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        txt.Children.Add(TBs("Capture DLL not installed", Amber, 13.5, true));
+        txt.Children.Add(TB("Diablo IV can’t send item data yet. Install the TTS shim into your Diablo IV folder to start scanning.",
+            Soft, 12, false, new Thickness(0, 2, 0, 0)));
+        dp.Children.Add(txt);
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0xA5, 0x2E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0xA5, 0x2E)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(16, 12, 16, 12), Child = dp,
+        };
     }
 
     UIElement SummaryStrip(DiffReport r)

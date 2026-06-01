@@ -16,4 +16,9 @@
   <ItemGroup>
     <Resource Include="Assets\Fonts\Cinzel.ttf" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- prebuilt, signed capture shim + its public cert, for the in-app installer -->
+    <EmbeddedResource Include="..\..\dll\saapi64.dll"><LogicalName>saapi64.dll</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\..\dll\d4scanner-tts.cer"><LogicalName>d4scanner-tts.cer</LogicalName></EmbeddedResource>
+  </ItemGroup>
 </Project>
