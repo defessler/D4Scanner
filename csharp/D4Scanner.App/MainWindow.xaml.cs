@@ -79,7 +79,7 @@ public partial class MainWindow : Window
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
-    double _minRollPct = 50;
+    double _minRollPct = 75;
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
@@ -108,10 +108,13 @@ public partial class MainWindow : Window
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
+        ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
+        ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
         {
             _minRollPct = ThreshSlider.Value;
             ThreshLbl.Text = ((int)_minRollPct) + "%";
+            SaveSettings();                        // remember the user's choice
             Render();
         };
 
@@ -199,6 +202,8 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("log", out var l) && !string.IsNullOrEmpty(l)) _log = l;
                     if (s.TryGetValue("url", out var u)) _lastUrl = u;
                     if (s.TryGetValue("detailView", out var dv) && !string.IsNullOrEmpty(dv)) _detailView = dv;
+                    if (s.TryGetValue("minRoll", out var mr) && double.TryParse(mr, System.Globalization.CultureInfo.InvariantCulture, out var mrv))
+                        _minRollPct = Math.Clamp(mrv, 0, 100);
                 }
             }
         }
@@ -214,7 +219,7 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
         }
         catch { }
     }

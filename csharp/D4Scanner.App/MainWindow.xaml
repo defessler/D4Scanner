@@ -95,10 +95,10 @@
             <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="28,0,0,8">
               <ProgressBar x:Name="OverallBar" Height="14" Minimum="0" Maximum="100" Value="0"/>
               <DockPanel Margin="0,14,0,0">
-                <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="{StaticResource Accent}" FontSize="14.5" FontWeight="SemiBold"
+                <TextBlock x:Name="ThreshLbl" Text="75%" Foreground="{StaticResource Accent}" FontSize="14.5" FontWeight="SemiBold"
                            DockPanel.Dock="Right" Width="46" TextAlignment="Right" VerticalAlignment="Center"/>
                 <TextBlock Text="flag rolls under" Foreground="{StaticResource Soft}" FontSize="14.5" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="50" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="75" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
               </DockPanel>
             </StackPanel>
           </Grid>
