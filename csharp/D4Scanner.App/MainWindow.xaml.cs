@@ -772,7 +772,17 @@ public partial class MainWindow : Window
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
-        return grid;
+
+        // class-tinted backdrop glow behind the doll (stand-in for class splash art until a source is wired)
+        var bc = ((SolidColorBrush)ClassColor(className)).Color;
+        var outer = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        outer.Background = new RadialGradientBrush
+        {
+            GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
+            GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+        };
+        outer.Children.Add(grid);
+        return outer;
     }
 
     // slim framed cell for a build-wide category (uniques / skills / paragon), matching the slot cells
@@ -812,10 +822,15 @@ public partial class MainWindow : Window
     FrameworkElement IconBox(Section s, int num)
     {
         var (_, scol) = Look(s.Status);
-        var (_, _, iconName, wid, wimg) = WantedFor(s);
-        var grid = new Grid { Width = 48, Height = 48 };
-        grid.Children.Add(new Border { Background = B("#0C0C0F"), BorderBrush = scol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(4) });
-        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), Soft, 40, wid, wimg);
+        var (_, rcol, iconName, wid, wimg) = WantedFor(s);   // rcol = rarity color
+        var rc = ((SolidColorBrush)rcol).Color;
+        var grid = new Grid { Width = 48, Height = 60 };     // taller, portrait — like a D4 item icon
+        grid.Children.Add(new Border
+        {
+            Background = new LinearGradientBrush(Color.FromArgb(0x24, rc.R, rc.G, rc.B), Col("#0C0C0F"), 90),
+            BorderBrush = rcol, BorderThickness = new Thickness(1.4), CornerRadius = new CornerRadius(4),
+        });
+        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, 40, wid, wimg);   // silhouette tinted by rarity
         art.Margin = new Thickness(4); art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(art);
         if (num > 0)
@@ -1072,7 +1087,7 @@ public partial class MainWindow : Window
     }
 
     static string Sub(GearLiveItem it) =>
-        string.Join("   ·   ", new[] { it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
+        string.Join("   ·   ", new[] { it.IsAncestral ? "Ancestral" : "", it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
 
     // ---- compare view: equipped item beside what the build wants (D4 hold-to-compare idiom) ----
     UIElement CompareCard(Group g, GearLiveItem? it, string label)

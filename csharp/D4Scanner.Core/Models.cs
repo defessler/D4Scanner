@@ -186,6 +186,7 @@ public class GearLiveItem
     public string? Rarity { get; set; }
     public int? ItemPower { get; set; }
     public bool IsUnique { get; set; }
+    public bool IsAncestral { get; set; }
     public string? Aspect { get; set; }   // the item's legendary/unique power, if captured
 }
 

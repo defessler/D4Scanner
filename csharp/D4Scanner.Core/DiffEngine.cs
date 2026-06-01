@@ -167,7 +167,7 @@ public static class DiffEngine
                 var grp = MakeGroup(g.Label ?? g.Slot, items);
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
-                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, Aspect = it.Aspect } }
+                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, IsAncestral = it.IsAncestral, Aspect = it.Aspect } }
                     : new();
                 grp.Extras = extras;
                 grp.WantAspect = g.Aspect;
