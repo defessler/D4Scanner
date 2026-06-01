@@ -540,6 +540,7 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
+        var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
         Body.Children.Add(PaperDoll(sections));
         var sel = sections.FirstOrDefault(s => s.Key == _selectedKey);
         if (sel != null) Body.Children.Add(DetailPanel(sel));
@@ -574,6 +575,50 @@ public partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0xA5, 0x2E)),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(16, 12, 16, 12), Child = dp,
+        };
+    }
+
+    // "Do Next" guidance for an in-progress build: the highest-impact missing/under requirements,
+    // with a Mobalytics-style headline for the top one. Null when the build is already complete.
+    UIElement? GuidancePanel(DiffReport r)
+    {
+        var items = new List<(string slot, ReqItem i)>();
+        var gearCat = r.Categories.FirstOrDefault(c => c.Id == "gear");
+        if (gearCat != null)
+            foreach (var g in gearCat.Groups)
+                foreach (var i in g.Items)
+                    if (i.Status != "met") items.Add((g.Name, i));
+        if (items.Count == 0) return null;
+
+        var top = items.OrderBy(x => x.i.Status == "missing" ? 0 : 1).ThenBy(x => x.slot).Take(6).ToList();
+
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("DO NEXT", Gold, 13, true, new Thickness(0, 0, 0, 6)));
+        var h = top[0];
+        string headline = h.i.Status == "missing"
+            ? $"You still need {h.i.Label} on your {h.slot}" + (h.i.Need != null ? $"  ({h.i.Need})" : "")
+            : $"Improve {h.i.Label} on your {h.slot} — you're at {h.i.Val}  ({h.i.Need})";
+        var hl = TB(headline, Ink, 14, false, new Thickness(0, 0, 0, 9)); hl.TextWrapping = TextWrapping.Wrap;
+        sp.Children.Add(hl);
+
+        int n = 1;
+        foreach (var (slot, i) in top)
+        {
+            var (_, col) = Look(i.Status);
+            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            var numT = TB(n.ToString(), B("#14110D"), 10.5, true);
+            numT.HorizontalAlignment = HorizontalAlignment.Center; numT.TextAlignment = TextAlignment.Center;
+            var numB = new Border { Background = col, CornerRadius = new CornerRadius(3), Width = 20, Height = 18, Margin = new Thickness(0, 0, 10, 0), Child = numT };
+            DockPanel.SetDock(numB, Dock.Left); row.Children.Add(numB);
+            if (i.Need != null) { var nd = TB(i.Need, Soft, 12, false, new Thickness(8, 0, 0, 0)); DockPanel.SetDock(nd, Dock.Right); row.Children.Add(nd); }
+            row.Children.Add(TB($"{slot}  —  {i.Label}", i.Status == "missing" ? Ink : Soft, 12.5, false));
+            sp.Children.Add(row);
+            n++;
+        }
+        return new Border
+        {
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = sp,
         };
     }
 
