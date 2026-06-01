@@ -1325,6 +1325,15 @@ public partial class MainWindow : Window
                 sp.Children.Add(RawLine("◆  glyph: " + gl.Name + (gl.Level != null ? $"   (lvl {gl.Level})" : "")));
         }
 
+        if (_vision != null && (!string.IsNullOrEmpty(_vision.Mercenary) || _vision.Talismans.Count > 0 || _vision.Gems.Count > 0 || _vision.Runes.Count > 0))
+        {
+            RawHeader(sp, "FROM YOUR SCREENSHOTS  (vision)");
+            if (!string.IsNullOrEmpty(_vision.Mercenary)) sp.Children.Add(RawLine("Mercenary:  " + _vision.Mercenary));
+            foreach (var tl in _vision.Talismans) sp.Children.Add(RawLine("◆  talisman: " + tl));
+            foreach (var gm in _vision.Gems) sp.Children.Add(RawLine("◆  gem: " + gm));
+            foreach (var rn in _vision.Runes) sp.Children.Add(RawLine("◆  rune: " + rn));
+        }
+
         RawHeader(sp, "RAW JSON");
         string json; try { json = JsonSerializer.Serialize(t, new JsonSerializerOptions { WriteIndented = true }); } catch { json = "(unavailable)"; }
         sp.Children.Add(new TextBox

@@ -9,6 +9,10 @@ public sealed class VisionResult
     public List<string> Aspects { get; set; } = new();
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
+    public string? Mercenary { get; set; }              // hired mercenary + skills, from a screenshot
+    public List<string> Talismans { get; set; } = new(); // talismans/charms
+    public List<string> Gems { get; set; } = new();      // socketed gems
+    public List<string> Runes { get; set; } = new();     // socketed runes / runewords
 }
 
 /// <summary>
@@ -26,7 +30,9 @@ public static class VisionCapture
         "You read Diablo IV UI screenshots and extract build data precisely. Only report what is visible. " +
         "For each paragon board give its name, the socketed glyph, and the glyph's numeric LEVEL if shown. " +
         "For skills give the name, rank (the n in n/n), whether it is a key passive, and whether it is slotted " +
-        "on the action bar. Do not invent values. Call emit_build_parts exactly once.";
+        "on the action bar. If a Mercenary screen is shown, give the mercenary name and its chosen skills as one string. " +
+        "List any talismans/charms, socketed gems, and socketed runes by name. " +
+        "Do not invent values. Call emit_build_parts exactly once.";
 
     static string MediaType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
@@ -95,6 +101,10 @@ public static class VisionCapture
                             required = new[] { "board" },
                         },
                     },
+                    mercenary = new { type = new[] { "string", "null" } },
+                    talismans = new { type = "array", items = new { type = "string" } },
+                    gems = new { type = "array", items = new { type = "string" } },
+                    runes = new { type = "array", items = new { type = "string" } },
                 },
                 required = new[] { "skills", "paragon" },
             },
@@ -161,7 +171,16 @@ public static class VisionCapture
                     GlyphLevel = p.TryGetProperty("glyphLevel", out var gl) && gl.ValueKind == JsonValueKind.Number ? gl.GetInt32() : (int?)null,
                 });
             }
-        log($"vision: {result.Skills.Count} skills, {result.Paragon.Count} boards, {result.Aspects.Count} aspects");
+        if (input.TryGetProperty("mercenary", out var mc) && mc.ValueKind == JsonValueKind.String)
+            result.Mercenary = mc.GetString();
+        static List<string> Strs(JsonElement e, string key) =>
+            e.TryGetProperty(key, out var a) && a.ValueKind == JsonValueKind.Array
+                ? a.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList() : new();
+        result.Talismans = Strs(input, "talismans");
+        result.Gems = Strs(input, "gems");
+        result.Runes = Strs(input, "runes");
+        log($"vision: {result.Skills.Count} skills, {result.Paragon.Count} boards, {result.Aspects.Count} aspects, " +
+            $"{result.Gems.Count} gems, {result.Runes.Count} runes, {result.Talismans.Count} talismans");
         return result;
     }
 
