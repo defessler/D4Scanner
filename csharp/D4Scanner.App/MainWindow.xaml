@@ -1,77 +1,95 @@
 <Window x:Class="D4Scanner.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="D4Scanner — Live Build Tracker" Height="1180" Width="1180"
-        Background="#241E18" FontFamily="Segoe UI">
-  <Window.Resources>
-    <Style TargetType="Button">
-      <Setter Property="FontSize" Value="20"/>
-      <Setter Property="Padding" Value="18,8"/>
-      <Setter Property="Margin" Value="6,0"/>
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="FontSize" Value="20"/>
-      <Setter Property="Padding" Value="8,6"/>
-      <Setter Property="VerticalContentAlignment" Value="Center"/>
-    </Style>
-  </Window.Resources>
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+        Title="D4Scanner" Height="1040" Width="1300" MinWidth="860" MinHeight="620"
+        WindowStyle="None" Background="{StaticResource Bg}"
+        FontFamily="Segoe UI" UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="48" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0"/>
+  </WindowChrome.WindowChrome>
 
-    <Border Grid.Row="0" Padding="24,18">
-      <Border.Background>
-        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-          <GradientStop Color="#2A1212" Offset="0"/>
-          <GradientStop Color="#6E2320" Offset="1"/>
-        </LinearGradientBrush>
-      </Border.Background>
-      <StackPanel>
-        <DockPanel>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
-            <Button x:Name="VisionBtn" Content="Paragon/Skills…" ToolTip="capture paragon + skills from screenshots (needs ANTHROPIC_API_KEY)"/>
-            <Button x:Name="TargetBtn" Content="Target…"/>
-            <Button x:Name="LogBtn" Content="Log…"/>
-            <Button x:Name="TopmostBtn" Content="Pin"/>
-          </StackPanel>
-          <TextBlock x:Name="BuildName" Text="D4Scanner — Live Build Tracker"
-                     Foreground="#F7EFE6" FontSize="32" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-        </DockPanel>
+  <Border BorderBrush="{StaticResource Line}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
 
-        <!-- grab a build straight from a Maxroll URL -->
-        <DockPanel Margin="0,14,0,0">
-          <TextBlock Text="Maxroll build:" Foreground="#E7C9A0" FontSize="20" VerticalAlignment="Center" Margin="0,0,10,0"/>
-          <Button x:Name="ImportBtn" Content="Import" DockPanel.Dock="Right"/>
-          <TextBox x:Name="ProfileBox" DockPanel.Dock="Right" Width="170" Margin="8,0,0,0"
-                   ToolTip="profile to use, e.g. Endgame (optional)"/>
-          <TextBox x:Name="UrlBox" ToolTip="paste a Maxroll build-guide or planner URL, then Import"/>
-        </DockPanel>
-
-        <DockPanel Margin="0,14,0,0">
-          <TextBlock x:Name="OverallPct" Text="—" Foreground="#FFFFFF" FontSize="52" FontWeight="Bold"/>
-          <TextBlock x:Name="OverallCount" Text="" Foreground="#E7C9A0" FontSize="22"
-                     VerticalAlignment="Bottom" Margin="18,0,0,8" TextWrapping="Wrap"/>
-        </DockPanel>
-        <ProgressBar x:Name="OverallBar" Height="18" Minimum="0" Maximum="100" Value="0"
-                     Margin="0,12,0,0" Foreground="#D9B85A" Background="#3A241A" BorderThickness="0"/>
-        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-          <TextBlock Text="flag rolls under" Foreground="#E7C9A0" FontSize="20" VerticalAlignment="Center"/>
-          <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="50" TickFrequency="5"
-                  IsSnapToTickEnabled="True" Width="300" Margin="14,0,12,0" VerticalAlignment="Center"/>
-          <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="#FFD98C" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+      <!-- title bar (drag region) -->
+      <Grid Grid.Row="0" Height="48" Background="#1B150F">
+        <StackPanel Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
+          <TextBlock Text="◆" Foreground="{StaticResource Gold}" FontSize="15" VerticalAlignment="Center"/>
+          <TextBlock Text="D4Scanner" Foreground="{StaticResource Ink}" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
+          <TextBlock Text="live build tracker" Foreground="{StaticResource Faint}" FontSize="13" Margin="11,1,0,0" VerticalAlignment="Center"/>
         </StackPanel>
-      </StackPanel>
-    </Border>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="TopmostBtn" Style="{StaticResource Caption}" Content="Pin" FontSize="13" Width="58"/>
+          <Button x:Name="MinBtn" Style="{StaticResource Caption}" Content="—"/>
+          <Button x:Name="CloseBtn" Style="{StaticResource Caption}" Content="✕"/>
+        </StackPanel>
+      </Grid>
 
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0">
-      <StackPanel x:Name="Body" Margin="22"/>
-    </ScrollViewer>
+      <!-- header -->
+      <Border Grid.Row="1" Padding="24,18,24,20">
+        <Border.Background>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#2C1B14" Offset="0"/><GradientStop Color="#1A120C" Offset="1"/>
+          </LinearGradientBrush>
+        </Border.Background>
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="BuildName" Grid.Column="0" Text="No build loaded" Foreground="{StaticResource Ink}"
+                       FontSize="27" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="VisionBtn" Content="Paragon / Skills" FontSize="14"/>
+              <Button x:Name="TargetBtn" Content="Target" FontSize="14" Margin="9,0,0,0"/>
+              <Button x:Name="LogBtn" Content="Log" FontSize="14" Margin="9,0,0,0"/>
+            </StackPanel>
+          </Grid>
 
-    <Border Grid.Row="2" Background="#1E1813" Padding="22,11">
-      <TextBlock x:Name="Status" Foreground="#9A8A72" FontSize="18" Text="starting…" TextTrimming="CharacterEllipsis"/>
-    </Border>
-  </Grid>
+          <Grid Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Maxroll build" Foreground="{StaticResource Soft}" FontSize="14.5" VerticalAlignment="Center" Margin="0,0,14,0"/>
+            <TextBox x:Name="UrlBox" Grid.Column="1" ToolTip="paste a Maxroll build-guide or planner URL, then Import"/>
+            <TextBox x:Name="ProfileBox" Grid.Column="2" Width="160" Margin="10,0,0,0" ToolTip="profile to use, e.g. Endgame (optional)"/>
+            <Button x:Name="ImportBtn" Grid.Column="3" Style="{StaticResource Primary}" Content="Import" Padding="24,7" Margin="10,0,0,0"/>
+          </Grid>
+
+          <Grid Margin="0,20,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Gold}" FontSize="50" FontWeight="Bold"/>
+              <TextBlock x:Name="OverallCount" Text="" Foreground="{StaticResource Soft}" FontSize="15"
+                         VerticalAlignment="Bottom" Margin="18,0,0,11" TextWrapping="Wrap" MaxWidth="360"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="28,0,0,8">
+              <ProgressBar x:Name="OverallBar" Height="14" Minimum="0" Maximum="100" Value="0"/>
+              <DockPanel Margin="0,14,0,0">
+                <TextBlock x:Name="ThreshLbl" Text="50%" Foreground="{StaticResource Gold}" FontSize="14.5" FontWeight="SemiBold"
+                           DockPanel.Dock="Right" Width="46" TextAlignment="Right" VerticalAlignment="Center"/>
+                <TextBlock Text="flag rolls under" Foreground="{StaticResource Soft}" FontSize="14.5" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="50" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+              </DockPanel>
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!-- body -->
+      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Background="{StaticResource Bg}">
+        <StackPanel x:Name="Body" Margin="24,20,24,24"/>
+      </ScrollViewer>
+
+      <!-- status bar -->
+      <Border Grid.Row="3" Background="#100C08" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="22,10">
+        <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…" TextTrimming="CharacterEllipsis"/>
+      </Border>
+    </Grid>
+  </Border>
 </Window>

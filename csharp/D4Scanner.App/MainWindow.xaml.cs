@@ -11,10 +11,10 @@ namespace D4Scanner.App;
 public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-    static readonly Brush Ink = B("#F2E8D8"), Soft = B("#B9A88F"), Green = B("#5CB85C"),
-        Amber = B("#E0A85A"), Miss = B("#D79A8C"), Card = B("#2E251C"), Line = B("#4A3A2A"),
-        Crimson = B("#D2693E"), Gold = B("#D9B85A"), TileBg = B("#352A20");
-    const double UI = 2.0;   // global size multiplier — everything ~2x larger
+    static readonly Brush Ink = B("#F1E7D7"), Soft = B("#A89077"), Faint = B("#6E5C49"), Green = B("#67C05C"),
+        Amber = B("#E6A646"), Miss = B("#D15B49"), Card = B("#211912"), CardHi = B("#2C2219"),
+        Line = B("#3B2E22"), Crimson = B("#C0432F"), Gold = B("#E2B85C"), TileSel = B("#3A2C1F");
+    const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
 
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
@@ -42,6 +42,8 @@ public partial class MainWindow : Window
         TargetBtn.Click += (_, _) => PickTarget();
         LogBtn.Click += (_, _) => PickLog();
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
+        MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
+        CloseBtn.Click += (_, _) => Close();
         ThreshSlider.ValueChanged += (_, _) =>
         {
             _minRollPct = ThreshSlider.Value;
@@ -303,21 +305,48 @@ public partial class MainWindow : Window
 
     UIElement SlotTile(Section s)
     {
-        var (glyph, col) = Look(s.Status);
+        var (_, col) = Look(s.Status);
         bool selected = s.Key == _selectedKey;
+        double pct = s.Total > 0 ? 100.0 * s.Matched / s.Total : 0;
+
         var sp = new StackPanel();
-        sp.Children.Add(TB(glyph + "  " + s.Label, col, 13, true));
-        sp.Children.Add(TB(s.Total > 0 ? $"{s.Matched} / {s.Total}" : "", Soft, 11, false, new Thickness(0, 2, 0, 0)));
+        var top = new DockPanel();
+        top.Children.Add(Right(TB(s.Total > 0 ? $"{s.Matched}/{s.Total}" : "", Soft, 12.5, false)));
+        var dot = new Border
+        {
+            Width = 12 * UI, Height = 12 * UI, CornerRadius = new CornerRadius(99),
+            Background = col, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0),
+        };
+        DockPanel.SetDock(dot, Dock.Left); top.Children.Add(dot);
+        top.Children.Add(TB(s.Label, Ink, 14, true));
+        sp.Children.Add(top);
+        sp.Children.Add(MiniBar(pct, s.Status == "missing" ? Crimson : col));
+
         var b = new Border
         {
-            Background = selected ? TileBg : Card,
+            Background = selected ? TileSel : Card,
             BorderBrush = selected ? Gold : Line, BorderThickness = new Thickness(selected ? 2 : 1),
-            CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 9, 14, 9),
-            Margin = new Thickness(0, 0, 9, 9), Width = 210, Child = sp,
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 13, 16, 14),
+            Margin = new Thickness(0, 0, 11, 11), Width = 208, Child = sp,
             Cursor = System.Windows.Input.Cursors.Hand,
         };
+        b.MouseEnter += (_, _) => { if (!selected) b.Background = CardHi; };
+        b.MouseLeave += (_, _) => { if (!selected) b.Background = Card; };
         b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
         return b;
+    }
+
+    UIElement MiniBar(double pct, Brush fill)
+    {
+        double w = 176, h = 6;
+        var g = new Grid { Width = w, Height = h, Margin = new Thickness(0, 11, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+        g.Children.Add(new Border { Background = Line, CornerRadius = new CornerRadius(3) });
+        g.Children.Add(new Border
+        {
+            Width = Math.Max(3, w * Math.Clamp(pct, 0, 100) / 100.0),
+            HorizontalAlignment = HorizontalAlignment.Left, Background = fill, CornerRadius = new CornerRadius(3),
+        });
+        return g;
     }
 
     UIElement DetailPanel(Section s)

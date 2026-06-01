@@ -8,6 +8,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>D4Scanner</AssemblyName>
     <RootNamespace>D4Scanner.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
