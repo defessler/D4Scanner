@@ -12,7 +12,8 @@ public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
     static readonly Brush Ink = B("#F2E8D8"), Soft = B("#B9A88F"), Green = B("#5CB85C"),
-        Amber = B("#E0A85A"), Miss = B("#D79A8C"), Card = B("#2E251C"), Line = B("#4A3A2A"), Crimson = B("#D2693E");
+        Amber = B("#E0A85A"), Miss = B("#D79A8C"), Card = B("#2E251C"), Line = B("#4A3A2A"),
+        Crimson = B("#D2693E"), Gold = B("#D9B85A"), TileBg = B("#352A20");
     const double UI = 2.0;   // global size multiplier — everything ~2x larger
 
     LogWatcher? _watcher;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     DateTime _targetMtime;
     double _minRollPct = 50;
     string? _lastUrl;
+    string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
     string SettingsPath => Path.Combine(
@@ -213,13 +215,33 @@ public partial class MainWindow : Window
         Margin = m ?? new Thickness(0), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
     };
 
+    static UIElement Right(FrameworkElement e) { DockPanel.SetDock(e, Dock.Right); return e; }
+
+    sealed class Section
+    {
+        public string Key = "", Label = "";
+        public int Matched, Total, Under;
+        public Group? Gear;     // a gear slot
+        public Category? Cat;   // a whole non-gear category
+        public string Status => (Total - Matched) > 0 ? "missing" : Under > 0 ? "under" : "met";
+    }
+
+    (string glyph, Brush col) Look(string status) =>
+        status == "met" ? ("✓", Green) : status == "under" ? ("⚠", Amber) : ("✗", Miss);
+
+    static string ShortName(string id) => id switch
+    {
+        "gear" => "Gear", "uniques" => "Uniques", "skills" => "Skills",
+        "paragon" => "Paragon", "aspects" => "Aspects", _ => id,
+    };
+
     void Render()
     {
         if (_target == null)
         {
             BuildName.Text = "D4Scanner — Live Build Tracker";
             OverallPct.Text = "—";
-            OverallCount.Text = "No target loaded — click ‘Target…’ and pick your target.json";
+            OverallCount.Text = "No target loaded — paste a Maxroll URL and Import, or pick a target.json";
             OverallBar.Value = 0; Body.Children.Clear();
             Status.Text = $"log: {_log}";
             return;
@@ -231,84 +253,156 @@ public partial class MainWindow : Window
             + (_vision != null ? "  ·  + vision" : "")
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
         OverallBar.Value = r.Pct;
+
+        // build sections: one per gear slot + one per non-gear category
+        var sections = new List<Section>();
+        foreach (var c in r.Categories)
+            if (c.Id == "gear")
+                foreach (var g in c.Groups)
+                    sections.Add(new Section { Key = "gear:" + g.Name, Label = g.Name, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
+        foreach (var c in r.Categories)
+            if (c.Id != "gear")
+                sections.Add(new Section { Key = "cat:" + c.Id, Label = ShortName(c.Id), Matched = c.Matched, Total = c.Total, Under = c.Under, Cat = c });
+
+        // keep selection if still present, else default to the first thing needing work
+        if (_selectedKey == null || sections.All(s => s.Key != _selectedKey))
+            _selectedKey = (sections.FirstOrDefault(s => s.Status != "met") ?? sections.FirstOrDefault())?.Key;
+
         Body.Children.Clear();
-        foreach (var c in r.Categories) Body.Children.Add(CategoryCard(c));
+        Body.Children.Add(SummaryStrip(r));
+        Body.Children.Add(SlotGrid(sections));
+        var sel = sections.FirstOrDefault(s => s.Key == _selectedKey);
+        if (sel != null) Body.Children.Add(DetailPanel(sel));
+
         Status.Text = $"● live  ·  log: {_log}  ·  target: {Path.GetFileName(_targetPath)}";
     }
 
-    UIElement CategoryCard(Category c)
+    UIElement SummaryStrip(DiffReport r)
+    {
+        var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 14) };
+        foreach (var c in r.Categories)
+        {
+            var tb = TB($"{ShortName(c.Id)}  {c.Matched}/{c.Total}" + (c.Under > 0 ? $"  ⚠{c.Under}" : ""),
+                c.Under > 0 ? Amber : (c.Matched == c.Total ? Green : Soft), 13, true);
+            wp.Children.Add(new Border
+            {
+                Background = Card, BorderBrush = Line, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(999), Padding = new Thickness(16, 7, 16, 7),
+                Margin = new Thickness(0, 0, 10, 8), Child = tb,
+            });
+        }
+        return wp;
+    }
+
+    UIElement SlotGrid(List<Section> sections)
+    {
+        var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        foreach (var s in sections) wp.Children.Add(SlotTile(s));
+        return wp;
+    }
+
+    UIElement SlotTile(Section s)
+    {
+        var (glyph, col) = Look(s.Status);
+        bool selected = s.Key == _selectedKey;
+        var sp = new StackPanel();
+        sp.Children.Add(TB(glyph + "  " + s.Label, col, 13, true));
+        sp.Children.Add(TB(s.Total > 0 ? $"{s.Matched} / {s.Total}" : "", Soft, 11, false, new Thickness(0, 2, 0, 0)));
+        var b = new Border
+        {
+            Background = selected ? TileBg : Card,
+            BorderBrush = selected ? Gold : Line, BorderThickness = new Thickness(selected ? 2 : 1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 9, 14, 9),
+            Margin = new Thickness(0, 0, 9, 9), Width = 210, Child = sp,
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
+        return b;
+    }
+
+    UIElement DetailPanel(Section s)
     {
         var sp = new StackPanel();
-        var head = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var pctText = $"{c.Matched} / {c.Total}  ({c.Pct}%)" + (c.Under > 0 ? $"   ⚠ {c.Under}" : "");
-        head.Children.Add(Right(TB(pctText, c.Under > 0 ? Amber : Soft, 12, false, new Thickness(8, 3, 0, 0))));
-        head.Children.Add(TB(c.Name, Ink, 14.5, true));
-        sp.Children.Add(head);
-        foreach (var g in c.Groups) sp.Children.Add(GroupBlock(g));
+        var (glyph, col) = Look(s.Status);
+        sp.Children.Add(TB(glyph + "  " + s.Label + $"     {s.Matched} / {s.Total} met"
+            + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true, new Thickness(0, 0, 0, 8)));
+
+        if (s.Gear != null) GearDetail(sp, s.Gear);
+        else if (s.Cat != null) foreach (var g in s.Cat.Groups) GroupRows(sp, g);
+
         return new Border
         {
             Background = Card, BorderBrush = Line, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12), Padding = new Thickness(20, 14, 20, 16),
-            Margin = new Thickness(0, 0, 0, 18), Child = sp,
+            CornerRadius = new CornerRadius(12), Padding = new Thickness(22, 16, 22, 20),
+            Margin = new Thickness(0, 4, 0, 8), Child = sp,
         };
     }
 
-    static UIElement Right(FrameworkElement e) { DockPanel.SetDock(e, Dock.Right); return e; }
-
-    UIElement GroupBlock(Group g)
+    void GearDetail(StackPanel sp, Group g)
     {
-        var sp = new StackPanel { Margin = new Thickness(0, 7, 0, 0) };
-        var gh = new DockPanel();
-        gh.Children.Add(Right(TB($"{g.Matched}/{g.Total}", Soft, 11, false)));
-        gh.Children.Add(TB(g.Name.ToUpperInvariant(), Crimson, 11, true));
-        sp.Children.Add(gh);
+        var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
+        sp.Children.Add(it != null
+            ? TB($"{it.Name}  ·  {it.Rarity}{(it.ItemPower != null ? "  ·  " + it.ItemPower : "")}", Ink, 13.5, true, new Thickness(0, 0, 0, 8))
+            : TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 8)));
+        foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
+        if (g.Extras.Count > 0)
+            sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 8, 0, 0)));
+    }
 
-        if (g.Kind == "gear")
+    UIElement AffixRow(ReqItem i)
+    {
+        var (glyph, col) = Look(i.Status);
+        var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26 * UI) });           // mark
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                   // bar
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                   // value
+
+        var mark = TB(glyph, col, 14, true); Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB(i.Label, i.Status == "met" ? Soft : Ink, 14, false); Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+
+        if (i.Status != "missing" && i.RollPct != null)
         {
-            var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
-            sp.Children.Add(it != null
-                ? TB($"{it.Name}  ·  {it.Rarity}{(it.ItemPower != null ? "  ·  " + it.ItemPower : "")}", Ink, 12.5, true, new Thickness(0, 2, 0, 4))
-                : TB("— no item captured for this slot —", Miss, 12, true, new Thickness(0, 2, 0, 4)));
+            var bar = RollBar(i.RollPct.Value, col);
+            bar.Margin = new Thickness(8, 0, 8, 0); Grid.SetColumn(bar, 2); row.Children.Add(bar);
         }
 
+        string vtext = i.Status == "missing"
+            ? "—"
+            : (i.Val ?? "ok")
+              + (i.RollPct != null ? $"  {Math.Round(i.RollPct.Value)}%" : "")
+              + (i.Status == "under" && i.Need != null ? "  " + i.Need : "");
+        var val = TB(vtext, i.Status == "missing" ? Soft : col, 12.5, i.Status != "missing", new Thickness(8, 0, 0, 0));
+        val.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(val, 3); row.Children.Add(val);
+        return row;
+    }
+
+    // a roll-quality bar: track + left-aligned fill at pct% of width
+    FrameworkElement RollBar(double pct, Brush fill)
+    {
+        double w = 170, h = 14;
+        var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center };
+        g.Children.Add(new Border { Background = Line, CornerRadius = new CornerRadius(h / 2) });
+        g.Children.Add(new Border
+        {
+            Width = Math.Max(3, w * Math.Clamp(pct, 0, 100) / 100.0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = fill, CornerRadius = new CornerRadius(h / 2),
+        });
+        return g;
+    }
+
+    void GroupRows(StackPanel sp, Group g)
+    {
+        sp.Children.Add(TB($"{g.Name.ToUpperInvariant()}   {g.Matched}/{g.Total}", Crimson, 11.5, true, new Thickness(0, 8, 0, 4)));
         foreach (var i in g.Items)
         {
-            var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18 * UI) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            // marker + colours keyed on status: met (green ✓), under-rolled (amber ⚠), missing (✗)
-            Brush stcol = i.Status == "met" ? Green : i.Status == "under" ? Amber : Miss;
-            var mark = TB(i.Status == "met" ? "✓" : i.Status == "under" ? "⚠" : "✗", stcol, 13, true);
-            Grid.SetColumn(mark, 0); row.Children.Add(mark);
-
-            var lbl = TB(i.Label, i.Status == "met" ? Soft : Ink, 13, false);
-            Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-
-            string right; Brush rb;
-            if (g.Kind == "gear")
-            {
-                if (i.Status == "missing") { right = "—"; rb = Soft; }
-                else
-                {
-                    string roll = i.RollPct != null ? $"  {Math.Round(i.RollPct.Value)}%" : "";
-                    string need = i.Status == "under" && i.Need != null ? "  (" + i.Need + ")" : "";
-                    right = (i.Val ?? "ok") + roll + need;
-                    rb = i.Status == "under" ? Amber : Green;
-                }
-            }
-            else { right = i.Have != null ? "have: " + i.Have : ""; rb = i.Have != null ? Miss : (i.Done ? Green : Soft); }
-            var val = TB(right, rb, 12.5, i.Status != "missing", new Thickness(8, 0, 0, 0));
-            val.HorizontalAlignment = HorizontalAlignment.Right;
-            Grid.SetColumn(val, 2); row.Children.Add(val);
-
+            var (glyph, col) = Look(i.Status);
+            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            if (i.Have != null) row.Children.Add(Right(TB("have: " + i.Have, Miss, 12, false, new Thickness(8, 0, 0, 0))));
+            var mark = TB(glyph + "  ", col, 13, true); DockPanel.SetDock(mark, Dock.Left); row.Children.Add(mark);
+            row.Children.Add(TB(i.Label, i.Status == "met" ? Soft : Ink, 13, false));
             sp.Children.Add(row);
         }
-
-        if (g.Kind == "gear" && g.Extras.Count > 0)
-            sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11, false, new Thickness(0, 4, 0, 0)));
-
-        return sp;
     }
 }
