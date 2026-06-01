@@ -1,0 +1,51 @@
+name: release
+
+# Build the self-contained Windows exe and publish a GitHub release whenever a
+# version tag (v*) is pushed:   git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}   # also runnable manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish single-file self-contained exe
+        shell: pwsh
+        run: |
+          dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true -o publish
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag.StartsWith('v')) { $tag = 'dev' }   # workflow_dispatch has no tag
+          Copy-Item publish/D4Scanner.exe "D4Scanner-$tag-win-x64.exe"
+
+      # Optional Authenticode signing — only runs if a CODESIGN_PFX_BASE64 secret is set.
+      - name: Sign (optional)
+        if: ${{ env.CODESIGN_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cs.pfx", [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
+          & "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" sign `
+            /f "$env:RUNNER_TEMP\cs.pfx" /p $env:CODESIGN_PFX_PASSWORD /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 (Get-Item D4Scanner-*-win-x64.exe).FullName
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: D4Scanner-*-win-x64.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
