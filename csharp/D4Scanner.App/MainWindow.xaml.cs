@@ -19,7 +19,7 @@ public partial class MainWindow : Window
     // item-rarity colors (match D4's itemization)
     static readonly Brush RMagic = B("#6E9BD6"), RRare = B("#E5C84A"), RLegend = B("#E08A3C"),
         RUnique = B("#C9A45C"), RMythic = B("#D1492E");
-    static readonly FontFamily Serif = new("Book Antiqua, Palatino Linotype, Georgia");
+    static readonly FontFamily Serif = new(new Uri("pack://application:,,,/"), "./Assets/Fonts/#Cinzel");
     const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
 
     static Brush RarityBrush(string? rarity)
@@ -31,6 +31,30 @@ public partial class MainWindow : Window
         if (s.Contains("rare")) return RRare;
         if (s.Contains("magic")) return RMagic;
         return Ink;
+    }
+
+    // map a slot/group label to a slot-icon key (see Icons.Geom)
+    static string SlotKey(string label)
+    {
+        var s = (label ?? "").ToLowerInvariant();
+        if (s.Contains("helm") || s.Contains("head")) return "helm";
+        if (s.Contains("chest") || s.Contains("torso") || s.Contains("body")) return "chest";
+        if (s.Contains("glove") || s.Contains("hand")) return "gloves";
+        if (s.Contains("pant") || s.Contains("leg")) return "pants";
+        if (s.Contains("boot") || s.Contains("feet")) return "boots";
+        if (s.Contains("ring")) return "ring";
+        if (s.Contains("amulet") || s.Contains("neck")) return "amulet";
+        if (s.Contains("off") || s.Contains("shield") || s.Contains("focus") || s.Contains("totem")) return "offhand";
+        return "weapon";
+    }
+
+    // a tinted slot silhouette (game-icons.net geometry, 0..512 box, auto-scaled in a Viewbox)
+    static FrameworkElement? SlotIcon(string key, Brush tint, double size)
+    {
+        if (!Icons.Geom.TryGetValue(key, out var d)) return null;
+        Geometry g; try { g = Geometry.Parse(d); } catch { return null; }
+        var path = new System.Windows.Shapes.Path { Data = g, Fill = tint };
+        return new Viewbox { Width = size, Height = size, Child = path, VerticalAlignment = VerticalAlignment.Center };
     }
 
     LogWatcher? _watcher;
@@ -45,6 +69,13 @@ public partial class MainWindow : Window
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
+    List<BuildEntry> _buildIndex = new();  // maxroll guide list for autocomplete
+    string? _pickedSlug;                   // slug chosen from autocomplete (vs. free text in the box)
+    bool _settingText;                     // guard: programmatic UrlBox edits shouldn't trigger autocomplete
+    string? _profile;                      // active profile name (for re-import)
+    string? _lastImportInput;              // the slug/url last imported (for profile re-import)
+    string _detailView = "compare";        // "compare" (3-pane) | "list"
+
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
 
@@ -52,9 +83,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         LoadSettings();
-        UrlBox.Text = _lastUrl ?? "";
+        SetUrlText(_lastUrl ?? "");
         ImportBtn.Click += async (_, _) => await DoImport();
-        UrlBox.KeyDown += async (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) await DoImport(); };
         VisionBtn.Click += async (_, _) => await DoVision();
         TargetBtn.Click += (_, _) => PickTarget();
         LogBtn.Click += (_, _) => PickLog();
@@ -67,8 +97,76 @@ public partial class MainWindow : Window
             ThreshLbl.Text = ((int)_minRollPct) + "%";
             Render();
         };
-        Loaded += (_, _) => StartWatching();
+
+        // ---- smart import box: placeholder + fuzzy autocomplete ----
+        UrlBox.TextChanged += (_, _) =>
+        {
+            UrlPlaceholder.Visibility = UrlBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (_settingText) return;
+            _pickedSlug = null;          // user is typing free text now
+            UpdateAutocomplete();
+        };
+        UrlBox.PreviewKeyDown += UrlBox_PreviewKeyDown;
+        AcList.PreviewKeyDown += AcList_PreviewKeyDown;
+        AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
+        ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
+
+        Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); };
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
+    }
+
+    void SetUrlText(string text)
+    {
+        _settingText = true;
+        UrlBox.Text = text;
+        _settingText = false;
+        UrlPlaceholder.Visibility = text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    static bool LooksLikeUrl(string s) => s.Contains("://") || s.Contains("maxroll.gg");
+
+    void UpdateAutocomplete()
+    {
+        var q = UrlBox.Text.Trim();
+        if (q.Length < 2 || LooksLikeUrl(q) || _buildIndex.Count == 0) { AcPopup.IsOpen = false; return; }
+        var hits = BuildIndex.Search(_buildIndex, q, 8);
+        AcList.Items.Clear();
+        foreach (var b in hits)
+        {
+            var sp = new StackPanel { Tag = b };
+            sp.Children.Add(TB(b.Title, Ink, 14, false));
+            if (!string.IsNullOrEmpty(b.Class))
+                sp.Children.Add(TB(b.Class, Soft, 11.5, false, new Thickness(0, 1, 0, 0)));
+            AcList.Items.Add(new ListBoxItem { Content = sp, Tag = b });
+        }
+        AcPopup.IsOpen = AcList.Items.Count > 0;
+    }
+
+    async void UrlBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Down && AcPopup.IsOpen && AcList.Items.Count > 0)
+        {
+            AcList.SelectedIndex = 0;
+            (AcList.ItemContainerGenerator.ContainerFromIndex(0) as ListBoxItem)?.Focus();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape && AcPopup.IsOpen) { AcPopup.IsOpen = false; e.Handled = true; }
+        else if (e.Key == System.Windows.Input.Key.Enter) { AcPopup.IsOpen = false; e.Handled = true; await DoImport(); }
+    }
+
+    async void AcList_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) { e.Handled = true; ChooseAutocomplete(); await DoImport(); }
+        else if (e.Key == System.Windows.Input.Key.Escape) { AcPopup.IsOpen = false; UrlBox.Focus(); e.Handled = true; }
+    }
+
+    void ChooseAutocomplete()
+    {
+        if ((AcList.SelectedItem ?? (AcList.Items.Count > 0 ? AcList.Items[0] : null)) is not ListBoxItem li || li.Tag is not BuildEntry b)
+            return;
+        SetUrlText(b.Display);
+        _pickedSlug = b.Slug;
+        AcPopup.IsOpen = false;
     }
 
     void LoadSettings()
@@ -83,6 +181,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("target", out var t)) _targetPath = t;
                     if (s.TryGetValue("log", out var l) && !string.IsNullOrEmpty(l)) _log = l;
                     if (s.TryGetValue("url", out var u)) _lastUrl = u;
+                    if (s.TryGetValue("detailView", out var dv) && !string.IsNullOrEmpty(dv)) _detailView = dv;
                 }
             }
         }
@@ -98,13 +197,20 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView }));
         }
         catch { }
     }
 
+    async void LoadBuildIndex()
+    {
+        try { _buildIndex = await BuildIndex.LoadAsync(); }
+        catch { _buildIndex = new(); }
+    }
+
     void StartWatching()
     {
+        LoadBuildIndex();
         ReloadTarget();
         LoadVision();
         _watcher?.Dispose();
@@ -131,8 +237,38 @@ public partial class MainWindow : Window
     void ReloadTarget()
     {
         if (_targetPath != null && File.Exists(_targetPath))
-            try { _target = TargetLoader.Load(_targetPath); _targetMtime = File.GetLastWriteTimeUtc(_targetPath); }
+            try
+            {
+                _target = TargetLoader.Load(_targetPath);
+                _targetMtime = File.GetLastWriteTimeUtc(_targetPath);
+                _profile = _target.Profile;
+                ApplyProfileUi();
+            }
             catch { _target = null; }
+    }
+
+    // show the profile dropdown (and its options) when the loaded build exposes more than one profile
+    void ApplyProfileUi()
+    {
+        var profiles = _target?.Profiles ?? new();
+        if (profiles.Count <= 1) { ProfileBtn.Visibility = Visibility.Collapsed; ProfilePopup.IsOpen = false; return; }
+
+        ProfileBtn.Visibility = Visibility.Visible;
+        ProfileBtn.Content = "Profile: " + (_target!.Profile ?? profiles[^1]);
+        ProfileList.Items.Clear();
+        foreach (var p in profiles)
+        {
+            var item = new ListBoxItem { Content = TB(p, Ink, 14, false), Tag = p, IsSelected = p == _target.Profile };
+            item.MouseLeftButtonUp += async (_, _) => { ProfilePopup.IsOpen = false; await SwitchProfile(p); };
+            ProfileList.Items.Add(item);
+        }
+    }
+
+    async Task SwitchProfile(string profile)
+    {
+        if (_target?.Profile == profile || string.IsNullOrEmpty(_lastImportInput)) return;
+        _profile = profile;
+        await ImportFrom(_lastImportInput!, profile);
     }
 
     void PickTarget()
@@ -141,23 +277,33 @@ public partial class MainWindow : Window
         if (d.ShowDialog() == true) { _targetPath = d.FileName; SaveSettings(); ReloadTarget(); Render(); }
     }
 
-    async Task DoImport()
+    // Import button / Enter: import whatever the box resolves to (an autocomplete-picked slug, or free text).
+    Task DoImport()
     {
-        var url = (UrlBox.Text ?? "").Trim();
-        if (url.Length == 0) { Status.Text = "paste a Maxroll build URL first"; return; }
-        var profile = string.IsNullOrWhiteSpace(ProfileBox.Text) ? null : ProfileBox.Text.Trim();
+        AcPopup.IsOpen = false;
+        var input = _pickedSlug ?? (UrlBox.Text ?? "").Trim();
+        if (input.Length == 0) { Status.Text = "type a build name to search, or paste a Maxroll URL"; return Task.CompletedTask;
+        }
+        return ImportFrom(input, _profile);
+    }
+
+    async Task ImportFrom(string input, string? profile)
+    {
         var prev = ImportBtn.Content;
         ImportBtn.IsEnabled = false; ImportBtn.Content = "…"; Status.Text = "importing build…";
         try
         {
-            var t = await MaxrollImporter.ImportAsync(url, profile, s => Dispatcher.Invoke(() => Status.Text = s));
+            var t = await MaxrollImporter.ImportAsync(input, profile, s => Dispatcher.Invoke(() => Status.Text = s));
             var path = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "target.json");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
             _target = t; _targetPath = path; _targetMtime = File.GetLastWriteTimeUtc(path);
-            _lastUrl = url; SaveSettings();
+            _lastUrl = UrlBox.Text.Trim(); _lastImportInput = input; _profile = t.Profile;
+            SaveSettings();
+            ApplyProfileUi();
             Render();
-            Status.Text = $"imported: {t.Name} ({t.Gear.Count} gear, {t.Uniques.Count} uniques)";
+            Status.Text = $"imported: {t.Name}" + (t.Profile != null ? $" [{t.Profile}]" : "")
+                        + $" ({t.Gear.Count} gear, {t.Uniques.Count} uniques)";
         }
         catch (Exception ex)
         {
@@ -347,8 +493,11 @@ public partial class MainWindow : Window
         var sp = new StackPanel();
         var top = new DockPanel();
         top.Children.Add(Right(TB(s.Total > 0 ? $"{s.Matched}/{s.Total}" : "", Soft, 12.5, false)));
-        var mark = TB(glyph, col, 13.5, true, new Thickness(0, 0, 9, 0));
-        DockPanel.SetDock(mark, Dock.Left); top.Children.Add(mark);
+        // gear slots show a (status-tinted) equipment icon; non-gear categories keep the diamond marker
+        FrameworkElement marker = (s.Gear != null ? SlotIcon(SlotKey(s.Label), col, 24) : null)
+                                  ?? TB(glyph, col, 13.5, true);
+        marker.Margin = new Thickness(0, 0, 10, 0);
+        DockPanel.SetDock(marker, Dock.Left); top.Children.Add(marker);
         top.Children.Add(TBs(s.Label, Ink, 14, true));
         sp.Children.Add(top);
         sp.Children.Add(MiniBar(pct, s.Status == "missing" ? Crimson : col));
@@ -384,8 +533,15 @@ public partial class MainWindow : Window
     {
         var sp = new StackPanel();
         var (glyph, col) = Look(s.Status);
-        sp.Children.Add(TBs(glyph + "  " + s.Label + $"     {s.Matched} / {s.Total} met"
-            + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true, new Thickness(0, 0, 0, 8)));
+
+        // header: slot icon + serif title, with the Compare/List toggle (gear only) docked right
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        if (s.Gear != null) { var tg = ViewToggle(); DockPanel.SetDock(tg, Dock.Right); hdr.Children.Add(tg); }
+        var hi = s.Gear != null ? SlotIcon(SlotKey(s.Label), col, 30) : null;
+        if (hi != null) { hi.Margin = new Thickness(0, 0, 12, 0); DockPanel.SetDock(hi, Dock.Left); hdr.Children.Add(hi); }
+        hdr.Children.Add(TBs((hi == null ? glyph + "  " : "") + s.Label + $"     {s.Matched} / {s.Total} met"
+            + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true));
+        sp.Children.Add(hdr);
 
         if (s.Gear != null) GearDetail(sp, s.Gear);
         else if (s.Cat != null) foreach (var g in s.Cat.Groups) GroupRows(sp, g);
@@ -408,12 +564,99 @@ public partial class MainWindow : Window
             var parts = new List<string>();
             if (!string.IsNullOrEmpty(it.Rarity)) parts.Add(it.Rarity!);
             if (it.ItemPower != null) parts.Add("Item Power " + it.ItemPower);
-            sp.Children.Add(TB(string.Join("   ·   ", parts), Soft, 12, false, new Thickness(0, 0, 0, 10)));
+            sp.Children.Add(TB(string.Join("   ·   ", parts), Soft, 12, false, new Thickness(0, 0, 0, 12)));
         }
-        else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 8)));
-        foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
+        else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 10)));
+
+        if (_detailView == "list") foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
+        else CompareTable(sp, g);
+
         if (g.Extras.Count > 0)
-            sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 8, 0, 0)));
+            sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
+    }
+
+    // ---- compare view: Yours | Δ | Target ----
+    Grid CompareCols()
+    {
+        var g = new Grid();
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // affix
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(165) });                  // yours
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });                  // delta
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });                  // target
+        return g;
+    }
+
+    void CompareTable(StackPanel sp, Group g)
+    {
+        var head = CompareCols(); head.Margin = new Thickness(0, 2, 0, 5);
+        void H(int c, string t, HorizontalAlignment a)
+        { var x = TB(t, Faint, 11, true); x.HorizontalAlignment = a; Grid.SetColumn(x, c); head.Children.Add(x); }
+        H(0, "AFFIX", HorizontalAlignment.Left); H(1, "YOURS", HorizontalAlignment.Left);
+        H(2, "Δ", HorizontalAlignment.Left); H(3, "TARGET", HorizontalAlignment.Left);
+        sp.Children.Add(new Border { Child = head, BorderBrush = Line, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(0, 0, 0, 5) });
+
+        foreach (var i in g.Items) sp.Children.Add(CompareRow(i));
+    }
+
+    UIElement CompareRow(ReqItem i)
+    {
+        var (glyph, col) = Look(i.Status);
+        var g = CompareCols(); g.Margin = new Thickness(0, 6, 0, 6);
+
+        // affix label + marker
+        var lab = new DockPanel();
+        var mk = TB(glyph, col, 13, true, new Thickness(0, 0, 8, 0)); DockPanel.SetDock(mk, Dock.Left); lab.Children.Add(mk);
+        lab.Children.Add(TB(i.Label, i.Status == "met" ? Soft : Ink, 13.5, false));
+        Grid.SetColumn(lab, 0); g.Children.Add(lab);
+
+        // yours: value + a small roll bar
+        var yours = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        yours.Children.Add(TB(i.Status == "missing" ? "—" : (i.Val ?? "ok"), i.Status == "missing" ? Faint : Ink, 13.5, true));
+        if (i.Status != "missing" && i.RollPct != null)
+        {
+            var bar = RollBar(i.RollPct.Value, col, 138, 7);
+            bar.HorizontalAlignment = HorizontalAlignment.Left; bar.Margin = new Thickness(0, 4, 0, 0);
+            yours.Children.Add(bar);
+        }
+        Grid.SetColumn(yours, 1); g.Children.Add(yours);
+
+        // delta vs the target threshold
+        var (arrow, word) = i.Status == "met" ? ("▲", "ok") : i.Status == "under" ? ("▼", "low") : ("✕", "missing");
+        var d = TB(arrow + "  " + word, col, 12.5, true); d.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(d, 2); g.Children.Add(d);
+
+        // target requirement
+        var tt = TB(i.Need ?? (i.Status == "missing" ? "required" : "any roll"), Soft, 12.5, false);
+        tt.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(tt, 3); g.Children.Add(tt);
+        return g;
+    }
+
+    // segmented Compare/List toggle for the detail header
+    FrameworkElement ViewToggle()
+    {
+        var p = new StackPanel { Orientation = Orientation.Horizontal };
+        p.Children.Add(SegBtn("Compare", "compare"));
+        p.Children.Add(SegBtn("List", "list"));
+        return new Border
+        {
+            Background = B("#0E0C0A"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4), Padding = new Thickness(2),
+            VerticalAlignment = VerticalAlignment.Center, Child = p,
+        };
+    }
+
+    FrameworkElement SegBtn(string text, string mode)
+    {
+        bool on = _detailView == mode;
+        var t = TB(text, on ? B("#1B1408") : Soft, 12.5, on);
+        var b = new Border
+        {
+            Background = on ? Gold : System.Windows.Media.Brushes.Transparent, CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(13, 5, 13, 5), Child = t, Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        b.MouseLeftButtonUp += (_, _) => { if (_detailView != mode) { _detailView = mode; SaveSettings(); Render(); } };
+        return b;
     }
 
     UIElement AffixRow(ReqItem i)
@@ -445,9 +688,8 @@ public partial class MainWindow : Window
     }
 
     // a roll-quality bar: track + left-aligned fill at pct% of width
-    FrameworkElement RollBar(double pct, Brush fill)
+    FrameworkElement RollBar(double pct, Brush fill, double w = 170, double h = 14)
     {
-        double w = 170, h = 14;
         var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center };
         g.Children.Add(new Border { Background = Line, CornerRadius = new CornerRadius(h / 2) });
         g.Children.Add(new Border

@@ -44,27 +44,44 @@
           </LinearGradientBrush>
         </Border.BorderBrush>
         <StackPanel>
+          <!-- title + actions -->
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="BuildName" Grid.Column="0" Text="No build loaded" Foreground="{StaticResource Ink}"
-                       FontFamily="Book Antiqua, Palatino Linotype, Georgia" FontSize="29" FontWeight="Bold"
+                       FontFamily="pack://application:,,,/Assets/Fonts/#Cinzel" FontSize="30" FontWeight="Bold"
                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="ProfileBtn" Content="Profile" FontSize="14" Visibility="Collapsed" Margin="0,0,9,0"/>
+              <Popup x:Name="ProfilePopup" PlacementTarget="{Binding ElementName=ProfileBtn}" Placement="Bottom"
+                     StaysOpen="False" AllowsTransparency="True">
+                <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"
+                        CornerRadius="4" Margin="0,4,0,0">
+                  <ListBox x:Name="ProfileList" MinWidth="170" MaxHeight="320"/>
+                </Border>
+              </Popup>
               <Button x:Name="VisionBtn" Content="Paragon / Skills" FontSize="14"/>
               <Button x:Name="TargetBtn" Content="Target" FontSize="14" Margin="9,0,0,0"/>
               <Button x:Name="LogBtn" Content="Log" FontSize="14" Margin="9,0,0,0"/>
             </StackPanel>
           </Grid>
 
+          <!-- smart import: one box (search guides or paste a URL) + fuzzy autocomplete -->
           <Grid Margin="0,18,0,0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="Maxroll build" Foreground="{StaticResource Soft}" FontSize="14.5" VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <TextBox x:Name="UrlBox" Grid.Column="1" ToolTip="paste a Maxroll build-guide or planner URL, then Import"/>
-            <TextBox x:Name="ProfileBox" Grid.Column="2" Width="160" Margin="10,0,0,0" ToolTip="profile to use, e.g. Endgame (optional)"/>
-            <Button x:Name="ImportBtn" Grid.Column="3" Style="{StaticResource Primary}" Content="Import" Padding="24,7" Margin="10,0,0,0"/>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid Grid.Column="0">
+              <TextBox x:Name="UrlBox" ToolTip="Type a build name to search, or paste a Maxroll build-guide / planner URL"/>
+              <TextBlock x:Name="UrlPlaceholder" IsHitTestVisible="False" Foreground="{StaticResource Faint}"
+                         Text="Search builds  (e.g. dance of knives)  or paste a Maxroll URL…"
+                         FontSize="14.5" VerticalAlignment="Center" Margin="12,0,0,0"/>
+              <Popup x:Name="AcPopup" PlacementTarget="{Binding ElementName=UrlBox}" Placement="Bottom"
+                     StaysOpen="False" AllowsTransparency="True" Width="{Binding ActualWidth, ElementName=UrlBox}">
+                <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"
+                        CornerRadius="4" Margin="0,4,0,0">
+                  <ListBox x:Name="AcList" MaxHeight="360"/>
+                </Border>
+              </Popup>
+            </Grid>
+            <Button x:Name="ImportBtn" Grid.Column="1" Style="{StaticResource Primary}" Content="Import" Padding="28,8" Margin="10,0,0,0"/>
           </Grid>
 
           <Grid Margin="0,20,0,0">
@@ -88,7 +105,12 @@
       </Border>
 
       <!-- body -->
-      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Background="{StaticResource Bg}">
+      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer.Background>
+          <RadialGradientBrush GradientOrigin="0.5,0.28" Center="0.5,0.28" RadiusX="0.9" RadiusY="0.95">
+            <GradientStop Color="#1A1611" Offset="0"/><GradientStop Color="#0E0C0A" Offset="1"/>
+          </RadialGradientBrush>
+        </ScrollViewer.Background>
         <StackPanel x:Name="Body" Margin="24,20,24,24"/>
       </ScrollViewer>
 

@@ -13,4 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\Fonts\Cinzel.ttf" />
+  </ItemGroup>
 </Project>

@@ -76,6 +76,8 @@ public class TargetBuild
     public List<string> KeyPassives { get; set; } = new();
     public TargetParagon? Paragon { get; set; }
     public double? MinRollPercent { get; set; }  // global default roll-quality threshold (else the app's slider)
+    public List<string> Profiles { get; set; } = new();  // all profiles available on the source build
+    public string? Profile { get; set; }                 // the profile this target was built from
 }
 
 public class TargetGear

@@ -44,7 +44,15 @@ public static class MaxrollImporter
         if (url.Contains('<') || url.Contains('>'))
             throw new InvalidOperationException("That looks like a placeholder, not a real Maxroll URL.");
         if (url.Length == 0) throw new InvalidOperationException("Enter a Maxroll build URL.");
-        if (!url.Contains("://")) url = "https://maxroll.gg/d4/planner/" + url;
+        if (!url.Contains("://"))
+        {
+            // bare input: a build-guide slug is wordy with hyphens (dance-of-knives-rogue-guide);
+            // a planner code is a short single token (e.g. xQ2p0aBc).
+            var slug = url.Trim().Trim('/');
+            url = slug.Contains('-')
+                ? "https://maxroll.gg/d4/build-guides/" + slug
+                : "https://maxroll.gg/d4/planner/" + slug;
+        }
 
         log($"fetching {url} …");
         string html;
@@ -72,6 +80,10 @@ public static class MaxrollImporter
             var profiles = data.GetProperty("profiles");
             var prof = ChooseProfile(profiles, profileName);
             var target = BuildTarget(pp, data, prof, dm.RootElement, maps);
+            target.Profiles = profiles.EnumerateArray()
+                .Select(p => p.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "")
+                .Where(s => s.Length > 0).ToList();
+            target.Profile = prof.TryGetProperty("name", out var pnm) ? pnm.GetString() : null;
             log($"imported: {target.Name} — {target.Gear.Count} gear, {target.Uniques.Count} uniques, " +
                 $"{target.Skills.Count} skills, {target.Paragon?.Boards.Count ?? 0} boards");
             return target;
