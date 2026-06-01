@@ -578,7 +578,7 @@ public partial class MainWindow : Window
             + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true));
         sp.Children.Add(hdr);
 
-        if (s.Gear != null) GearDetail(sp, s.Gear);
+        if (s.Gear != null) GearDetail(sp, s.Gear, s.Label);
         else if (s.Cat != null) foreach (var g in s.Cat.Groups) GroupRows(sp, g);
 
         return new Border
@@ -589,7 +589,7 @@ public partial class MainWindow : Window
         };
     }
 
-    void GearDetail(StackPanel sp, Group g)
+    void GearDetail(StackPanel sp, Group g, string label)
     {
         var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
         if (_detailView == "list")
@@ -599,7 +599,7 @@ public partial class MainWindow : Window
             if (g.Extras.Count > 0)
                 sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
         }
-        else sp.Children.Add(CompareCard(g, it));
+        else sp.Children.Add(CompareCard(g, it, label));
     }
 
     void ItemHeader(StackPanel sp, GearLiveItem? it)
@@ -615,74 +615,105 @@ public partial class MainWindow : Window
         else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 10)));
     }
 
-    // ---- compare view: a D4/Maxroll-style item tooltip (rarity-tinted card, affix lines, gain/loss coloring) ----
-    UIElement CompareCard(Group g, GearLiveItem? it)
-    {
-        var rc = RarityColor(it?.Rarity);
-        var inner = new StackPanel();
-
-        // header: rarity-colored serif name + a muted subtitle (rarity · item power)
-        inner.Children.Add(TBs(it != null ? it.Name.ToUpperInvariant() : "— NO ITEM CAPTURED —",
-            it != null ? RarityBrush(it.Rarity) : Miss, 16.5, true, new Thickness(0, 0, 0, 1)));
-        var sub = it != null
-            ? string.Join("   ·   ", new[] { it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0))
-            : "this slot hasn’t been scanned yet";
-        inner.Children.Add(TB(sub, Soft, 11.5, false, new Thickness(0, 0, 0, 8)));
-        inner.Children.Add(Divider(rc, 0xAA));
-
-        foreach (var i in g.Items) inner.Children.Add(TipRow(i));
-
-        if (g.Extras.Count > 0)
-        {
-            inner.Children.Add(Divider(rc, 0x55));
-            inner.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false));
-        }
-
-        return new Border
-        {
-            Background = new LinearGradientBrush(Color.FromArgb(0x26, rc.R, rc.G, rc.B), Col("#1A1714"), 90),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0xD0, rc.R, rc.G, rc.B)),
-            BorderThickness = new Thickness(1.4), CornerRadius = new CornerRadius(7),
-            Padding = new Thickness(20, 16, 20, 18), Child = inner,
-        };
-    }
-
     UIElement Divider(Color c, byte alpha) =>
         new Border { Height = 1, Margin = new Thickness(0, 2, 0, 9), Background = HGrad(c, alpha) };
 
-    // a tooltip affix line: bullet + "value affix-name" with roll bar, gain/loss colored, target on the right
-    UIElement TipRow(ReqItem i)
+    static string Sub(GearLiveItem it) =>
+        string.Join("   ·   ", new[] { it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
+
+    // ---- compare view: equipped item beside what the build wants (D4 hold-to-compare idiom) ----
+    UIElement CompareCard(Group g, GearLiveItem? it, string label)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // EQUIPPED (left): your item + your rolls, colored by how they compare to the target
+        var eq = new StackPanel();
+        foreach (var i in g.Items) eq.Children.Add(EquippedRow(i));
+        if (g.Extras.Count > 0)
+        {
+            eq.Children.Add(Divider(RarityColor(it?.Rarity), 0x44));
+            eq.Children.Add(TB("also: " + string.Join("   ·   ", g.Extras), Soft, 11, false));
+        }
+        var left = TooltipPanel("EQUIPPED",
+            it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
+            it != null ? RarityBrush(it.Rarity) : Miss,
+            it != null ? Sub(it) : "nothing scanned in this slot yet",
+            RarityColor(it?.Rarity), eq);
+
+        // BUILD WANTS (right): the wanted item (a slot unique, if any) + the wanted affixes/thresholds
+        var wantUnique = _target?.Uniques.FirstOrDefault(u => SlotKey(u.Slot ?? "") == SlotKey(label));
+        bool myth = wantUnique?.Mythic == true;
+        Color wrc = wantUnique != null ? (myth ? Col("#D1492E") : Col("#C9A45C")) : Col("#C8A24E");
+        Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
+        var wp = new StackPanel();
+        foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
+        var right = TooltipPanel("BUILD WANTS",
+            wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
+            wbr,
+            wantUnique != null ? (myth ? "Mythic Unique" : "Unique") : "any item with these affixes",
+            wrc, wp);
+
+        Grid.SetColumn(left, 0); grid.Children.Add(left);
+        Grid.SetColumn(right, 2); grid.Children.Add(right);
+        return grid;
+    }
+
+    UIElement TooltipPanel(string title, string header, Brush headerBrush, string sub, Color rarity, StackPanel rows)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TB(title, Faint, 10.5, true, new Thickness(0, 0, 0, 4)));
+        inner.Children.Add(TBs(header, headerBrush, 15.5, true, new Thickness(0, 0, 0, 1)));
+        inner.Children.Add(TB(sub, Soft, 11, false, new Thickness(0, 0, 0, 8)));
+        inner.Children.Add(Divider(rarity, 0xAA));
+        inner.Children.Add(rows);
+        return new Border
+        {
+            Background = new LinearGradientBrush(Color.FromArgb(0x22, rarity.R, rarity.G, rarity.B), Col("#1A1714"), 90),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0xC8, rarity.R, rarity.G, rarity.B)),
+            BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(18, 14, 18, 16), VerticalAlignment = VerticalAlignment.Top, Child = inner,
+        };
+    }
+
+    // left panel row: your rolled value + roll quality, colored by how it compares to the target
+    UIElement EquippedRow(ReqItem i)
     {
         var (glyph, col) = Look(i.Status);
         var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var mk = TB(glyph, col, 13, true); mk.VerticalAlignment = VerticalAlignment.Top; mk.Margin = new Thickness(0, 1, 0, 0);
+        var mk = TB(glyph, col, 12.5, true); mk.VerticalAlignment = VerticalAlignment.Top; mk.Margin = new Thickness(0, 1, 0, 0);
         Grid.SetColumn(mk, 0); g.Children.Add(mk);
-
-        // value + name (value first, like a D4 tooltip), then a thin roll bar
         var mid = new StackPanel();
         var line = new StackPanel { Orientation = Orientation.Horizontal };
-        if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val))
-            line.Children.Add(TB(i.Val + "  ", col, 13.5, true));
-        line.Children.Add(TB(i.Label, Ink, 13.5, false));
+        if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
+        line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : Ink, 13, false));
         mid.Children.Add(line);
         if (i.Status != "missing" && i.RollPct != null)
         {
-            var bar = RollBar(i.RollPct.Value, col, 250, 8, _minRollPct); bar.Margin = new Thickness(0, 5, 0, 0);
+            var bar = RollBar(i.RollPct.Value, col, 200, 7, _minRollPct); bar.Margin = new Thickness(0, 4, 0, 0);
             mid.Children.Add(bar);
         }
         Grid.SetColumn(mid, 1); g.Children.Add(mid);
+        return g;
+    }
 
-        // right: delta vs target + threshold
-        var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(14, 0, 0, 0) };
-        var (arrow, word) = i.Status == "met" ? ("▲", "meets") : i.Status == "under" ? ("▼", "low roll") : ("✕", "missing");
-        var d = TB(arrow + "  " + word, col, 12, true); d.HorizontalAlignment = HorizontalAlignment.Right; right.Children.Add(d);
-        var need = i.Need ?? (i.Status == "missing" ? "required" : null);
-        if (need != null) { var n = TB(need, Soft, 11, false); n.HorizontalAlignment = HorizontalAlignment.Right; n.Margin = new Thickness(0, 1, 0, 0); right.Children.Add(n); }
-        Grid.SetColumn(right, 2); g.Children.Add(right);
+    // right panel row: what the build asks for + its threshold
+    UIElement WantedRow(ReqItem i)
+    {
+        var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var mk = TB("◆", Gold, 12.5, true); mk.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(mk, 0); g.Children.Add(mk);
+        var nm = TB(i.Label, Ink, 13, false); nm.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(nm, 1); g.Children.Add(nm);
+        var nd = TB(i.Need ?? "any roll", Soft, 11.5, false); nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
+        Grid.SetColumn(nd, 2); g.Children.Add(nd);
         return g;
     }
 
