@@ -79,7 +79,10 @@
                      StaysOpen="False" AllowsTransparency="True" Width="{Binding ActualWidth, ElementName=UrlBox}">
                 <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"
                         CornerRadius="4" Margin="0,4,0,0">
-                  <ListBox x:Name="AcList" MaxHeight="360"/>
+                  <StackPanel>
+                    <WrapPanel x:Name="AcChips" Margin="9,9,9,3"/>
+                    <ListBox x:Name="AcList" MaxHeight="340"/>
+                  </StackPanel>
                 </Border>
               </Popup>
             </Grid>

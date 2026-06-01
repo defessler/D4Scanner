@@ -110,6 +110,9 @@ public partial class MainWindow : Window
     string? _lastImportInput;              // the slug/url last imported (for profile re-import)
     string _detailView = "compare";        // "compare" (tooltip card) | "list"
     bool _rawView;                         // body shows the raw build details instead of the grid
+    string? _classFilter;                  // active class chip in the search dropdown
+    List<string> _recentSlugs = new();     // recently imported builds (search recents)
+    bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -145,12 +148,13 @@ public partial class MainWindow : Window
             _pickedSlug = null;          // user is typing free text now
             UpdateAutocomplete();
         };
+        UrlBox.GotFocus += (_, _) => { if (_uiReady && UrlBox.Text.Length == 0) UpdateAutocomplete(); };
         UrlBox.PreviewKeyDown += UrlBox_PreviewKeyDown;
         AcList.PreviewKeyDown += AcList_PreviewKeyDown;
         AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
-        Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); };
+        Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
     }
 
@@ -164,21 +168,60 @@ public partial class MainWindow : Window
 
     static bool LooksLikeUrl(string s) => s.Contains("://") || s.Contains("maxroll.gg");
 
+    static Brush ClassColor(string? c) => (c ?? "").ToLowerInvariant() switch
+    {
+        "barbarian" => B("#C8553D"), "druid" => B("#6FA85B"), "necromancer" => B("#5BB7A8"),
+        "rogue" => B("#C9A45C"), "sorcerer" => B("#6E9BD6"), "spiritborn" => B("#B07BD0"),
+        "paladin" => B("#E0C060"), "warlock" => B("#B05B7A"), _ => B("#9C907C"),
+    };
+
     void UpdateAutocomplete()
     {
         var q = UrlBox.Text.Trim();
-        if (q.Length < 2 || LooksLikeUrl(q) || _buildIndex.Count == 0) { AcPopup.IsOpen = false; return; }
-        var hits = BuildIndex.Search(_buildIndex, q, 8);
+        if (LooksLikeUrl(q) || _buildIndex.Count == 0) { AcPopup.IsOpen = false; return; }
+
+        BuildClassChips();
+        IEnumerable<BuildEntry> pool = _classFilter == null ? _buildIndex : _buildIndex.Where(b => b.Class == _classFilter);
+        List<BuildEntry> hits;
+        if (q.Length < 2)   // not typing yet → recent builds (filtered by the active class chip)
+            hits = _recentSlugs.Select(s => _buildIndex.FirstOrDefault(b => b.Slug == s)).Where(b => b != null)
+                    .Cast<BuildEntry>().Where(b => _classFilter == null || b.Class == _classFilter).Take(8).ToList();
+        else
+            hits = BuildIndex.Search(pool.ToList(), q, 8);
+
         AcList.Items.Clear();
-        foreach (var b in hits)
+        foreach (var b in hits) AcList.Items.Add(MakeAcItem(b));
+        AcPopup.IsOpen = AcChips.Children.Count > 0 || AcList.Items.Count > 0;
+    }
+
+    ListBoxItem MakeAcItem(BuildEntry b)
+    {
+        var sp = new StackPanel { Tag = b };
+        sp.Children.Add(TB(b.Title, Ink, 14, false));
+        if (!string.IsNullOrEmpty(b.Class)) sp.Children.Add(TB(b.Class, ClassColor(b.Class), 11.5, false, new Thickness(0, 1, 0, 0)));
+        return new ListBoxItem { Content = sp, Tag = b };
+    }
+
+    void BuildClassChips()
+    {
+        AcChips.Children.Clear();
+        var classes = _buildIndex.Select(b => b.Class).Where(c => !string.IsNullOrEmpty(c)).Distinct().OrderBy(c => c).ToList();
+        AcChips.Children.Add(ClassChip("All", null));
+        foreach (var c in classes) AcChips.Children.Add(ClassChip(c!, c));
+    }
+
+    UIElement ClassChip(string label, string? cls)
+    {
+        bool on = _classFilter == cls;
+        var t = TB(label, on ? B("#14110D") : ClassColor(cls), 12, on);
+        var b = new Border
         {
-            var sp = new StackPanel { Tag = b };
-            sp.Children.Add(TB(b.Title, Ink, 14, false));
-            if (!string.IsNullOrEmpty(b.Class))
-                sp.Children.Add(TB(b.Class, Soft, 11.5, false, new Thickness(0, 1, 0, 0)));
-            AcList.Items.Add(new ListBoxItem { Content = sp, Tag = b });
-        }
-        AcPopup.IsOpen = AcList.Items.Count > 0;
+            Child = t, CornerRadius = new CornerRadius(999), Padding = new Thickness(11, 4, 11, 5), Margin = new Thickness(0, 0, 6, 6),
+            Background = on ? (cls == null ? Gold : ClassColor(cls)) : B("#14110D"),
+            BorderBrush = Edge, BorderThickness = new Thickness(1), Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        b.MouseLeftButtonUp += (_, _) => { _classFilter = on ? null : cls; UpdateAutocomplete(); };
+        return b;
     }
 
     async void UrlBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -224,6 +267,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("minRoll", out var mr) && double.TryParse(mr, System.Globalization.CultureInfo.InvariantCulture, out var mrv))
                         _minRollPct = Math.Clamp(mrv, 0, 100);
                     if (s.TryGetValue("src", out var sr) && !string.IsNullOrEmpty(sr)) _lastImportInput = sr;
+                    if (s.TryGetValue("recent", out var rc) && !string.IsNullOrEmpty(rc)) _recentSlugs = rc.Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
                 }
             }
         }
@@ -239,7 +283,7 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
         }
         catch { }
     }
@@ -377,6 +421,11 @@ public partial class MainWindow : Window
             File.WriteAllText(path, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
             _target = t; _targetPath = path; _targetMtime = File.GetLastWriteTimeUtc(path);
             _lastUrl = UrlBox.Text.Trim(); _lastImportInput = input; _profile = t.Profile;
+            if (!LooksLikeUrl(input))   // remember the build slug for the search "recents"
+            {
+                _recentSlugs.Remove(input); _recentSlugs.Insert(0, input);
+                if (_recentSlugs.Count > 6) _recentSlugs.RemoveRange(6, _recentSlugs.Count - 6);
+            }
             SaveSettings();
             ApplyProfileUi();
             Render();
