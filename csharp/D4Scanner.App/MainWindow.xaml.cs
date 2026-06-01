@@ -670,6 +670,31 @@ public partial class MainWindow : Window
     UIElement Divider(Color c, byte alpha) =>
         new Border { Height = 1, Margin = new Thickness(0, 2, 0, 9), Background = HGrad(c, alpha) };
 
+    // a small "tempered" (forged) badge, à la Maxroll's anvil marker
+    TextBlock TemperedBadge()
+    {
+        var t = TB("⚒", Amber, 12, true);
+        t.Margin = new Thickness(6, 0, 0, 0); t.VerticalAlignment = VerticalAlignment.Center;
+        t.ToolTip = "tempered affix";
+        return t;
+    }
+
+    // the item's legendary aspect / special ability, shown in a D4-style orange box
+    UIElement AspectBox(string aspect)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TB("ASPECT / POWER", Faint, 9.5, true, new Thickness(0, 0, 0, 2)));
+        var t = TB(aspect, RLegend, 12.5, false); t.TextWrapping = TextWrapping.Wrap;
+        inner.Children.Add(t);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0x8A, 0x3C)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0x8A, 0x3C)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 9, 0, 0), Child = inner,
+        };
+    }
+
     static string Sub(GearLiveItem it) =>
         string.Join("   ·   ", new[] { it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
 
@@ -684,6 +709,7 @@ public partial class MainWindow : Window
         // EQUIPPED (left): your item + your rolls, colored by how they compare to the target
         var eq = new StackPanel();
         foreach (var i in g.Items) eq.Children.Add(EquippedRow(i));
+        if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
         if (g.Extras.Count > 0)
         {
             eq.Children.Add(Divider(RarityColor(it?.Rarity), 0x44));
@@ -702,6 +728,7 @@ public partial class MainWindow : Window
         Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
         var wp = new StackPanel();
         foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
+        if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         var right = TooltipPanel("BUILD WANTS",
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,
@@ -754,6 +781,7 @@ public partial class MainWindow : Window
         var line = new StackPanel { Orientation = Orientation.Horizontal };
         if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
         line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : Ink, 13, false));
+        if (i.Tempered) line.Children.Add(TemperedBadge());
         mid.Children.Add(line);
         if (i.Status != "missing" && i.RollPct != null)
         {
@@ -773,8 +801,10 @@ public partial class MainWindow : Window
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var mk = TB("◆", Gold, 12.5, true); mk.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(mk, 0); g.Children.Add(mk);
-        var nm = TB(i.Label, Ink, 13, false); nm.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(nm, 1); g.Children.Add(nm);
+        var nmline = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        nmline.Children.Add(TB(i.Label, Ink, 13, false));
+        if (i.Tempered) nmline.Children.Add(TemperedBadge());
+        Grid.SetColumn(nmline, 1); g.Children.Add(nmline);
         var nd = TB(i.Need ?? "any roll", Soft, 11.5, false); nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
         Grid.SetColumn(nd, 2); g.Children.Add(nd);
         return g;

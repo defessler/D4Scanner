@@ -268,28 +268,30 @@ public static class MaxrollImporter
 
                 if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic }); continue; }
 
+                string? aspectName = null;
                 if (item.TryGetProperty("aspect", out var asp) && asp.ValueKind == JsonValueKind.Object)
                 {
                     var anid = Nid(asp);
-                    if (anid != null) { var an = AffixName(anid.Value, m); if (an != null) aspects.Add(an); }
+                    if (anid != null) { var an = AffixName(anid.Value, m); if (an != null) { aspects.Add(an); aspectName = an; } }
                 }
 
-                var names = new List<string>();
-                foreach (var coll in new[] { "explicits", "tempered" })
+                var affixes = new List<TargetAffix>();
+                var seenAff = new HashSet<string>();
+                foreach (var (coll, tempered) in new[] { ("explicits", false), ("tempered", true) })
                     if (item.TryGetProperty(coll, out var arr) && arr.ValueKind == JsonValueKind.Array)
                         foreach (var af in arr.EnumerateArray())
                         {
                             var nid = Nid(af);
                             if (nid == null) continue;
                             var an = AffixName(nid.Value, m);
-                            if (an != null && !names.Contains(an)) names.Add(an);
+                            if (an != null && seenAff.Add(an)) affixes.Add(new TargetAffix { Name = an, Tempered = tempered });
                         }
 
-                if (names.Count > 0 && slot != "unknown")
+                if ((affixes.Count > 0 || aspectName != null) && slot != "unknown")
                 {
                     string sid = slot, label = char.ToUpper(slot[0]) + slot[1..];
                     if (slot == "ring") { ringN++; sid = "ring" + ringN; label = "Ring #" + ringN; }
-                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = names.Select(x => new TargetAffix { Name = x }).ToList() });
+                    gear.Add(new TargetGear { Slot = sid, Label = label, Affixes = affixes, Aspect = aspectName });
                 }
             }
 

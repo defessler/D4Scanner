@@ -110,7 +110,7 @@ public static class DiffEngine
                         if (used[i]) continue;
                         if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
                     }
-                    var req = new ReqItem { Label = aff.Name };
+                    var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
                     if (match == null) { req.Status = "missing"; req.Done = false; }
                     else
                     {
@@ -144,9 +144,10 @@ public static class DiffEngine
                 var grp = MakeGroup(g.Label ?? g.Slot, items);
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
-                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique } }
+                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, Aspect = it.Aspect } }
                     : new();
                 grp.Extras = extras;
+                grp.WantAspect = g.Aspect;
                 gearGroups.Add(grp);
             }
             cats.Add(MakeCategory("gear", "Gear & Affixes", gearGroups));

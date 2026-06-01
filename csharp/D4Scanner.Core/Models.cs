@@ -85,6 +85,7 @@ public class TargetGear
     public string Slot { get; set; } = "";
     public string? Label { get; set; }
     public List<TargetAffix> Affixes { get; set; } = new();
+    public string? Aspect { get; set; }   // legendary aspect the build wants on this slot
 }
 
 /// <summary>A wanted affix, optionally with a value threshold. Deserializes from either a bare
@@ -95,6 +96,7 @@ public class TargetAffix
     public string Name { get; set; } = "";
     public double? Min { get; set; }         // absolute minimum rolled value
     public double? MinPercent { get; set; }  // minimum roll as % of the affix's [min..max] range
+    public bool Tempered { get; set; }       // a tempered (manually-forged) affix
 }
 
 public class TargetAffixConverter : JsonConverter<TargetAffix>
@@ -113,6 +115,7 @@ public class TargetAffixConverter : JsonConverter<TargetAffix>
                 if (n == "name" && p.Value.ValueKind == JsonValueKind.String) a.Name = p.Value.GetString() ?? "";
                 else if (n == "min" && p.Value.ValueKind == JsonValueKind.Number) a.Min = p.Value.GetDouble();
                 else if ((n == "minpercent" || n == "minpct") && p.Value.ValueKind == JsonValueKind.Number) a.MinPercent = p.Value.GetDouble();
+                else if (n == "tempered" && (p.Value.ValueKind == JsonValueKind.True || p.Value.ValueKind == JsonValueKind.False)) a.Tempered = p.Value.GetBoolean();
             }
             return a;
         }
@@ -121,11 +124,12 @@ public class TargetAffixConverter : JsonConverter<TargetAffix>
 
     public override void Write(Utf8JsonWriter w, TargetAffix v, JsonSerializerOptions o)
     {
-        if (v.Min == null && v.MinPercent == null) { w.WriteStringValue(v.Name); return; }
+        if (v.Min == null && v.MinPercent == null && !v.Tempered) { w.WriteStringValue(v.Name); return; }
         w.WriteStartObject();
         w.WriteString("name", v.Name);
         if (v.Min != null) w.WriteNumber("min", v.Min.Value);
         if (v.MinPercent != null) w.WriteNumber("minPercent", v.MinPercent.Value);
+        if (v.Tempered) w.WriteBoolean("tempered", true);
         w.WriteEndObject();
     }
 }
@@ -167,6 +171,7 @@ public class ReqItem
     public double? RollPct { get; set; }      // roll within the affix's [min..max] range, 0-100
     public string? Need { get; set; }         // threshold description, e.g. "≥ 80%" or "≥ 1500"
     public string? Have { get; set; }         // what you have instead (uniques)
+    public bool Tempered { get; set; }        // this affix is a tempered (manually-forged) affix
 }
 
 public class GearLiveItem
@@ -175,6 +180,7 @@ public class GearLiveItem
     public string? Rarity { get; set; }
     public int? ItemPower { get; set; }
     public bool IsUnique { get; set; }
+    public string? Aspect { get; set; }   // the item's legendary/unique power, if captured
 }
 
 public class Group
@@ -187,6 +193,7 @@ public class Group
     public string? Kind { get; set; }                 // "gear" => value layout
     public List<GearLiveItem> LiveItems { get; set; } = new();
     public List<string> Extras { get; set; } = new();
+    public string? WantAspect { get; set; }           // aspect the build wants in this slot
 }
 
 public class Category
