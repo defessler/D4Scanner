@@ -301,6 +301,8 @@ public partial class MainWindow : Window
     bool _iconRefreshQueued;
     async void LoadIconIndex()
     {
+        // point the game-data icon extractor at the local install (falls back to probing common paths)
+        try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         try { await IconResolver.LoadIndexAsync(); Dispatcher.Invoke(Render); } catch { }
     }
     void OnIconReady()

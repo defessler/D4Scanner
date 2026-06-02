@@ -42,6 +42,12 @@ public static class IconResolver
     /// <summary>Raised (on a background thread) when a new icon finishes downloading.</summary>
     public static event Action? Changed;
 
+    static IconResolver()
+    {
+        // a freshly extracted game-data icon should refresh the UI just like a downloaded one
+        GameDataIcons.Changed += () => Changed?.Invoke();
+    }
+
     public static async Task LoadIndexAsync(CancellationToken ct = default)
     {
         LoadSources();
@@ -113,6 +119,11 @@ public static class IconResolver
     /// </summary>
     public static string? Get(string? name, string? id, long? image, string? klass)
     {
+        // source 0 (highest priority): the real icon extracted from the user's own local game files,
+        // keyed by Maxroll's image handle. Returns a cached PNG path, or null while it extracts in the
+        // background (UI refreshes via Changed). Inert when the game isn't installed.
+        if (GameDataIcons.Get(image) is string gamePath) return gamePath;
+
         // source 1 (built-in): diablo4icons index, keyed by item name
         if (_loaded && !string.IsNullOrWhiteSpace(name) && Resolve(name!, klass) is string repoPath)
         {
