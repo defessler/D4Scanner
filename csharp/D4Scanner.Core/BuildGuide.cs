@@ -54,12 +54,26 @@ public static class BuildGuide
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
             acts.Add(new GuideStep(1, "IMPRINT", i.Label, "at the Occultist", $"Imprint the {i.Label}", "cat:aspects"));
         // skills & paragon are vision-gated, one-time menu setup (not farm targets) -> trail the gear plan
-        foreach (var (grp, i) in CatItems(r, "skills").Where(x => !x.i.Done))
-            acts.Add(new GuideStep(4, "SKILL", i.Label, grp, $"Set up {i.Label} ({grp})", "cat:skills"));
-        foreach (var (grp, i) in CatItems(r, "paragon").Where(x => !x.i.Done))
-            acts.Add(new GuideStep(4, "PARAGON", i.Label, grp, $"Work your paragon: {i.Label}", "cat:paragon"));
+        AddVisionCategory(r, acts, "skills", "SKILL", "Set up", "skills & passives");
+        AddVisionCategory(r, acts, "paragon", "PARAGON", "Work on", "paragon boards & glyphs");
 
         return acts.OrderBy(a => a.Tier).ToList();
+    }
+
+    // Vision-gated category (skills/paragon): if nothing is confirmed yet, we can't know what's actually
+    // missing — emit ONE "capture to verify" step instead of flooding DO NEXT with false-missing entries.
+    static void AddVisionCategory(DiffReport r, List<GuideStep> acts, string id, string verb, string verbWord, string label)
+    {
+        var cat = r.Categories.FirstOrDefault(c => c.Id == id);
+        if (cat == null) return;
+        var missing = CatItems(r, id).Where(x => !x.i.Done).ToList();
+        if (missing.Count == 0) return;
+        if (cat.Matched == 0)
+            acts.Add(new GuideStep(4, "CAPTURE", label, "screenshot to verify",
+                $"Capture your {label} with a vision screenshot so the app can track them", "cat:" + id));
+        else
+            foreach (var (grp, i) in missing)
+                acts.Add(new GuideStep(4, verb, i.Label, grp, $"{verbWord} {i.Label} ({grp})", "cat:" + id));
     }
 
     /// <summary>Human label for a focus key ("gear:3" → the slot name, "cat:uniques" → "Uniques").</summary>

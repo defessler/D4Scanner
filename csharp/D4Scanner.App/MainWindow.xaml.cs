@@ -661,7 +661,7 @@ public partial class MainWindow : Window
     Brush VerbColor(string verb) => verb switch
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
-        "SKILL" or "PARAGON" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
+        "SKILL" or "PARAGON" or "CAPTURE" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
 
     // shown before any build is imported, so opening the app immediately tells you what to do
