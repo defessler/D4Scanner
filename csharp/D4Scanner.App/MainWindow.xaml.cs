@@ -135,6 +135,8 @@ public partial class MainWindow : Window
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
+        InstallCaptureBtn.Click += (_, _) => RunInstall(InstallCaptureBtn);
+        OpenSrcBtn.Click += (_, _) => OpenSource();
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -571,6 +573,8 @@ public partial class MainWindow : Window
 
     void Render()
     {
+        InstallCaptureBtn.Visibility = CaptureSetup.Installed() ? Visibility.Collapsed : Visibility.Visible;
+        OpenSrcBtn.Visibility = SourceUrl() != null ? Visibility.Visible : Visibility.Collapsed;
         if (_target == null)
         {
             BuildName.Text = "D4Scanner — Live Build Tracker";
@@ -658,14 +662,7 @@ public partial class MainWindow : Window
     {
         var dp = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
         var btn = new Button { Content = "Install capture DLL", Style = (Style)FindResource("Primary"), Padding = new Thickness(18, 7, 18, 7), VerticalAlignment = VerticalAlignment.Center };
-        btn.Click += (_, _) =>
-        {
-            btn.IsEnabled = false; var prev = btn.Content; btn.Content = "installing…";
-            var (ok, msg) = CaptureSetup.Install();
-            MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
-                MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-            btn.IsEnabled = true; btn.Content = prev; Render();
-        };
+        btn.Click += (_, _) => RunInstall(btn);
         DockPanel.SetDock(btn, Dock.Right); dp.Children.Add(btn);
 
         var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -681,6 +678,27 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(16, 12, 16, 12), Child = dp,
         };
+    }
+
+    // the reconstructed Maxroll URL of the build we're comparing against (null if unknown)
+    string? SourceUrl() => MaxrollImporter.BuildUrl(_lastImportInput) ?? MaxrollImporter.BuildUrl(_lastUrl);
+
+    void OpenSource()
+    {
+        var url = SourceUrl();
+        if (url == null) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch { }
+    }
+
+    // shared install action for the banner button and the footer button
+    void RunInstall(Button btn)
+    {
+        btn.IsEnabled = false; var prev = btn.Content; btn.Content = "installing…";
+        var (ok, msg) = CaptureSetup.Install();
+        MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
+            MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        btn.IsEnabled = true; btn.Content = prev; Render();
     }
 
     Brush VerbColor(string verb) => verb switch

@@ -36,6 +36,20 @@ public static class MaxrollImporter
         ("Glaive","weapon"),("Quarterstaff","weapon"),("Spear","weapon"),("Weapon","weapon"),
     };
 
+    /// <summary>Reconstruct the Maxroll URL from a slug / planner-code / full URL (mirrors ImportAsync's rule):
+    /// a hyphenated slug → /d4/build-guides/&lt;slug&gt;, a short token → /d4/planner/&lt;code&gt;. Null if empty.</summary>
+    public static string? BuildUrl(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var s = input.Trim();
+        if (s.Contains("://")) return s;
+        s = s.Trim('/');
+        if (s.Length == 0) return null;
+        return s.Contains('-')
+            ? "https://maxroll.gg/d4/build-guides/" + s
+            : "https://maxroll.gg/d4/planner/" + s;
+    }
+
     public static async Task<TargetBuild> ImportAsync(string url, string? profileName = null,
         Action<string>? log = null, CancellationToken ct = default)
     {
