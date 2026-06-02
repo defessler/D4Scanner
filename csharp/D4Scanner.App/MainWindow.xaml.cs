@@ -102,6 +102,7 @@ public partial class MainWindow : Window
     double _minRollPct = 75;
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
+    string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
     List<BuildEntry> _buildIndex = new();  // maxroll guide list for autocomplete
@@ -687,14 +688,28 @@ public partial class MainWindow : Window
                 Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = done,
             };
         }
-        var top = acts.OrderBy(a => a.Tier).Take(9).ToList();
+        // focus mode: show only the picked slot/category (cleared automatically once it's fully met)
+        var view = _focusKey != null ? acts.Where(a => a.FocusKey == _focusKey).ToList() : acts;
+        if (view.Count == 0) { view = acts; _focusKey = null; }
+        bool focused = _focusKey != null;
+        var top = view.OrderBy(a => a.Tier).Take(9).ToList();
 
         var sp = new StackPanel();
-        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var cnt = TB(acts.Count + (acts.Count == 1 ? " step left" : " steps left"), Soft, 11.5, false);
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, focused ? 6 : 8) };
+        var cnt = TB(view.Count + (view.Count == 1 ? " step left" : " steps left"), Soft, 11.5, false);
         cnt.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(cnt, Dock.Right); hdr.Children.Add(cnt);
         hdr.Children.Add(TBs("DO NEXT", Gold, 13, true));
         sp.Children.Add(hdr);
+
+        if (focused)
+        {
+            var fb = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var clear = TB("✕ show all", Steel, 11.5, false); clear.Cursor = System.Windows.Input.Cursors.Hand;
+            clear.MouseLeftButtonUp += (_, _) => { _focusKey = null; Render(); };
+            DockPanel.SetDock(clear, Dock.Right); fb.Children.Add(clear);
+            fb.Children.Add(TB("focused on  " + FocusLabel(r, _focusKey!), Ink, 11.5, true));
+            sp.Children.Add(fb);
+        }
 
         var hl = TB(top[0].Headline, Ink, 14.5, false, new Thickness(0, 0, 0, 8));
         hl.TextWrapping = TextWrapping.Wrap; sp.Children.Add(hl);
@@ -717,7 +732,7 @@ public partial class MainWindow : Window
             if (a.FocusKey is string fk)
             {
                 row.Cursor = System.Windows.Input.Cursors.Hand;
-                row.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; Render(); };
+                row.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; _focusKey = fk; Render(); };
             }
             sp.Children.Add(row);
         }
@@ -748,7 +763,7 @@ public partial class MainWindow : Window
                 foreach (var i in g.Items)
                 {
                     if (i.Status == "missing")       // tier 2 — craft/temper the missing affix
-                        acts.Add(new GuideAct(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}", i.Need, i.Tempered ? Amber : Ink,
+                        acts.Add(new GuideAct(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}", i.Tempered ? "at the Blacksmith" : i.Need, i.Tempered ? Amber : Ink,
                             i.Tempered ? $"Temper {i.Label} onto your {g.Name}" : $"Get {i.Label} on your {g.Name}" + (i.Need != null ? $" ({i.Need})" : ""), key));
                     else if (i.Status == "under")    // tier 3 — polish an under-rolled affix
                         acts.Add(new GuideAct(3, "IMPROVE", $"{g.Name} — {i.Label}", (i.Val != null ? i.Val + " → " : "") + i.Need, Amber,
@@ -760,7 +775,7 @@ public partial class MainWindow : Window
         foreach (var (_, i) in CatItems(r, "uniques").Where(x => !x.i.Done))
             acts.Add(new GuideAct(1, "FIND", i.Label, i.Have != null ? "have " + i.Have : null, RUnique, $"Track down {i.Label}", "cat:uniques"));
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
-            acts.Add(new GuideAct(1, "IMPRINT", i.Label, null, RLegend, $"Imprint the {i.Label}", "cat:aspects"));
+            acts.Add(new GuideAct(1, "IMPRINT", i.Label, "at the Occultist", RLegend, $"Imprint the {i.Label}", "cat:aspects"));
         foreach (var (grp, i) in CatItems(r, "skills").Where(x => !x.i.Done))
             acts.Add(new GuideAct(1, "SKILL", i.Label, grp, Steel, $"Set up {i.Label} ({grp})", "cat:skills"));
         foreach (var (grp, i) in CatItems(r, "paragon").Where(x => !x.i.Done))
@@ -776,6 +791,18 @@ public partial class MainWindow : Window
         foreach (var g in c.Groups)
             foreach (var i in g.Items)
                 yield return (g.Name, i);
+    }
+
+    // human label for a focus key ("gear:3" -> the slot name, "cat:uniques" -> "Uniques")
+    static string FocusLabel(DiffReport r, string key)
+    {
+        if (key.StartsWith("cat:")) return ShortName(key.Substring(4));
+        if (key.StartsWith("gear:") && int.TryParse(key.AsSpan(5), out var gi))
+        {
+            var groups = r.Categories.FirstOrDefault(c => c.Id == "gear")?.Groups;
+            if (groups != null && gi >= 0 && gi < groups.Count) return groups[gi].Name;
+        }
+        return key;
     }
 
     UIElement SummaryStrip(DiffReport r)
