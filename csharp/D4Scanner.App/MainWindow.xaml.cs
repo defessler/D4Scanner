@@ -544,6 +544,31 @@ public partial class MainWindow : Window
         "paragon" => "Paragon", "aspects" => "Aspects", _ => id,
     };
 
+    // Render the whole window to a PNG without showing it — for headless inspection of the live UI.
+    internal void HeadlessRender(string outPng, int w = 1300, int h = 1760)
+    {
+        try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
+        _uiReady = true;
+        ReloadTarget();
+        try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
+        Render();
+
+        var content = (FrameworkElement)Content;
+        var size = new Size(w, h);
+        content.Measure(size);
+        content.Arrange(new Rect(size));
+        content.UpdateLayout();
+
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(content);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(rtb));
+        var full = Path.GetFullPath(outPng);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using var fs = File.Create(full);
+        enc.Save(fs);
+    }
+
     void Render()
     {
         if (_target == null)
