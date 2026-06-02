@@ -69,6 +69,22 @@ void Print(LiveBuild live)
         }
         Console.WriteLine();
     }
+
+    // the same prioritized "Do Next" plan the app shows, straight from Core
+    var steps = BuildGuide.Steps(r);
+    Console.WriteLine("DO NEXT:");
+    if (steps.Count == 0) Console.WriteLine("  ✓ build complete");
+    else
+    {
+        int? lt = null;
+        foreach (var s in steps.Take(12))
+        {
+            if (s.Tier != lt) { Console.WriteLine("  " + BuildGuide.TierLabel(s.Tier)); lt = s.Tier; }
+            Console.WriteLine($"    [{s.Verb,-7}] {s.Text}" + (s.Detail != null ? $"   ({s.Detail})" : ""));
+        }
+        if (steps.Count > 12) Console.WriteLine($"    … +{steps.Count - 12} more");
+    }
+    Console.WriteLine();
 }
 
 if (watch)

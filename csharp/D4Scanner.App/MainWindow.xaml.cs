@@ -550,8 +550,10 @@ public partial class MainWindow : Window
         {
             BuildName.Text = "D4Scanner — Live Build Tracker";
             OverallPct.Text = "—";
-            OverallCount.Text = "No target loaded — paste a Maxroll URL and Import, or pick a target.json";
+            OverallCount.Text = "No build loaded yet — import one to start your guide";
             OverallBar.Value = 0; Body.Children.Clear();
+            if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
+            Body.Children.Add(WelcomeCard());
             Status.Text = $"log: {_log}";
             return;
         }
@@ -656,25 +658,46 @@ public partial class MainWindow : Window
         };
     }
 
-    // a single prioritized, action-typed step toward the build. Lower Tier = higher impact.
-    // FocusKey lets the row jump straight to that slot's compare / that category's detail when clicked.
-    sealed record GuideAct(int Tier, string Verb, string Text, string? Detail, Brush Col, string Headline, string? FocusKey);
-
-    static string TierLabel(int t) => t switch
+    Brush VerbColor(string verb) => verb switch
     {
-        0 => "FREE NOW · equip gear you already own",
-        1 => "ACQUIRE · uniques · aspects · skills · paragon",
-        2 => "CRAFT · add the missing affixes",
-        _ => "POLISH · push under-rolled affixes higher",
+        "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
+        "SKILL" or "PARAGON" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
 
-    // "Do Next" guidance for an in-progress build: every actionable gap across gear, uniques, aspects,
-    // skills and paragon — grouped by effort, ordered by impact, tagged with what to DO, and clickable
-    // to jump to the relevant detail. Leads with free wins (equip a better item you already own).
-    // Null when the build is complete.
+    // shown before any build is imported, so opening the app immediately tells you what to do
+    UIElement WelcomeCard()
+    {
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("Get started", Gold, 15, true, new Thickness(0, 0, 0, 10)));
+        void Step(string n, string head, string body)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
+            var num = TB(n, B("#0C0C0F"), 11, true); num.TextAlignment = TextAlignment.Center;
+            var nb = new Border { Background = Gold, CornerRadius = new CornerRadius(11), Width = 22, Height = 22, Margin = new Thickness(0, 1, 12, 0), VerticalAlignment = VerticalAlignment.Top, Child = num };
+            DockPanel.SetDock(nb, Dock.Left); row.Children.Add(nb);
+            var t = new StackPanel();
+            t.Children.Add(TBs(head, Ink, 13.5, true));
+            var bt = TB(body, Soft, 12.5, false, new Thickness(0, 1, 0, 0)); bt.TextWrapping = TextWrapping.Wrap; t.Children.Add(bt);
+            row.Children.Add(t);
+            sp.Children.Add(row);
+        }
+        Step("1", "Paste a Maxroll build above, then Import", "A build-guide URL, a planner link, or just the slug works.");
+        Step("2", "Turn on Diablo IV's screen reader", "Settings → Accessibility → Screen Reader + 3rd-Party Screen Reader, so the app can read your equipped gear.");
+        Step("3", "Follow your live guide", "This screen becomes your paper doll plus a prioritized “Do Next” plan — what to equip, find, craft and improve to reach the build.");
+        return new Border
+        {
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(20, 16, 20, 18), Margin = new Thickness(0, 0, 0, 14), Child = sp,
+        };
+    }
+
+    // "Do Next" guidance: the prioritized, build-wide plan is produced by Core (BuildGuide.Steps) — every
+    // actionable gap across gear, uniques, aspects, skills and paragon, grouped by effort and ordered by
+    // impact. This method only renders it (verb colors, focus filter, click-to-focus). Leads with free wins
+    // (equip a better item you already own). Null when the build is complete.
     UIElement? GuidancePanel(DiffReport r)
     {
-        var acts = CollectActions(r);
+        var acts = BuildGuide.Steps(r);
         if (acts.Count == 0)
         {
             // closed the loop — guide all the way to the finish line
@@ -692,7 +715,7 @@ public partial class MainWindow : Window
         var view = _focusKey != null ? acts.Where(a => a.FocusKey == _focusKey).ToList() : acts;
         if (view.Count == 0) { view = acts; _focusKey = null; }
         bool focused = _focusKey != null;
-        var top = view.OrderBy(a => a.Tier).Take(9).ToList();
+        var top = view.Take(9).ToList();   // BuildGuide.Steps is already impact-ordered
 
         var sp = new StackPanel();
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, focused ? 6 : 8) };
@@ -707,7 +730,7 @@ public partial class MainWindow : Window
             var clear = TB("✕ show all", Steel, 11.5, false); clear.Cursor = System.Windows.Input.Cursors.Hand;
             clear.MouseLeftButtonUp += (_, _) => { _focusKey = null; Render(); };
             DockPanel.SetDock(clear, Dock.Right); fb.Children.Add(clear);
-            fb.Children.Add(TB("focused on  " + FocusLabel(r, _focusKey!), Ink, 11.5, true));
+            fb.Children.Add(TB("focused on  " + BuildGuide.FocusLabel(r, _focusKey!), Ink, 11.5, true));
             sp.Children.Add(fb);
         }
 
@@ -719,12 +742,12 @@ public partial class MainWindow : Window
         {
             if (a.Tier != lastTier)
             {
-                sp.Children.Add(TBs(TierLabel(a.Tier), Faint, 10, true, new Thickness(0, lastTier == null ? 2 : 11, 0, 5)));
+                sp.Children.Add(TBs(BuildGuide.TierLabel(a.Tier), Faint, 10, true, new Thickness(0, lastTier == null ? 2 : 11, 0, 5)));
                 lastTier = a.Tier;
             }
             var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2), Background = System.Windows.Media.Brushes.Transparent };
             var vt = TB(a.Verb, B("#0C0C0F"), 9.5, true); vt.TextAlignment = TextAlignment.Center;
-            var vb = new Border { Background = a.Col, CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
+            var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
             DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
             if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
             var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -741,68 +764,6 @@ public partial class MainWindow : Window
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = sp,
         };
-    }
-
-    List<GuideAct> CollectActions(DiffReport r)
-    {
-        var acts = new List<GuideAct>();
-        var gear = r.Categories.FirstOrDefault(c => c.Id == "gear");
-
-        // gear-derived steps (free equips + missing/under affixes), tagged with the slot's section key
-        if (gear != null)
-            for (int gi = 0; gi < gear.Groups.Count; gi++)
-            {
-                var g = gear.Groups[gi];
-                var key = "gear:" + gi;
-                foreach (var up in g.UpgradeItems)   // tier 0 — free win: equip a better item you already own
-                {
-                    var name = up.Split("  (")[0];
-                    acts.Add(new GuideAct(0, "EQUIP", $"{g.Name} — {name}", "already in your bags", Green,
-                        $"Equip {name} on your {g.Name} — you already own a better fit", key));
-                }
-                foreach (var i in g.Items)
-                {
-                    if (i.Status == "missing")       // tier 2 — craft/temper the missing affix
-                        acts.Add(new GuideAct(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}", i.Tempered ? "at the Blacksmith" : i.Need, i.Tempered ? Amber : Ink,
-                            i.Tempered ? $"Temper {i.Label} onto your {g.Name}" : $"Get {i.Label} on your {g.Name}" + (i.Need != null ? $" ({i.Need})" : ""), key));
-                    else if (i.Status == "under")    // tier 3 — polish an under-rolled affix
-                        acts.Add(new GuideAct(3, "IMPROVE", $"{g.Name} — {i.Label}", (i.Val != null ? i.Val + " → " : "") + i.Need, Amber,
-                            $"Improve {i.Label} on your {g.Name} — at {i.Val} ({i.Need})", key));
-                }
-            }
-
-        // tier 1 — build-defining: missing uniques, aspects, skills/passives, paragon
-        foreach (var (_, i) in CatItems(r, "uniques").Where(x => !x.i.Done))
-            acts.Add(new GuideAct(1, "FIND", i.Label, i.Have != null ? "have " + i.Have : null, RUnique, $"Track down {i.Label}", "cat:uniques"));
-        foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
-            acts.Add(new GuideAct(1, "IMPRINT", i.Label, "at the Occultist", RLegend, $"Imprint the {i.Label}", "cat:aspects"));
-        foreach (var (grp, i) in CatItems(r, "skills").Where(x => !x.i.Done))
-            acts.Add(new GuideAct(1, "SKILL", i.Label, grp, Steel, $"Set up {i.Label} ({grp})", "cat:skills"));
-        foreach (var (grp, i) in CatItems(r, "paragon").Where(x => !x.i.Done))
-            acts.Add(new GuideAct(1, "PARAGON", i.Label, grp, Steel, $"Work your paragon: {i.Label}", "cat:paragon"));
-
-        return acts;
-    }
-
-    static IEnumerable<(string grp, ReqItem i)> CatItems(DiffReport r, string id)
-    {
-        var c = r.Categories.FirstOrDefault(x => x.Id == id);
-        if (c == null) yield break;
-        foreach (var g in c.Groups)
-            foreach (var i in g.Items)
-                yield return (g.Name, i);
-    }
-
-    // human label for a focus key ("gear:3" -> the slot name, "cat:uniques" -> "Uniques")
-    static string FocusLabel(DiffReport r, string key)
-    {
-        if (key.StartsWith("cat:")) return ShortName(key.Substring(4));
-        if (key.StartsWith("gear:") && int.TryParse(key.AsSpan(5), out var gi))
-        {
-            var groups = r.Categories.FirstOrDefault(c => c.Id == "gear")?.Groups;
-            if (groups != null && gi >= 0 && gi < groups.Count) return groups[gi].Name;
-        }
-        return key;
     }
 
     UIElement SummaryStrip(DiffReport r)
