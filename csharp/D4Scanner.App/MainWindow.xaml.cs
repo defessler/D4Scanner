@@ -65,6 +65,16 @@ public partial class MainWindow : Window
         return "weapon";
     }
 
+    // weapon base type from a build item id, e.g. "2HCrossbow_Legendary_…" → "Crossbow", "1HSword_…" → "Sword"
+    static string? WeaponTypeLabel(string? itemId)
+    {
+        if (string.IsNullOrEmpty(itemId)) return null;
+        var head = itemId!.Split('_')[0];
+        if (head.StartsWith("1H") || head.StartsWith("2H")) head = head[2..];
+        if (head.Length < 2 || !char.IsLetter(head[0])) return null;
+        return head;
+    }
+
     // a tinted slot silhouette (game-icons.net geometry, 0..512 box, auto-scaled in a Viewbox)
     static FrameworkElement? SlotIcon(string key, Brush tint, double size)
     {
@@ -105,7 +115,7 @@ public partial class MainWindow : Window
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
     string? _nextActionKey;  // the slot the #1 DO-NEXT step targets — highlighted on the doll to link guide↔doll
-    string _dollView = "target";   // paper doll previews "target" (build wants) or "mine" (equipped)
+    string _dollView = "mine";     // paper doll previews "mine" (equipped) or "target" (build wants)
     bool _stepsView;               // the full searchable/paged Next-Steps screen
     string _stepsSearch = "";
     int? _stepsTier;               // active effort-tier filter (null = all)
@@ -729,13 +739,23 @@ public partial class MainWindow : Window
         // duplicated label is numbered — "Weapon 1", "Weapon 2", "Weapon 3".
         var sections = new List<Section>();
         var gearGroups = r.Categories.FirstOrDefault(c => c.Id == "gear")?.Groups ?? new List<Group>();
-        var dupLabels = gearGroups.GroupBy(g => g.Name).Where(grp => grp.Count() > 1).Select(grp => grp.Key).ToHashSet();
+        // base label per gear: weapon slots get a type name (Crossbow / Sword / Dagger / Bow …) from the build
+        // item id so each weapon — including the bow — is its own distinct slot, not a generic "Weapon".
+        string BaseLabel(int gi)
+        {
+            var g = gearGroups[gi];
+            if (SlotKey(g.Name) == "weapon" && _target != null && gi < _target.Gear.Count
+                && WeaponTypeLabel(_target.Gear[gi].ItemId) is string wl) return wl;
+            return g.Name;
+        }
+        var baseLabels = Enumerable.Range(0, gearGroups.Count).Select(BaseLabel).ToList();
+        var dupLabels = baseLabels.GroupBy(x => x).Where(grp => grp.Count() > 1).Select(grp => grp.Key).ToHashSet();
         var seen = new Dictionary<string, int>();
         for (int gi = 0; gi < gearGroups.Count; gi++)
         {
             var g = gearGroups[gi];
-            string label = g.Name;
-            if (dupLabels.Contains(g.Name)) { int n = seen.GetValueOrDefault(g.Name) + 1; seen[g.Name] = n; label = $"{g.Name} {n}"; }
+            string label = baseLabels[gi];
+            if (dupLabels.Contains(label)) { int n = seen.GetValueOrDefault(label) + 1; seen[label] = n; label = $"{label} {n}"; }
             sections.Add(new Section { Key = "gear:" + gi, Label = label, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
         }
 
@@ -1504,6 +1524,16 @@ public partial class MainWindow : Window
         return b;
     }
 
+    // the exact TargetGear backing a gear section (sections are keyed "gear:<index>" in target.Gear order),
+    // so multi-instance slots (the three weapons, two rings) keep their own icon instead of all sharing the first.
+    TargetGear? TargetGearOf(Section s)
+    {
+        if (s.Key.StartsWith("gear:") && int.TryParse(s.Key.AsSpan(5), out var gi) && _target != null && gi >= 0 && gi < _target.Gear.Count)
+            return _target.Gear[gi];
+        var key = SlotKey(s.Label);
+        return _target?.Gear.FirstOrDefault(g => SlotKey(g.Slot) == key);
+    }
+
     // what the build wants in a slot: a targeted unique, else the wanted aspect, else "Any <slot>".
     // also returns the item id/image so icon sources keyed by id/image can resolve it.
     (string name, Brush col, string? iconName, string? id, long? image) WantedFor(Section s)
@@ -1511,17 +1541,22 @@ public partial class MainWindow : Window
         var key = SlotKey(s.Label);
         var u = _target?.Uniques.FirstOrDefault(x => SlotKey(x.Slot ?? "") == key);
         if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
-        var tg = _target?.Gear.FirstOrDefault(g => SlotKey(g.Slot) == key);
+        var tg = TargetGearOf(s);
         if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null, tg?.ItemId, tg?.Image);
         return ("Any " + s.Label, Soft, null, tg?.ItemId, tg?.Image);
     }
 
-    // what's actually equipped in a slot (for the "My gear" doll view)
+    // what's actually equipped in a slot (for the "My gear" doll view). Live (TTS) items carry no icon handle
+    // of their own, so borrow one so the local game-data extraction can render a real icon here too (not just a
+    // silhouette): an exact unique match is the right item; otherwise the slot's build item shares the base art.
     (string name, Brush col, string? iconName, string? id, long? image) EquippedFor(Section s)
     {
         var it = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
         if (it == null) return ("(empty)", Faint, null, null, null);
-        return (it.Name, RarityBrush(it.Rarity), it.Name, null, null);
+        var u = _target?.Uniques.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name));
+        if (u != null) return (it.Name, RarityBrush(it.Rarity), it.Name, u.ItemId, u.Image);
+        var tg = TargetGearOf(s);
+        return (it.Name, RarityBrush(it.Rarity), it.Name, tg?.ItemId, tg?.Image);
     }
 
     // the slot's display tuple for the current doll view (target = build wants, mine = equipped)
@@ -1532,7 +1567,6 @@ public partial class MainWindow : Window
     // with a rarity-colored border ring and the item art, plus priority + stash-upgrade badges
     FrameworkElement IconBox(Section s, int num)
     {
-        var (_, scol) = Look(s.Status);
         var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
         var rc = ((SolidColorBrush)rcol).Color;
         const double box = 102, art = 81;                      // large, square — like a D4 inventory slot
@@ -1552,16 +1586,6 @@ public partial class MainWindow : Window
         icon.HorizontalAlignment = HorizontalAlignment.Center; icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
 
-        if (num > 0)
-        {
-            var badge = new Border
-            {
-                Background = scol, CornerRadius = new CornerRadius(4), Padding = new Thickness(7, 0, 7, 2),
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, -6, -7), Child = TB(num.ToString(), B("#0C0C0F"), 13, true),
-            };
-            grid.Children.Add(badge);
-        }
         if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)   // an upgrade is sitting in your bags
             grid.Children.Add(new Border
             {
@@ -1942,7 +1966,7 @@ public partial class MainWindow : Window
         nmline.Children.Add(TB(i.Label, Ink, 13, false));
         if (i.Tempered) nmline.Children.Add(TemperedBadge());
         Grid.SetColumn(nmline, 1); g.Children.Add(nmline);
-        var nd = TB(i.Need ?? "any roll", Soft, 11.5, false); nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
+        var nd = TB(i.Need ?? "", Soft, 11.5, false); nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
         Grid.SetColumn(nd, 2); g.Children.Add(nd);
         return g;
     }

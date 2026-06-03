@@ -168,7 +168,14 @@ public static class DiffEngine
                         else
                         {
                             double thr = aff.MinPercent ?? gate;
-                            req.Need = "roll ≥ " + thr.ToString("0") + "%";
+                            // show the concrete value needed (thr% into the affix's captured [min..max] range)
+                            // rather than a bare "roll ≥ N%"; null when there's no range to derive one from.
+                            if (match.Min != null && match.Max != null && match.Max.Value > match.Min.Value)
+                            {
+                                double need = match.Min.Value + thr / 100.0 * (match.Max.Value - match.Min.Value);
+                                req.Need = "≥ " + need.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
+                            }
+                            else req.Need = null;
                             req.Status = (pct == null || pct.Value >= thr) ? "met" : "under";
                         }
                     }

@@ -26,6 +26,23 @@
   <SolidColorBrush x:Key="Unique"    Color="#C9A45C"/>
   <SolidColorBrush x:Key="Mythic"    Color="#D1492E"/>
 
+  <!-- ============ ToolTip: no system box (transparent); light text reads over the dark app ============ -->
+  <Style TargetType="ToolTip">
+    <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="HasDropShadow" Value="False"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToolTip">
+          <Border Background="Transparent" Padding="7,3">
+            <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                       FontSize="{TemplateBinding FontSize}" TextWrapping="Wrap" MaxWidth="360"/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- ============ Button ============ -->
   <Style TargetType="Button">
     <Setter Property="Foreground" Value="{StaticResource Ink}"/>
