@@ -1069,9 +1069,19 @@ public partial class MainWindow : Window
                 foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k))
                 { col.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), alignRight)); used.Add(s); }
         }
-        Place(left, new[] { "helm", "chest", "gloves", "pants", "boots", "weapon" }, false);
-        Place(right, new[] { "amulet", "ring", "offhand" }, true);
-        foreach (var s in gear.Where(x => !used.Contains(x))) right.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), true));
+        Place(left, new[] { "helm", "chest", "gloves", "pants", "boots" }, false);   // armor down the left
+        Place(right, new[] { "amulet", "ring" }, true);                              // jewelry down the right
+
+        // weapons (+ offhand) sit across the bottom, matching the in-game character screen
+        var weaponsRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+        void PlaceWeapons(string[] order)
+        {
+            foreach (var k in order)
+                foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k))
+                { weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s); }
+        }
+        PlaceWeapons(new[] { "weapon", "offhand" });
+        foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
         // center crest: class + overall completion %, framed (the character-screen centerpiece)
@@ -1101,7 +1111,10 @@ public partial class MainWindow : Window
             GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
             GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
         };
-        outer.Children.Add(grid);
+        var dollStack = new StackPanel();
+        dollStack.Children.Add(grid);
+        if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
+        outer.Children.Add(dollStack);
 
         var wrap = new StackPanel();
         wrap.Children.Add(DollToggle());
