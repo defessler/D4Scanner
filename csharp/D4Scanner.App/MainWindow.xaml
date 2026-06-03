@@ -1,7 +1,7 @@
 <Window x:Class="D4Scanner.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="D4Scanner" Height="1320" Width="1920" MinWidth="760" MinHeight="620"
+        Title="D4Scanner" Height="980" Width="1600" MinWidth="760" MinHeight="620" WindowStartupLocation="CenterScreen"
         WindowStyle="None" Background="{StaticResource Bg}"
         FontFamily="Segoe UI" UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
   <WindowChrome.WindowChrome>

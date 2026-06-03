@@ -9,10 +9,11 @@ public partial class App : System.Windows.Application
         int idx = System.Array.IndexOf(e.Args, "--render");
         if (idx >= 0 && idx + 1 < e.Args.Length)
         {
-            // optional width: "--render <out.png> [width]" — lets the responsive reflow be verified headlessly
-            int w = 1300;
+            // optional size: "--render <out.png> [width] [height]" — verify reflow / on-screen fit headlessly
+            int w = 1300, h = 2100;
             if (idx + 2 < e.Args.Length && int.TryParse(e.Args[idx + 2], out var pw)) w = pw;
-            try { new MainWindow().HeadlessRender(e.Args[idx + 1], w); }
+            if (idx + 3 < e.Args.Length && int.TryParse(e.Args[idx + 3], out var ph)) h = ph;
+            try { new MainWindow().HeadlessRender(e.Args[idx + 1], w, h); }
             catch (System.Exception ex) { System.Console.Error.WriteLine("render failed: " + ex); }
             Shutdown(0);
             return;
