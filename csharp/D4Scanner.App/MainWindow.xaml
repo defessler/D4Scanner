@@ -140,10 +140,6 @@
       </Border>
     </Grid>
 
-    <!-- compare drawer overlay: slides in from the right; hidden until a slot is pinned/opened -->
-    <Border x:Name="DrawerHost" HorizontalAlignment="Right" Margin="0,49,0,0" Visibility="Collapsed"
-            Background="#101116" BorderBrush="{StaticResource Edge}" BorderThickness="1,0,0,0" Width="430"/>
-
     <!-- toast overlay: transient, non-blocking confirmations (bottom-center, above the status bar) -->
     <StackPanel x:Name="ToastHost" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                 Margin="0,0,0,52" IsHitTestVisible="False"/>

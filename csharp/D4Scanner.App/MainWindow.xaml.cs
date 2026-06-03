@@ -714,6 +714,26 @@ public partial class MainWindow : Window
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
 
+        // quick compare actions: pin every slot that still needs work, or clear what's pinned
+        var gapKeys = sections.Where(s => s.Gear != null && s.Status != "met").Select(s => s.Key).ToList();
+        if (gapKeys.Count > 0 || _pinned.Count > 0)
+        {
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 13) };
+            if (gapKeys.Count > 0)
+            {
+                var all = MakeLink($"⊞  Compare all {gapKeys.Count} gaps", Steel);
+                all.MouseLeftButtonUp += (_, _) => { _pinned.Clear(); foreach (var k in gapKeys) _pinned.Add(k); Render(); Toast($"Pinned {gapKeys.Count} gaps"); };
+                actions.Children.Add(all);
+            }
+            if (_pinned.Count > 0)
+            {
+                var clr = MakeLink("✕  Clear pins", Soft); clr.Margin = new Thickness(18, 0, 0, 0);
+                clr.MouseLeftButtonUp += (_, _) => { _pinned.Clear(); Render(); Toast("Cleared pins"); };
+                actions.Children.Add(clr);
+            }
+            Body.Children.Add(actions);
+        }
+
         // glanceable two-column layout: the paper doll (visual anchor) on the left, the guidance rail
         // (do-this-next + activities) on the right — so the core signal sits above the fold without scrolling.
         var cols = new Grid { Margin = new Thickness(0, 0, 0, 4) };
@@ -730,18 +750,37 @@ public partial class MainWindow : Window
         Body.Children.Add(cols);
         _overviewCols = cols;   // tracked for responsive reflow
 
-        // below the doll: ONLY pinned slots, each as a FULL compare (hover previews without pinning)
-        foreach (var key in _pinned.ToList())
+        // compare deck (in the space freed by the two-column layout): pinned slots, each a FULL side-by-side
+        // compare. A header lets you clear all at once; each panel can be unpinned or focused.
+        var pinnedSecs = _pinned.ToList()
+            .Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null))
+            .Where(p => p != null).Cast<Section>().ToList();
+        if (pinnedSecs.Count > 0)
         {
-            var p = sections.FirstOrDefault(x => x.Key == key && x.Gear != null);
-            if (p == null) continue;
-            var unpin = TB("✕  unpin " + p.Label, Soft, 11.5, false);
-            unpin.Cursor = System.Windows.Input.Cursors.Hand; unpin.HorizontalAlignment = HorizontalAlignment.Right;
-            unpin.Margin = new Thickness(0, 6, 4, 2);
-            var keyC = key;
-            unpin.MouseLeftButtonUp += (_, _) => { _pinned.Remove(keyC); Render(); };
-            Body.Children.Add(unpin);
-            Body.Children.Add(DetailPanel(p));
+            var deckHdr = new DockPanel { Margin = new Thickness(0, 8, 0, 9) };
+            var clearAll = MakeLink("✕  clear all", Soft); clearAll.HorizontalAlignment = HorizontalAlignment.Right;
+            clearAll.MouseLeftButtonUp += (_, _) => { _pinned.Clear(); Render(); Toast("Cleared pins"); };
+            DockPanel.SetDock(clearAll, Dock.Right); deckHdr.Children.Add(clearAll);
+            deckHdr.Children.Add(TBs($"COMPARING  ·  {pinnedSecs.Count} pinned", Gold, 13, true));
+            Body.Children.Add(deckHdr);
+
+            foreach (var p in pinnedSecs)
+            {
+                var bar = new DockPanel { Margin = new Thickness(0, 4, 2, 2) };
+                var keyC = p.Key;
+                var unpin = MakeLink("✕ unpin", Soft); unpin.HorizontalAlignment = HorizontalAlignment.Right;
+                unpin.MouseLeftButtonUp += (_, _) => { _pinned.Remove(keyC); Render(); };
+                DockPanel.SetDock(unpin, Dock.Right); bar.Children.Add(unpin);
+                if (keyC.StartsWith("gear:"))   // focus only works for affix-gear sections (uniques have no step key)
+                {
+                    var focus = MakeLink("◎ focus", Steel); focus.HorizontalAlignment = HorizontalAlignment.Right; focus.Margin = new Thickness(0, 0, 16, 0);
+                    focus.MouseLeftButtonUp += (_, _) => { _focusKey = keyC; _selectedKey = keyC; Render(); };
+                    DockPanel.SetDock(focus, Dock.Right); bar.Children.Add(focus);
+                }
+                bar.Children.Add(TBs(p.Label, Soft, 11.5, true));
+                Body.Children.Add(bar);
+                Body.Children.Add(DetailPanel(p));
+            }
         }
         // a selected category (Uniques/Skills/Paragon) shows its detail
         var selCat = sections.FirstOrDefault(x => x.Key == _selectedKey && x.Cat != null);
@@ -838,6 +877,15 @@ public partial class MainWindow : Window
             card.BeginAnimation(OpacityProperty, fade);
         };
         timer.Start();
+    }
+
+    // a small clickable text link (caller wires MouseLeftButtonUp)
+    TextBlock MakeLink(string text, Brush color)
+    {
+        var t = TB(text, color, 12, false);
+        t.Cursor = System.Windows.Input.Cursors.Hand;
+        t.VerticalAlignment = VerticalAlignment.Center;
+        return t;
     }
 
     Brush VerbColor(string verb) => verb switch
