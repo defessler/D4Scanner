@@ -104,6 +104,12 @@ public partial class MainWindow : Window
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
     string _dollView = "target";   // paper doll previews "target" (build wants) or "mine" (equipped)
+    bool _stepsView;               // the full searchable/paged Next-Steps screen
+    string _stepsSearch = "";
+    int? _stepsTier;               // active effort-tier filter (null = all)
+    int _stepsPage;
+    StackPanel? _stepsResultsPanel;
+    TextBlock? _stepsPageLbl;
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
     List<BuildEntry> _buildIndex = new();  // maxroll guide list for autocomplete
@@ -138,6 +144,7 @@ public partial class MainWindow : Window
         CloseBtn.Click += (_, _) => Close();
         InstallCaptureBtn.Click += (_, _) => RunInstall(InstallCaptureBtn);
         OpenSrcBtn.Click += (_, _) => OpenSource();
+        NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -609,6 +616,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_stepsView)
+        {
+            Body.Children.Clear();
+            Body.Children.Add(NextStepsView(r));
+            Status.Text = $"next steps  ·  target: {Path.GetFileName(_targetPath)}";
+            return;
+        }
+
         // build sections: one per gear slot + one per non-gear category.
         // gear slots get a unique key by index (several slots share the label "Weapon",
         // so keying by label would select/highlight all of them at once), and any
@@ -789,25 +804,130 @@ public partial class MainWindow : Window
                 sp.Children.Add(TBs(BuildGuide.TierLabel(a.Tier), Faint, 10, true, new Thickness(0, lastTier == null ? 2 : 11, 0, 5)));
                 lastTier = a.Tier;
             }
-            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2), Background = System.Windows.Media.Brushes.Transparent };
-            var vt = TB(a.Verb, B("#0C0C0F"), 9.5, true); vt.TextAlignment = TextAlignment.Center;
-            var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
-            DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
-            if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
-            var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextTrimming = TextTrimming.CharacterEllipsis;
-            row.Children.Add(tx);
-            if (a.FocusKey is string fk)
-            {
-                row.Cursor = System.Windows.Input.Cursors.Hand;
-                row.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; _focusKey = fk; Render(); };
-            }
-            sp.Children.Add(row);
+            sp.Children.Add(StepRow(a));
+        }
+        if (!focused && acts.Count > top.Count)
+        {
+            var more = TB($"View all {acts.Count} steps →", Steel, 12, false, new Thickness(0, 9, 0, 0));
+            more.Cursor = System.Windows.Input.Cursors.Hand;
+            more.MouseLeftButtonUp += (_, _) => { _stepsView = true; Render(); };
+            sp.Children.Add(more);
         }
         return new Border
         {
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = sp,
         };
+    }
+
+    // one Do-Next row: verb chip + text + detail; click to jump to that slot/category (shared by DO NEXT + Next Steps)
+    FrameworkElement StepRow(GuideStep a)
+    {
+        var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2), Background = System.Windows.Media.Brushes.Transparent };
+        var vt = TB(a.Verb, B("#0C0C0F"), 9.5, true); vt.TextAlignment = TextAlignment.Center;
+        var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
+        DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
+        if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
+        var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextTrimming = TextTrimming.CharacterEllipsis;
+        row.Children.Add(tx);
+        if (a.FocusKey is string fk)
+        {
+            row.Cursor = System.Windows.Input.Cursors.Hand;
+            row.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; _focusKey = fk; _stepsView = false; Render(); };
+        }
+        return row;
+    }
+
+    // the full Next-Steps screen: searchable, filterable by effort tier, paged 10-at-a-time
+    UIElement NextStepsView(DiffReport r)
+    {
+        var all = BuildGuide.Steps(r);
+        var root = new StackPanel();
+
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var back = TB("← Overview", Steel, 13, false); back.Cursor = System.Windows.Input.Cursors.Hand; back.VerticalAlignment = VerticalAlignment.Center;
+        back.MouseLeftButtonUp += (_, _) => { _stepsView = false; Render(); };
+        DockPanel.SetDock(back, Dock.Right); hdr.Children.Add(back);
+        hdr.Children.Add(TBs("NEXT STEPS", Gold, 16, true));
+        root.Children.Add(hdr);
+
+        if (all.Count == 0)
+        {
+            root.Children.Add(TB("Build complete — no steps remaining.", Soft, 13, false));
+        }
+        else
+        {
+            var search = new TextBox { Text = _stepsSearch, Margin = new Thickness(0, 0, 0, 10) };
+            search.TextChanged += (_, _) => { _stepsSearch = search.Text; _stepsPage = 0; RefreshSteps(all); };
+            root.Children.Add(search);
+
+            var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            void Chip(int? tier, string label)
+            {
+                bool on = _stepsTier == tier;
+                var b = new Border { Child = TB(label, on ? Ink : Soft, 12, on), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 7, 7), CornerRadius = new CornerRadius(12), Background = on ? TileSel : Card, BorderBrush = on ? Gold : Edge, BorderThickness = new Thickness(1), Cursor = System.Windows.Input.Cursors.Hand };
+                b.MouseLeftButtonUp += (_, _) => { _stepsTier = tier; _stepsPage = 0; RefreshSteps(all); };
+                chips.Children.Add(b);
+            }
+            Chip(null, "All");
+            foreach (var t in all.Select(a => a.Tier).Distinct().OrderBy(x => x))
+                Chip(t, BuildGuide.TierLabel(t).Split('·')[0].Trim());
+            root.Children.Add(chips);
+
+            _stepsResultsPanel = new StackPanel();
+            root.Children.Add(_stepsResultsPanel);
+
+            var pager = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+            var prev = PagerBtn("‹ Prev", () => { if (_stepsPage > 0) { _stepsPage--; RefreshSteps(all); } });
+            var next = PagerBtn("Next ›", () => { _stepsPage++; RefreshSteps(all); });
+            DockPanel.SetDock(prev, Dock.Left); DockPanel.SetDock(next, Dock.Right);
+            _stepsPageLbl = TB("", Soft, 12, false); _stepsPageLbl.HorizontalAlignment = HorizontalAlignment.Center; _stepsPageLbl.VerticalAlignment = VerticalAlignment.Center;
+            pager.Children.Add(prev); pager.Children.Add(next); pager.Children.Add(_stepsPageLbl);
+            root.Children.Add(pager);
+
+            RefreshSteps(all);
+        }
+        return new Border
+        {
+            Child = root, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(20, 16, 20, 18),
+        };
+    }
+
+    // repopulate just the results list + page label (so the search box keeps focus while typing)
+    void RefreshSteps(List<GuideStep> all)
+    {
+        if (_stepsResultsPanel == null) return;
+        var q = (_stepsSearch ?? "").Trim();
+        var filtered = all
+            .Where(a => _stepsTier == null || a.Tier == _stepsTier)
+            .Where(a => q.Length == 0 || (a.Text + " " + a.Verb + " " + (a.Detail ?? "")).Contains(q, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        const int per = 10;
+        int pages = Math.Max(1, (filtered.Count + per - 1) / per);
+        _stepsPage = Math.Clamp(_stepsPage, 0, pages - 1);
+
+        _stepsResultsPanel.Children.Clear();
+        if (filtered.Count == 0)
+            _stepsResultsPanel.Children.Add(TB("No steps match your search / filter.", Soft, 12.5, false));
+        else
+        {
+            int? lastTier = null;
+            foreach (var a in filtered.Skip(_stepsPage * per).Take(per))
+            {
+                if (a.Tier != lastTier) { _stepsResultsPanel.Children.Add(TBs(BuildGuide.TierLabel(a.Tier), Faint, 10, true, new Thickness(0, lastTier == null ? 0 : 11, 0, 5))); lastTier = a.Tier; }
+                _stepsResultsPanel.Children.Add(StepRow(a));
+            }
+        }
+        if (_stepsPageLbl != null)
+            _stepsPageLbl.Text = $"{filtered.Count} step{(filtered.Count == 1 ? "" : "s")}  ·  page {_stepsPage + 1} of {pages}";
+    }
+
+    FrameworkElement PagerBtn(string label, Action onClick)
+    {
+        var b = new Border { Child = TB(label, Ink, 12, false), Padding = new Thickness(12, 5, 12, 5), CornerRadius = new CornerRadius(4), Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), Cursor = System.Windows.Input.Cursors.Hand };
+        b.MouseLeftButtonUp += (_, _) => onClick();
+        return b;
     }
 
     UIElement SummaryStrip(DiffReport r)
