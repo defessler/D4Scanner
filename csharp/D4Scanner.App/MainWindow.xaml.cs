@@ -103,6 +103,7 @@ public partial class MainWindow : Window
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
+    string _dollView = "target";   // paper doll previews "target" (build wants) or "mine" (equipped)
     VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
 
     List<BuildEntry> _buildIndex = new();  // maxroll guide list for autocomplete
@@ -893,7 +894,32 @@ public partial class MainWindow : Window
             GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
         };
         outer.Children.Add(grid);
-        return outer;
+
+        var wrap = new StackPanel();
+        wrap.Children.Add(DollToggle());
+        wrap.Children.Add(outer);
+        return wrap;
+    }
+
+    // tab toggle above the doll: preview the build's wanted gear ("Target") vs your equipped gear ("My gear")
+    UIElement DollToggle()
+    {
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 12) };
+        void Tab(string key, string label)
+        {
+            bool on = _dollView == key;
+            var b = new Border
+            {
+                Child = TB(label, on ? Ink : Soft, 12.5, on), Padding = new Thickness(15, 5, 15, 5), Margin = new Thickness(0, 0, 7, 0),
+                CornerRadius = new CornerRadius(4), Background = on ? TileSel : Card, BorderBrush = on ? Gold : Edge, BorderThickness = new Thickness(1),
+                Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            b.MouseLeftButtonUp += (_, _) => { _dollView = key; Render(); };
+            sp.Children.Add(b);
+        }
+        Tab("mine", "My gear");
+        Tab("target", "Target");
+        return sp;
     }
 
     // slim framed cell for a build-wide category (uniques / skills / paragon), matching the slot cells
@@ -929,11 +955,23 @@ public partial class MainWindow : Window
         return ("Any " + s.Label, Soft, null, tg?.ItemId, tg?.Image);
     }
 
+    // what's actually equipped in a slot (for the "My gear" doll view)
+    (string name, Brush col, string? iconName, string? id, long? image) EquippedFor(Section s)
+    {
+        var it = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+        if (it == null) return ("(empty)", Faint, null, null, null);
+        return (it.Name, RarityBrush(it.Rarity), it.Name, null, null);
+    }
+
+    // the slot's display tuple for the current doll view (target = build wants, mine = equipped)
+    (string name, Brush col, string? iconName, string? id, long? image) SlotDisplay(Section s) =>
+        _dollView == "mine" ? EquippedFor(s) : WantedFor(s);
+
     // a framed item icon with a status-colored border and a priority number badge
     FrameworkElement IconBox(Section s, int num)
     {
         var (_, scol) = Look(s.Status);
-        var (_, rcol, iconName, wid, wimg) = WantedFor(s);   // rcol = rarity color
+        var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
         var rc = ((SolidColorBrush)rcol).Color;
         var grid = new Grid { Width = 48, Height = 60 };     // taller, portrait — like a D4 item icon
         grid.Children.Add(new Border
@@ -999,7 +1037,7 @@ public partial class MainWindow : Window
     // a Mobalytics-style slot row: icon + (slot label / wanted item name); hover to compare, click to pin
     UIElement SlotCell(Section s, int num, bool alignRight)
     {
-        var (name, ncol, _, _, _) = WantedFor(s);
+        var (name, ncol, _, _, _) = SlotDisplay(s);
         bool pinned = _pinned.Contains(s.Key);
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
