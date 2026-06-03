@@ -26,6 +26,7 @@
           <TextBlock Text="live build tracker" Foreground="{StaticResource Faint}" FontSize="13" Margin="11,1,0,0" VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="HelpBtn" Style="{StaticResource Caption}" Content="?" FontSize="15" Width="40" ToolTip="Keyboard shortcuts (?)"/>
           <Button x:Name="TopmostBtn" Style="{StaticResource Caption}" Content="Pin" FontSize="13" Width="58"/>
           <Button x:Name="MinBtn" Style="{StaticResource Caption}" Content="—"/>
           <Button x:Name="CloseBtn" Style="{StaticResource Caption}" Content="✕"/>
@@ -143,6 +144,9 @@
     <!-- toast overlay: transient, non-blocking confirmations (bottom-center, above the status bar) -->
     <StackPanel x:Name="ToastHost" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                 Margin="0,0,0,52" IsHitTestVisible="False"/>
+
+    <!-- keyboard-shortcut cheatsheet overlay (toggled by "?" / F1 / the title-bar button) -->
+    <Grid x:Name="HelpHost" Visibility="Collapsed"/>
     </Grid>
   </Border>
 </Window>

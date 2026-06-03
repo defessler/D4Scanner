@@ -148,6 +148,7 @@ public partial class MainWindow : Window
         CloseBtn.Click += (_, _) => Close();
         InstallCaptureBtn.Click += (_, _) => RunInstall(InstallCaptureBtn);
         OpenSrcBtn.Click += (_, _) => OpenSource();
+        HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
@@ -635,6 +636,7 @@ public partial class MainWindow : Window
         ReloadTarget();
         try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
         Render();
+        if (System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
 
         var content = (FrameworkElement)Content;
         var size = new Size(w, h);
@@ -943,13 +945,58 @@ public partial class MainWindow : Window
 
     void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build details"; Render(); }
 
+    // keyboard-shortcut cheatsheet: a centered overlay over a dimmed backdrop, toggled by "?" / F1 / button
+    void ToggleHelp()
+    {
+        if (HelpHost.Visibility == Visibility.Visible) { HelpHost.Visibility = Visibility.Collapsed; return; }
+        HelpHost.Children.Clear();
+        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB4, 0, 0, 0)) };
+        backdrop.MouseLeftButtonDown += (_, _) => HelpHost.Visibility = Visibility.Collapsed;
+        HelpHost.Children.Add(backdrop);
+
+        var sp = new StackPanel();
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var x = MakeLink("✕", Soft); x.FontSize = 15; x.HorizontalAlignment = HorizontalAlignment.Right;
+        x.MouseLeftButtonUp += (_, _) => HelpHost.Visibility = Visibility.Collapsed;
+        DockPanel.SetDock(x, Dock.Right); hd.Children.Add(x);
+        hd.Children.Add(TBs("Keyboard shortcuts", Gold, 16, true));
+        sp.Children.Add(hd);
+
+        void Row(string keys, string desc)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
+            var kb = new Border { Background = B("#0C0C0F"), BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3), Padding = new Thickness(9, 2, 9, 3), MinWidth = 132, VerticalAlignment = VerticalAlignment.Top, Child = TB(keys, Ink, 12.5, true) };
+            DockPanel.SetDock(kb, Dock.Left); kb.Margin = new Thickness(0, 0, 14, 0); row.Children.Add(kb);
+            var d = TB(desc, Soft, 12.5, false); d.VerticalAlignment = VerticalAlignment.Center; d.TextWrapping = TextWrapping.Wrap; row.Children.Add(d);
+            sp.Children.Add(row);
+        }
+        Row("Alt + O", "Overview");
+        Row("Alt + N", "Next Steps");
+        Row("Alt + B", "Build details");
+        Row("/", "Jump to the build search box");
+        Row("Ctrl  + / − / 0", "Zoom in · out · reset");
+        Row("Esc", "Close popup → clear focus → clear pins → back to overview");
+        Row("? · F1", "Show / hide this list");
+
+        var panel = new Border
+        {
+            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24, 20, 24, 22), MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+        };
+        HelpHost.Children.Add(panel);
+        HelpHost.Visibility = Visibility.Visible;
+    }
+
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         var mods = System.Windows.Input.Keyboard.Modifiers;
         bool ctrl = (mods & System.Windows.Input.ModifierKeys.Control) != 0;
         bool alt = (mods & System.Windows.Input.ModifierKeys.Alt) != 0;
+        bool shift = (mods & System.Windows.Input.ModifierKeys.Shift) != 0;
         var k = alt ? e.SystemKey : e.Key;   // Alt routes the real key to SystemKey
 
+        if (k == System.Windows.Input.Key.F1 || (k == System.Windows.Input.Key.Oem2 && shift && !UrlBox.IsFocused)) { ToggleHelp(); e.Handled = true; return; }
+        if (HelpHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape) { HelpHost.Visibility = Visibility.Collapsed; e.Handled = true; return; }
         if (ctrl && (k == System.Windows.Input.Key.OemPlus || k == System.Windows.Input.Key.Add)) { Zoom(0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.OemMinus || k == System.Windows.Input.Key.Subtract)) { Zoom(-0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }
@@ -1181,6 +1228,8 @@ public partial class MainWindow : Window
         if (a.FocusKey is string fk)
         {
             row.Cursor = System.Windows.Input.Cursors.Hand;
+            row.MouseEnter += (_, _) => row.Background = CardHi;
+            row.MouseLeave += (_, _) => row.Background = System.Windows.Media.Brushes.Transparent;
             row.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; _focusKey = fk; _stepsView = false; Render(); };
         }
         return row;
