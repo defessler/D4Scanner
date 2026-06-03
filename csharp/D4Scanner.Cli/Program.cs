@@ -85,6 +85,24 @@ void Print(LiveBuild live)
         if (steps.Count > 12) Console.WriteLine($"    … +{steps.Count - 12} more");
     }
     Console.WriteLine();
+
+    // flexibility / best-owned substitutes per slot
+    double gate = target.MinRollPercent ?? 50;
+    var subs = Substitutes.Plan(target, live, gate).Where(s => s.Affixes.Count > 0).ToList();
+    if (subs.Count > 0)
+    {
+        Console.WriteLine("FLEXIBILITY / SUBSTITUTES:");
+        foreach (var s in subs)
+        {
+            var core = s.Affixes.Where(a => a.Core).Select(a => a.Name);
+            var flex = s.Affixes.Where(a => !a.Core).Select(a => a.Name);
+            Console.WriteLine($"  {s.Slot}:  core {s.CoreMet}/{s.CoreTotal}"
+                + (s.BestOwned != null ? $"   best owned: {s.BestOwned}{(s.BestIsUpgrade ? "  (UPGRADE)" : "")}" : ""));
+            Console.WriteLine($"     core:     {string.Join(", ", core)}");
+            if (flex.Any()) Console.WriteLine($"     flexible: {string.Join(", ", flex)}");
+        }
+        Console.WriteLine();
+    }
 }
 
 if (watch)

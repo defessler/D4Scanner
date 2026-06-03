@@ -1251,7 +1251,12 @@ public partial class MainWindow : Window
             + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true));
         sp.Children.Add(hdr);
 
-        if (s.Gear != null) GearDetail(sp, s.Gear, s.Label);
+        if (s.Gear != null)
+        {
+            GearDetail(sp, s.Gear, s.Label);
+            var sub = SubFor(s);
+            if (sub != null) sp.Children.Add(SubstituteBlock(sub));
+        }
         else if (s.Cat != null)
         {
             if (s.Cat.Id == "skills") SkillsView(sp, s.Cat);
@@ -1282,6 +1287,57 @@ public partial class MainWindow : Window
             sp.Children.Add(CompareCard(g, it, label));
             if (g.UpgradeItems.Count > 0) sp.Children.Add(StashUpgrades(g.UpgradeItems));
         }
+    }
+
+    // per-slot substitute analysis for a gear section (matched by group index in the target)
+    SlotSub? SubFor(Section s)
+    {
+        if (_target == null || s.Gear == null || !s.Key.StartsWith("gear:") || !int.TryParse(s.Key.AsSpan(5), out var gi)) return null;
+        var plan = Substitutes.Plan(_target, EffectiveLive(), _target.MinRollPercent ?? _minRollPct);
+        return gi >= 0 && gi < plan.Count ? plan[gi] : null;
+    }
+
+    // "Substitutes & flexibility": best item you own, core vs flexible affixes, and a Now→Better→Best ladder
+    UIElement SubstituteBlock(SlotSub sub)
+    {
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("SUBSTITUTES & FLEXIBILITY", Steel, 11.5, true, new Thickness(0, 0, 0, 7)));
+
+        if (sub.BestOwned != null)
+        {
+            var line = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+            if (sub.BestIsUpgrade)
+            {
+                var upb = new Border { Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Child = TB("UPGRADE", B("#0C0C0F"), 9.5, true) };
+                DockPanel.SetDock(upb, Dock.Right); line.Children.Add(upb);
+            }
+            line.Children.Add(TB($"Best you own: {sub.BestOwned}  ({sub.CoreMet}/{sub.CoreTotal} core affixes)", sub.BestIsUpgrade ? Green : Ink, 12.5, false));
+            sp.Children.Add(line);
+        }
+
+        var coreA = sub.Affixes.Where(a => a.Core).Select(a => a.Name).ToList();
+        var flexA = sub.Affixes.Where(a => !a.Core).Select(a => a.Name).ToList();
+        if (coreA.Count > 0) sp.Children.Add(Wrapped("Core:  ", Ink, string.Join(", ", coreA), Soft, new Thickness(0, 5, 0, 0)));
+        if (flexA.Count > 0) sp.Children.Add(Wrapped("Flexible:  ", Faint, string.Join(", ", flexA), Faint, new Thickness(0, 2, 0, 0)));
+
+        foreach (var l in sub.Ladder)
+        {
+            int c = l.IndexOf(':');
+            var row = new TextBlock { Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap };
+            if (c > 0) { row.Inlines.Add(new System.Windows.Documents.Run(l[..(c + 1)]) { Foreground = Steel, FontWeight = FontWeights.SemiBold }); row.Inlines.Add(new System.Windows.Documents.Run(l[(c + 1)..]) { Foreground = Soft }); }
+            else row.Inlines.Add(new System.Windows.Documents.Run(l) { Foreground = Soft });
+            row.FontSize = 11.5; sp.Children.Add(row);
+        }
+        return new Border { Child = sp, Background = B("#121316"), BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 11, 14, 13), Margin = new Thickness(0, 14, 0, 0) };
+    }
+
+    // a wrapping two-tone line: bold label + soft value
+    UIElement Wrapped(string label, Brush labelCol, string value, Brush valCol, Thickness margin)
+    {
+        var tb = new TextBlock { Margin = margin, TextWrapping = TextWrapping.Wrap, FontSize = 11.5 };
+        tb.Inlines.Add(new System.Windows.Documents.Run(label) { Foreground = labelCol, FontWeight = FontWeights.SemiBold });
+        tb.Inlines.Add(new System.Windows.Documents.Run(value) { Foreground = valCol });
+        return tb;
     }
 
     // green "better in your bags" block: non-equipped items that beat the equipped one for this slot

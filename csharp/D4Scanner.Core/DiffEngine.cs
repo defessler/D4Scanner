@@ -82,6 +82,23 @@ public static class DiffEngine
         return met;
     }
 
+    /// <summary>Does a single target affix appear on the item and meet its threshold? (first match — used for
+    /// substitute/flexibility scoring where the strict per-item dedup of <see cref="ScoreSlot"/> isn't needed.)</summary>
+    public static bool AffixMet(TargetAffix aff, Item item, double gate)
+    {
+        foreach (var x in item.Affixes)
+            if (PhraseMatch(aff.Name, x.Text))
+            {
+                if (aff.Min != null) return (x.Value ?? 0) >= aff.Min.Value;
+                var pct = RollPct(x); double thr = aff.MinPercent ?? gate;
+                return pct == null || pct.Value >= thr;
+            }
+        return false;
+    }
+
+    /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
+    public static string SlotBaseName(string? slot) => SlotBase(slot);
+
     public static DiffReport Diff(TargetBuild target, LiveBuild live, double defaultMinRollPercent = 50)
     {
         var cats = new List<Category>();
