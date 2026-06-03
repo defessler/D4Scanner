@@ -174,6 +174,7 @@ public partial class MainWindow : Window
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
+        Closing += (_, _) => SaveSettings();   // remember the window size (ActualWidth is still valid here)
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
@@ -295,6 +296,16 @@ public partial class MainWindow : Window
                         _minRollPct = Math.Clamp(mrv, 0, 100);
                     if (s.TryGetValue("zoom", out var z) && double.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out var zv))
                         _uiScale = Math.Clamp(zv, 0.7, 1.6);
+                    // remembered window size (position is not restored, to avoid landing off-screen)
+                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                    if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
+                        s.TryGetValue("winH", out var wh) && double.TryParse(wh, inv, out var whv) &&
+                        wwv >= MinWidth && whv >= MinHeight)
+                    {
+                        Width = Math.Min(wwv, SystemParameters.VirtualScreenWidth);
+                        Height = Math.Min(whv, SystemParameters.VirtualScreenHeight);
+                    }
+                    if (s.TryGetValue("winMax", out var wm) && wm == "1") WindowState = WindowState.Maximized;
                     if (s.TryGetValue("src", out var sr) && !string.IsNullOrEmpty(sr)) _lastImportInput = sr;
                     if (s.TryGetValue("recent", out var rc) && !string.IsNullOrEmpty(rc)) _recentSlugs = rc.Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
                 }
@@ -311,8 +322,12 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            bool mx = WindowState == WindowState.Maximized;
+            double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
+            double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture), ["zoom"] = _uiScale.ToString(System.Globalization.CultureInfo.InvariantCulture) }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0" }));
         }
         catch { }
     }
@@ -1050,11 +1065,22 @@ public partial class MainWindow : Window
             sp.Children.Add(fb);
         }
 
-        var hl = TB(top[0].Headline, Ink, 14.5, false, new Thickness(0, 0, 0, 8));
-        hl.TextWrapping = TextWrapping.Wrap; sp.Children.Add(hl);
+        // lead with the single most important action as a prominent hero; the rest follow as compact rows.
+        // (in focus mode we've already narrowed to one thing, so keep the plain headline there.)
+        IEnumerable<GuideStep> rows = top;
+        if (!focused)
+        {
+            sp.Children.Add(HeroCard(top[0]));
+            rows = top.Skip(1);
+        }
+        else
+        {
+            var hl = TB(top[0].Headline, Ink, 14.5, false, new Thickness(0, 0, 0, 8));
+            hl.TextWrapping = TextWrapping.Wrap; sp.Children.Add(hl);
+        }
 
         int? lastTier = null;
-        foreach (var a in top)
+        foreach (var a in rows)
         {
             if (a.Tier != lastTier)
             {
@@ -1075,6 +1101,35 @@ public partial class MainWindow : Window
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = sp,
         };
+    }
+
+    // the single most important next action, rendered prominently (accent-tinted, larger) so the one thing
+    // to do next is unmistakable. Clicking focuses that slot/category.
+    FrameworkElement HeroCard(GuideStep a)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TBs("DO THIS FIRST", VerbColor(a.Verb), 9.5, true, new Thickness(0, 0, 0, 5)));
+        var hl = TB(a.Headline ?? a.Text, Ink, 16, true); hl.TextWrapping = TextWrapping.Wrap; inner.Children.Add(hl);
+
+        var sub = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+        if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); sub.Children.Add(d); }
+        var vt = TB(a.Verb, B("#0C0C0F"), 10, true); vt.TextAlignment = TextAlignment.Center;
+        var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(8, 2, 8, 3), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), Child = vt };
+        DockPanel.SetDock(vb, Dock.Left); sub.Children.Add(vb);
+        var tx = TB(a.Text, Soft, 12, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap; sub.Children.Add(tx);
+        inner.Children.Add(sub);
+
+        var card = new Border
+        {
+            Background = B("#1A1416"), BorderBrush = B("#7A3338"), BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(14, 11, 14, 12), Margin = new Thickness(0, 0, 0, 12), Child = inner,
+        };
+        if (a.FocusKey is string fk)
+        {
+            card.Cursor = System.Windows.Input.Cursors.Hand;
+            card.MouseLeftButtonUp += (_, _) => { if (fk.StartsWith("gear:")) _pinned.Add(fk); _selectedKey = fk; _focusKey = fk; _stepsView = false; Render(); };
+        }
+        return card;
     }
 
     // build-specific "go do this" list: which activities + crafters get the loot the build still needs.
