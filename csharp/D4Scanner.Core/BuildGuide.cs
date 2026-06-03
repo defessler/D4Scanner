@@ -50,7 +50,7 @@ public static class BuildGuide
 
         // tier 1 — build-defining: missing uniques, aspects, skills/passives, paragon
         foreach (var (_, i) in CatItems(r, "uniques").Where(x => !x.i.Done))
-            acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have " + i.Have : null, $"Track down {i.Label}", "cat:uniques"));
+            acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have " + i.Have : "boss / Obol gamble", $"Track down {i.Label}", "cat:uniques"));
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
             acts.Add(new GuideStep(1, "IMPRINT", i.Label, "at the Occultist", $"Imprint the {i.Label}", "cat:aspects"));
         // skills & paragon are vision-gated, one-time menu setup (not farm targets) -> trail the gear plan

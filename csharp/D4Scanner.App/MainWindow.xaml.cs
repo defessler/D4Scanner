@@ -555,7 +555,7 @@ public partial class MainWindow : Window
     };
 
     // Render the whole window to a PNG without showing it — for headless inspection of the live UI.
-    internal void HeadlessRender(string outPng, int w = 1300, int h = 1760)
+    internal void HeadlessRender(string outPng, int w = 1300, int h = 2100)
     {
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         _uiReady = true;
@@ -652,6 +652,7 @@ public partial class MainWindow : Window
         Body.Children.Add(SummaryStrip(r));
         var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
         Body.Children.Add(PaperDoll(sections, r.TargetClass, r.Pct));
+        var acts = ActivitiesPanel(r); if (acts != null) Body.Children.Add(acts);
 
         // below the doll: ONLY pinned slots, each as a FULL compare (hover previews without pinning)
         foreach (var key in _pinned.ToList())
@@ -820,6 +821,24 @@ public partial class MainWindow : Window
         };
     }
 
+    // build-specific "go do this" list: which activities + crafters get the loot the build still needs
+    FrameworkElement? ActivitiesPanel(DiffReport r)
+    {
+        var acts = Activities.Recommend(r);
+        if (acts.Count == 0) return null;
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("RECOMMENDED ACTIVITIES", Gold, 13, true, new Thickness(0, 0, 0, 9)));
+        foreach (var a in acts)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 9) };
+            row.Children.Add(TBs(a.Title, Ink, 13, true));
+            var d = TB(a.Detail, Soft, 12, false, new Thickness(0, 2, 0, 0)); d.TextWrapping = TextWrapping.Wrap;
+            row.Children.Add(d);
+            sp.Children.Add(row);
+        }
+        return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 14, 18, 8), Margin = new Thickness(0, 0, 0, 14) };
+    }
+
     // one Do-Next row: verb chip + text + detail; click to jump to that slot/category (shared by DO NEXT + Next Steps)
     FrameworkElement StepRow(GuideStep a)
     {
@@ -886,6 +905,9 @@ public partial class MainWindow : Window
             root.Children.Add(pager);
 
             RefreshSteps(all);
+
+            var ap = ActivitiesPanel(r);
+            if (ap != null) { ap.Margin = new Thickness(0, 18, 0, 0); root.Children.Add(ap); }
         }
         return new Border
         {

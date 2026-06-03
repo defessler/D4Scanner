@@ -103,6 +103,15 @@ void Print(LiveBuild live)
         }
         Console.WriteLine();
     }
+
+    // build-specific activities + crafting recommendations
+    var activities = Activities.Recommend(r);
+    if (activities.Count > 0)
+    {
+        Console.WriteLine("RECOMMENDED ACTIVITIES:");
+        foreach (var a in activities) Console.WriteLine($"  • {a.Title}\n      {a.Detail}");
+        Console.WriteLine();
+    }
 }
 
 if (watch)
