@@ -20,6 +20,31 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # Build + self-sign the TTS capture shim fresh from source so the published exe always embeds a
+      # current, signed saapi64.dll (the App .csproj embeds dll/saapi64.dll + dll/d4scanner-tts.cer).
+      - name: Build + sign capture shim (saapi64.dll)
+        shell: pwsh
+        run: |
+          try {
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $vs) { throw 'no MSVC C++ tools on runner' }
+            $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+            Push-Location dll
+            cmd /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && cl /nologo /O2 /EHsc /LD /DUNICODE /D_UNICODE saapi64.cpp /Fe:saapi64.dll"
+            if (-not (Test-Path saapi64.dll)) { throw 'cl produced no dll' }
+            $cert = New-SelfSignedCertificate -Type CodeSigning -Subject 'CN=D4Scanner TTS Shim' `
+              -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+            Export-Certificate -Cert $cert -FilePath d4scanner-tts.cer | Out-Null
+            Set-AuthenticodeSignature -FilePath saapi64.dll -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+            if ((Get-AuthenticodeSignature saapi64.dll).Status -ne 'Valid') { throw 'signature not valid' }
+            Pop-Location
+            Write-Host 'Built + signed saapi64.dll fresh from source.'
+          } catch {
+            Write-Host "::warning::Shim rebuild failed ($_) — falling back to the committed prebuilt dll/cert."
+            git checkout -- dll/saapi64.dll dll/d4scanner-tts.cer
+          }
+
       - name: Publish single-file self-contained exe
         shell: pwsh
         run: |
@@ -46,6 +71,9 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: D4Scanner-*-win-x64.exe
+          files: |
+            D4Scanner-*-win-x64.exe
+            dll/saapi64.dll
+            dll/d4scanner-tts.cer
           generate_release_notes: true
           fail_on_unmatched_files: true
