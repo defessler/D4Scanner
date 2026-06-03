@@ -1,0 +1,31 @@
+name: ci
+
+# Build and run the C# Core test suite on every push / PR so diff, Do-Next guidance, and
+# gear-parser regressions are caught automatically. The suite exits non-zero on a failing assertion.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: windows-latest   # matches the release runner; guarantees CascLib/Core build as on dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Dependency-free console suite (no NuGet beyond what Core already pulls):
+      # Normalize / PhraseMatch / SlotBaseName, ScoreSlot / AffixMet, full DiffEngine.Diff,
+      # BuildGuide.Steps, and the GearParser against samples/sample_tts.log.
+      #
+      # The legacy JS suite (tracker/diff.test.js) is intentionally not run here: it needs a
+      # generated fixture (samples/sample_build.json, produced by run_demo.py and gitignored), so
+      # it can't run on a clean checkout. The C# Core tests cover the same diff logic and more, and
+      # are what the app and CLI actually execute.
+      - name: C# Core tests
+        shell: pwsh
+        run: dotnet run --project csharp/D4Scanner.Tests -c Release

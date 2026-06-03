@@ -166,9 +166,10 @@ S12 PTR.
 ## Tests & maintenance
 
 ```powershell
-node tracker\diff.test.js                      # 25 assertions on the matcher + sample diff (JS)
-dotnet run --project csharp\D4Scanner.Tests    # 50 assertions on the C# Core (diff + Do-Next guide + gear parser)
+dotnet run --project csharp\D4Scanner.Tests    # 50 assertions on the C# Core (diff + Do-Next guide + gear parser) — run by CI on every push
+python run_demo.py ; node tracker\diff.test.js # legacy JS matcher/diff (run_demo first — it generates the gitignored samples\sample_build.json fixture)
 ```
+CI (`.github/workflows/ci.yml`) runs the C# Core suite on every push / PR.
 Blizzard changes the voiced tooltip **format most seasons** (and broke DLL loading on the S12 PTR).
 When the gear parser misreads, update the regexes in `parser/d4_gear_capture.py`; keep
 `samples/sample_tts.log` current with a real captured block as a regression fixture.
