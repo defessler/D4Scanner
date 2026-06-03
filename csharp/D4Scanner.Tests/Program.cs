@@ -125,6 +125,52 @@ if (File.Exists(sampleLog))
     Check("Parser: ring mythic + ancestral (Tal Rasha's)", ring != null && ring.IsMythic && ring.IsUnique && ring.IsAncestral && ring.Name.Contains("Tal Rasha"));
 }
 
+// ---- Substitutes: core-vs-flexible classification + best-owned + ladder ----
+var subTarget = new TargetBuild { Gear = {
+    new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 1000 },   // value-gated -> core
+        new TargetAffix { Name = "Dexterity" },                   // on 2 slots -> core
+        new TargetAffix { Name = "Lucky Hit Chance" } } },        // once, ungated -> flexible
+    new TargetGear { Slot = "Gloves", Affixes = {
+        new TargetAffix { Name = "Dexterity" },
+        new TargetAffix { Name = "Attack Speed" } } } } };
+var coreNames = Substitutes.CoreAffixNames(subTarget);
+Check("CoreAffix: value-gated is core (maximum life)", coreNames.Contains("maximum life"));
+Check("CoreAffix: repeated-across-slots is core (dexterity)", coreNames.Contains("dexterity"));
+Check("CoreAffix: single ungated is flexible (lucky hit chance)", !coreNames.Contains("lucky hit chance"));
+var subLive = new LiveBuild { Gear = {
+    new Item { Name = "A Helm", Slot = "Helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1200 },
+        new Affix { Text = "Dexterity", Value = 50 } } } } };
+var plan = Substitutes.Plan(subTarget, subLive, 50);
+Eq("Substitutes: one entry per gear slot", 2, plan.Count);
+var helmSub = plan.First(s => s.Slot == "Helm");
+Eq("Substitutes: helm coreTotal 2", 2, helmSub.CoreTotal);
+Eq("Substitutes: helm wanted label", "Any Helm", helmSub.Wanted);
+Eq("Substitutes: ladder is Now/Better/Best", 3, helmSub.Ladder.Count);
+Check("Substitutes: ladder leads with Now", helmSub.Ladder[0].StartsWith("Now:"));
+Check("Substitutes: best-owned is the equipped helm", helmSub.BestOwned == "A Helm");
+
+// ---- Activities: build-tailored recommendations from the gaps ----
+Eq("Activities: none when complete", 0, Activities.Recommend(rMet).Count);
+var acts2 = Activities.Recommend(rPart);
+Check("Activities: chase the missing affixes", acts2.Any(a => a.Title.Contains("missing affixes")));
+Check("Activities: hunt the missing uniques", acts2.Any(a => a.Title.Contains("missing uniques")));
+Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains("Masterwork")));
+
+// ---- LootFilter: markdown checklist + D4Companion-shaped preset ----
+var md = LootFilter.Markdown(target);
+Check("LootFilter md: title", md.Contains("# T — Loot Filter"));
+Check("LootFilter md: Helm section", md.Contains("## Helm"));
+Check("LootFilter md: lists affix + threshold", md.Contains("Maximum Life") && md.Contains("≥"));
+Check("LootFilter md: lists the unique", md.Contains("**Unique:** Cowl of the Homeless"));
+var preset = System.Text.Json.JsonSerializer.Serialize(LootFilter.CompanionPreset(target));
+Check("LootFilter preset: ItemAffixes key", preset.Contains("ItemAffixes"));
+Check("LootFilter preset: ItemUniques key", preset.Contains("ItemUniques"));
+Check("LootFilter preset: affix id present", preset.Contains("Maximum Life"));
+Check("LootFilter preset: unique id present", preset.Contains("Cowl of the Homeless"));
+Check("LootFilter preset: affix typed by slot", preset.Contains("\"Type\":\"Helm\""));
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
