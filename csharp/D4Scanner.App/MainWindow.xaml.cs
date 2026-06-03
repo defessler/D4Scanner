@@ -355,6 +355,23 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => { _iconRefreshQueued = false; Render(); });
     }
 
+    // live gear changed on disk: swap it in, re-render, and surface what was newly equipped (debounced by
+    // content — re-scans with identical gear don't toast, and the initial empty→full load is silent).
+    void OnLiveUpdate(LiveBuild b)
+    {
+        var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, b);
+        _live = b;
+        Render();
+        if (added.Count == 1) Toast($"Equipped  {added[0]}");
+        else if (added.Count > 1) Toast($"Gear updated — {added.Count} new items");
+    }
+
+    static List<string> NewlyEquipped(LiveBuild oldB, LiveBuild newB)
+    {
+        var had = new HashSet<string>(oldB.Gear.Select(g => g.Name ?? "").Where(n => n.Length > 0), StringComparer.OrdinalIgnoreCase);
+        return newB.Gear.Select(g => g.Name ?? "").Where(n => n.Length > 0 && !had.Contains(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     void StartWatching()
     {
         LoadBuildIndex();
@@ -364,7 +381,7 @@ public partial class MainWindow : Window
         LoadVision();
         _watcher?.Dispose();
         _watcher = new LogWatcher(_log, equippedOnly: true);
-        _watcher.Updated += b => Dispatcher.Invoke(() => { _live = b; Render(); });
+        _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
         _watcher.Start();
         _live = _watcher.Build;
 
