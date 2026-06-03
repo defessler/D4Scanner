@@ -288,6 +288,21 @@ public static class DiffEngine
         }
         if (paraGroups.Count > 0) cats.Add(MakeCategory("paragon", "Paragon & Glyphs", paraGroups));
 
+        // ---- Mercenary (vision-gated; talismans are not present in Maxroll planner data) ----
+        if (target.Mercenary != null)
+        {
+            var mItems = new List<ReqItem>();
+            void AddMerc(string? label, string role)
+            {
+                if (string.IsNullOrEmpty(label)) return;
+                bool done = !string.IsNullOrEmpty(live.Mercenary) && PhraseMatch(label!, live.Mercenary!);
+                mItems.Add(new ReqItem { Label = role + ": " + label, Done = done, Source = done ? "vision" : null });
+            }
+            AddMerc(target.Mercenary.Main, "Mercenary");
+            AddMerc(target.Mercenary.Support, "Reinforcement");
+            if (mItems.Count > 0) cats.Add(MakeCategory("mercenary", "Mercenary", new() { MakeGroup("Mercenary", mItems) }));
+        }
+
         int m = cats.Sum(c => c.Matched), t2 = cats.Sum(c => c.Total), u = cats.Sum(c => c.Under);
         return new DiffReport
         {

@@ -61,6 +61,7 @@ public class LiveBuild
     public List<string> Aspects { get; set; } = new();
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
+    public string? Mercenary { get; set; }               // hired mercenary, read by the vision channel
 }
 
 // ---- target build (mirrors schema/target.schema.json) ----
@@ -76,6 +77,7 @@ public class TargetBuild
     public List<TargetSkill> Skills { get; set; } = new();
     public List<string> KeyPassives { get; set; } = new();
     public TargetParagon? Paragon { get; set; }
+    public TargetMercenary? Mercenary { get; set; }      // mercenary + reinforcement the build wants (talismans aren't in the planner)
     public double? MinRollPercent { get; set; }  // global default roll-quality threshold (else the app's slider)
     public List<string> Profiles { get; set; } = new();  // all profiles available on the source build
     public string? Profile { get; set; }                 // the profile this target was built from
@@ -151,6 +153,13 @@ public class TargetSkill
 {
     public string Name { get; set; } = "";
     public int? Rank { get; set; }
+}
+
+public class TargetMercenary
+{
+    public string? Main { get; set; }       // the hired mercenary
+    public string? Support { get; set; }     // the reinforcement mercenary
+    public List<string> SupportSkills { get; set; } = new();
 }
 
 public class TargetParagon

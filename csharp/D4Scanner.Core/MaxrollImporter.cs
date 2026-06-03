@@ -352,6 +352,21 @@ public static class MaxrollImporter
         string? source = pp.TryGetProperty("metadata", out var md) && md.TryGetProperty("maxrollId", out var mr)
             ? mr.GetString() : "maxroll";
 
+        // mercenary (id + support reinforcement); talismans are not present in Maxroll planner data
+        TargetMercenary? merc = null;
+        if (prof.TryGetProperty("mercenary", out var mc) && mc.ValueKind == JsonValueKind.Object)
+        {
+            string? Resolve(string key) => mc.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                ? Lookup(dm, "mercenaries", v.GetString() ?? "", Humanize(v.GetString() ?? "")) : null;
+            var main = Resolve("id");
+            var supp = Resolve("support");
+            var sk = new List<string>();
+            if (mc.TryGetProperty("supportSkills", out var ss) && ss.ValueKind == JsonValueKind.Array)
+                foreach (var s in ss.EnumerateArray())
+                    if (s.ValueKind == JsonValueKind.String) { var sn = s.GetString()!; sk.Add(Lookup(dm, "skills", sn, Humanize(sn))); }
+            if (!string.IsNullOrEmpty(main) || !string.IsNullOrEmpty(supp)) merc = new TargetMercenary { Main = main, Support = supp, SupportSkills = sk };
+        }
+
         return new TargetBuild
         {
             Name = pp.TryGetProperty("name", out var pn) ? (pn.GetString() ?? "Maxroll Build") : "Maxroll Build",
@@ -363,6 +378,7 @@ public static class MaxrollImporter
             Skills = skills,
             KeyPassives = new(),
             Paragon = new TargetParagon { Boards = boards, Glyphs = glyphs },
+            Mercenary = merc,
         };
     }
 

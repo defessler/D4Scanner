@@ -56,6 +56,7 @@ public static class BuildGuide
         // skills & paragon are vision-gated, one-time menu setup (not farm targets) -> trail the gear plan
         AddVisionCategory(r, acts, "skills", "SKILL", "Set up", "skills & passives");
         AddVisionCategory(r, acts, "paragon", "PARAGON", "Work on", "paragon boards & glyphs");
+        AddVisionCategory(r, acts, "mercenary", "MERC", "Hire your", "mercenary");
 
         return acts.OrderBy(a => a.Tier).ToList();
     }
@@ -91,7 +92,7 @@ public static class BuildGuide
     static string ShortName(string id) => id switch
     {
         "gear" => "Gear", "uniques" => "Uniques", "skills" => "Skills",
-        "paragon" => "Paragon", "aspects" => "Aspects", _ => id,
+        "paragon" => "Paragon", "aspects" => "Aspects", "mercenary" => "Mercenary", _ => id,
     };
 
     static IEnumerable<(string grp, ReqItem i)> CatItems(DiffReport r, string id)

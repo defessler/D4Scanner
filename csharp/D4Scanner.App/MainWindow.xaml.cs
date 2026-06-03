@@ -499,9 +499,11 @@ public partial class MainWindow : Window
     LiveBuild EffectiveLive() => new()
     {
         Gear = _live.Gear,
+        Inventory = _live.Inventory,
         Skills = _vision?.Skills ?? new(),
         Paragon = _vision?.Paragon ?? new(),
         Aspects = _vision?.Aspects ?? new(),
+        Mercenary = _vision?.Mercenary,
     };
 
     string VisionPath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "vision.json");
@@ -589,7 +591,7 @@ public partial class MainWindow : Window
     static string ShortName(string id) => id switch
     {
         "gear" => "Gear", "uniques" => "Uniques", "skills" => "Skills",
-        "paragon" => "Paragon", "aspects" => "Aspects", _ => id,
+        "paragon" => "Paragon", "aspects" => "Aspects", "mercenary" => "Mercenary", _ => id,
     };
 
     // Render the whole window to a PNG without showing it — for headless inspection of the live UI.
@@ -782,7 +784,7 @@ public partial class MainWindow : Window
     Brush VerbColor(string verb) => verb switch
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
-        "SKILL" or "PARAGON" or "CAPTURE" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
+        "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
 
     // shown before any build is imported, so opening the app immediately tells you what to do
