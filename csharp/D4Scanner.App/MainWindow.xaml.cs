@@ -100,6 +100,7 @@ public partial class MainWindow : Window
     string? _targetPath;
     DateTime _targetMtime;
     double _minRollPct = 75;
+    double _uiScale = 1.0;    // body zoom factor (Ctrl +/-/0), on top of the base UI scale
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
@@ -180,6 +181,8 @@ public partial class MainWindow : Window
             bool n = ActualWidth < TwoColMin;
             if (n != _narrow) { _narrow = n; if (_target != null && !_rawView && !_stepsView) Render(); }
         };
+        KeyDown += Window_KeyDown;
+        ApplyZoom();
     }
 
     void SetUrlText(string text)
@@ -290,6 +293,8 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("detailView", out var dv) && !string.IsNullOrEmpty(dv)) _detailView = dv;
                     if (s.TryGetValue("minRoll", out var mr) && double.TryParse(mr, System.Globalization.CultureInfo.InvariantCulture, out var mrv))
                         _minRollPct = Math.Clamp(mrv, 0, 100);
+                    if (s.TryGetValue("zoom", out var z) && double.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out var zv))
+                        _uiScale = Math.Clamp(zv, 0.7, 1.6);
                     if (s.TryGetValue("src", out var sr) && !string.IsNullOrEmpty(sr)) _lastImportInput = sr;
                     if (s.TryGetValue("recent", out var rc) && !string.IsNullOrEmpty(rc)) _recentSlugs = rc.Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
                 }
@@ -307,7 +312,7 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture) }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(System.Globalization.CultureInfo.InvariantCulture), ["zoom"] = _uiScale.ToString(System.Globalization.CultureInfo.InvariantCulture) }));
         }
         catch { }
     }
@@ -750,6 +755,9 @@ public partial class MainWindow : Window
         var rail = new StackPanel();
         var guide = GuidancePanel(r); if (guide != null) rail.Children.Add(guide);
         var acts = ActivitiesPanel(r); if (acts != null) rail.Children.Add(acts);
+        var exp = MakeLink("⤓  Export loot filter", Steel); exp.Margin = new Thickness(2, 2, 0, 0);
+        exp.MouseLeftButtonUp += (_, _) => ExportLootFilter();
+        rail.Children.Add(exp);
 
         if (_narrow)
         {
@@ -908,6 +916,43 @@ public partial class MainWindow : Window
         return t;
     }
 
+    // body zoom (Ctrl +/-/0): a LayoutTransform on the scrollable body, so the header/status stay fixed
+    void ApplyZoom() => Body.LayoutTransform = _uiScale == 1.0 ? System.Windows.Media.Transform.Identity : new ScaleTransform(_uiScale, _uiScale);
+    void Zoom(double delta)
+    {
+        var z = Math.Clamp(Math.Round(_uiScale + delta, 2), 0.7, 1.6);
+        if (Math.Abs(z - _uiScale) < 0.001) return;
+        _uiScale = z; ApplyZoom(); SaveSettings();
+        Toast($"Zoom  {(int)Math.Round(_uiScale * 100)}%");
+    }
+
+    void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build details"; Render(); }
+
+    void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        var mods = System.Windows.Input.Keyboard.Modifiers;
+        bool ctrl = (mods & System.Windows.Input.ModifierKeys.Control) != 0;
+        bool alt = (mods & System.Windows.Input.ModifierKeys.Alt) != 0;
+        var k = alt ? e.SystemKey : e.Key;   // Alt routes the real key to SystemKey
+
+        if (ctrl && (k == System.Windows.Input.Key.OemPlus || k == System.Windows.Input.Key.Add)) { Zoom(0.1); e.Handled = true; }
+        else if (ctrl && (k == System.Windows.Input.Key.OemMinus || k == System.Windows.Input.Key.Subtract)) { Zoom(-0.1); e.Handled = true; }
+        else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.O && _target != null) { GoOverview(); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.N && _target != null) { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); e.Handled = true; }
+        else if (k == System.Windows.Input.Key.Oem2 && !UrlBox.IsFocused) { UrlBox.Focus(); UrlBox.SelectAll(); e.Handled = true; }   // "/" focuses search
+        else if (k == System.Windows.Input.Key.Escape)
+        {
+            if (AcPopup.IsOpen) { AcPopup.IsOpen = false; UrlBox.Focus(); }
+            else if (BuildsPopup.IsOpen) BuildsPopup.IsOpen = false;
+            else if (ProfilePopup.IsOpen) ProfilePopup.IsOpen = false;
+            else if (_focusKey != null) { _focusKey = null; Render(); }
+            else if (_pinned.Count > 0) { _pinned.Clear(); Render(); Toast("Cleared pins"); }
+            else if (_stepsView || _rawView) GoOverview();
+        }
+    }
+
     Brush VerbColor(string verb) => verb switch
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
@@ -915,25 +960,46 @@ public partial class MainWindow : Window
     };
 
     // shown before any build is imported, so opening the app immediately tells you what to do
+    // first-run setup checklist: three steps with live checkmarks that fill in as each is completed,
+    // and an inline action button on whatever's still outstanding.
     UIElement WelcomeCard()
     {
+        bool s1 = _target != null;
+        bool s2 = CaptureSetup.Installed();
+        bool s3 = _vision != null;
+        int doneCount = (s1 ? 1 : 0) + (s2 ? 1 : 0) + (s3 ? 1 : 0);
+
         var sp = new StackPanel();
-        sp.Children.Add(TBs("Get started", Gold, 15, true, new Thickness(0, 0, 0, 10)));
-        void Step(string n, string head, string body)
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var prog = TB($"{doneCount} / 3", Soft, 12, false); prog.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(prog, Dock.Right); hdr.Children.Add(prog);
+        hdr.Children.Add(TBs("Set up your live guide", Gold, 15, true));
+        sp.Children.Add(hdr);
+        sp.Children.Add(TB("Three quick steps — the checks fill in as you complete them.", Soft, 12, false, new Thickness(0, 0, 0, 12)));
+
+        void Step(bool done, string head, string body, string? actionLabel, Action<Button>? action)
         {
-            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
-            var num = TB(n, B("#0C0C0F"), 11, true); num.TextAlignment = TextAlignment.Center;
-            var nb = new Border { Background = Gold, CornerRadius = new CornerRadius(11), Width = 22, Height = 22, Margin = new Thickness(0, 1, 12, 0), VerticalAlignment = VerticalAlignment.Top, Child = num };
-            DockPanel.SetDock(nb, Dock.Left); row.Children.Add(nb);
+            var row = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
+            var mark = TB(done ? "✓" : "○", done ? Green : Faint, 15, true);
+            mark.TextAlignment = TextAlignment.Center; mark.Width = 24; mark.Margin = new Thickness(0, 1, 12, 0); mark.VerticalAlignment = VerticalAlignment.Top;
+            DockPanel.SetDock(mark, Dock.Left); row.Children.Add(mark);
+            if (!done && actionLabel != null && action != null)
+            {
+                var btn = new Button { Content = actionLabel, Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 5, 14, 5), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+                var a = action; btn.Click += (_, _) => a(btn);
+                DockPanel.SetDock(btn, Dock.Right); row.Children.Add(btn);
+            }
             var t = new StackPanel();
-            t.Children.Add(TBs(head, Ink, 13.5, true));
-            var bt = TB(body, Soft, 12.5, false, new Thickness(0, 1, 0, 0)); bt.TextWrapping = TextWrapping.Wrap; t.Children.Add(bt);
+            t.Children.Add(TBs(head, done ? Soft : Ink, 13.5, true));
+            var bt = TB(body, Soft, 12, false, new Thickness(0, 1, 0, 0)); bt.TextWrapping = TextWrapping.Wrap; t.Children.Add(bt);
             row.Children.Add(t);
             sp.Children.Add(row);
         }
-        Step("1", "Paste a Maxroll build above, then Import", "A build-guide URL, a planner link, or just the slug works.");
-        Step("2", "Turn on Diablo IV's screen reader", "Settings → Accessibility → Screen Reader + 3rd-Party Screen Reader, so the app can read your equipped gear.");
-        Step("3", "Follow your live guide", "This screen becomes your paper doll plus a prioritized “Do Next” plan — what to equip, find, craft and improve to reach the build.");
+
+        Step(s1, "Import a build", "Paste a Maxroll build-guide or planner URL above (or just type the build name) and hit Import.", null, null);
+        Step(s2, "Enable in-game capture", "Install the capture shim, then turn on Diablo IV → Accessibility → Screen Reader + 3rd-Party Screen Reader so the app can read your equipped gear.", "Install capture DLL", b => RunInstall(b));
+        Step(s3, "Capture skills & paragon", "Gear comes from the live log; screenshot your skills / paragon / aspects to fill in the rest.", "Add screenshots", async b => { await DoVision(); });
+
         return new Border
         {
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
