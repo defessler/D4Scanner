@@ -1528,37 +1528,46 @@ public partial class MainWindow : Window
     (string name, Brush col, string? iconName, string? id, long? image) SlotDisplay(Section s) =>
         _dollView == "mine" ? EquippedFor(s) : WantedFor(s);
 
-    // a framed item icon with a status-colored border and a priority number badge
+    // a large, in-game-style equipment frame: a dark metallic socket holding a recessed, rarity-lit fill
+    // with a rarity-colored border ring and the item art, plus priority + stash-upgrade badges
     FrameworkElement IconBox(Section s, int num)
     {
         var (_, scol) = Look(s.Status);
         var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
         var rc = ((SolidColorBrush)rcol).Color;
-        var grid = new Grid { Width = 48, Height = 60 };     // taller, portrait — like a D4 item icon
-        grid.Children.Add(new Border
-        {
-            Background = new LinearGradientBrush(Color.FromArgb(0x24, rc.R, rc.G, rc.B), Col("#0C0C0F"), 90),
-            BorderBrush = rcol, BorderThickness = new Thickness(1.4), CornerRadius = new CornerRadius(4),
-        });
-        var art = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, 40, wid, wimg);   // silhouette tinted by rarity
-        art.Margin = new Thickness(4); art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
-        grid.Children.Add(art);
+        const double box = 68, art = 54;                       // bigger, square — like a D4 inventory slot
+        var grid = new Grid { Width = box, Height = box };
+
+        // recessed slot: dark metallic outer frame over a rarity-lit radial fill (brighter toward the centre)
+        var fill = new RadialGradientBrush { GradientOrigin = new Point(0.5, 0.42), Center = new Point(0.5, 0.42), RadiusX = 0.85, RadiusY = 0.85 };
+        fill.GradientStops.Add(new GradientStop(Color.FromArgb(0x46, rc.R, rc.G, rc.B), 0));
+        fill.GradientStops.Add(new GradientStop(Color.FromArgb(0x14, rc.R, rc.G, rc.B), 0.6));
+        fill.GradientStops.Add(new GradientStop(Col("#090909"), 1));
+        grid.Children.Add(new Border { Background = fill, BorderBrush = B("#08080A"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7) });
+
+        // the rarity frame ring (the in-game colored border)
+        grid.Children.Add(new Border { BorderBrush = rcol, BorderThickness = new Thickness(1.8), CornerRadius = new CornerRadius(6), Margin = new Thickness(1.5) });
+
+        var icon = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, art, wid, wimg);
+        icon.HorizontalAlignment = HorizontalAlignment.Center; icon.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(icon);
+
         if (num > 0)
         {
             var badge = new Border
             {
-                Background = scol, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1),
+                Background = scol, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1),
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, -4, -5), Child = TB(num.ToString(), B("#0C0C0F"), 10.5, true),
+                Margin = new Thickness(0, 0, -5, -6), Child = TB(num.ToString(), B("#0C0C0F"), 11, true),
             };
             grid.Children.Add(badge);
         }
         if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)   // an upgrade is sitting in your bags
             grid.Children.Add(new Border
             {
-                Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(3, 0, 3, 1),
+                Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(-4, -5, 0, 0), Child = TB("↑", B("#0C0C0F"), 10.5, true),
+                Margin = new Thickness(-5, -6, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
             });
         return grid;
     }
@@ -1608,7 +1617,7 @@ public partial class MainWindow : Window
         text.Children.Add(lbl); text.Children.Add(nm);
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 256 };
+        var dp = new DockPanel { Width = 276 };
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);
