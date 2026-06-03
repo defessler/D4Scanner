@@ -104,6 +104,7 @@ public partial class MainWindow : Window
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
+    string? _nextActionKey;  // the slot the #1 DO-NEXT step targets — highlighted on the doll to link guide↔doll
     string _dollView = "target";   // paper doll previews "target" (build wants) or "mine" (equipped)
     bool _stepsView;               // the full searchable/paged Next-Steps screen
     string _stepsSearch = "";
@@ -635,8 +636,14 @@ public partial class MainWindow : Window
         _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
         ReloadTarget();
         try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
+        // render-test seams (env-gated, no effect in normal use): exercise states the harness can't click to
+        var seed = System.Environment.GetEnvironmentVariable("D4_RENDER_STATE");
+        if (seed == "pin") { _pinned.Add("gear:0"); _pinned.Add("gear:1"); }
+        else if (seed == "focus") _focusKey = "gear:0";
+        else if (seed == "steps") _stepsView = true;
+        else if (seed == "raw") _rawView = true;
         Render();
-        if (System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
+        if (seed == "help" || System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
 
         var content = (FrameworkElement)Content;
         var size = new Size(w, h);
@@ -767,6 +774,8 @@ public partial class MainWindow : Window
         // glanceable layout: the paper doll (visual anchor) beside the guidance rail (do-this-next + activities)
         // so the core signal sits above the fold. On narrow windows the two columns stack instead.
         if (ActualWidth > 50) _narrow = ActualWidth < TwoColMin;
+        // the slot the top step points at (only when not focused) — the doll rings it to connect guide↔doll
+        _nextActionKey = _focusKey == null ? BuildGuide.Steps(r).FirstOrDefault(s => s.FocusKey != null)?.FocusKey : null;
         var doll = PaperDoll(sections, r.TargetClass, r.Pct);
         ((FrameworkElement)doll).VerticalAlignment = VerticalAlignment.Top;
         var rail = new StackPanel();
@@ -1594,6 +1603,7 @@ public partial class MainWindow : Window
     {
         var (name, ncol, _, _, _) = SlotDisplay(s);
         bool pinned = _pinned.Contains(s.Key);
+        bool isNext = !pinned && _nextActionKey != null && s.Key == _nextActionKey;   // the #1 do-next slot
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
@@ -1615,9 +1625,10 @@ public partial class MainWindow : Window
         {
             Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
             Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
-            BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(pinned ? 1.5 : 1),
+            BorderBrush = pinned ? Gold : isNext ? Steel : System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(pinned ? 1.5 : isNext ? 1.2 : 1),
             Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = pinned ? "pinned · click to unpin" : "hover to compare · click to pin",
+            ToolTip = pinned ? "pinned · click to unpin" : isNext ? "your next action · click to pin" : "hover to compare · click to pin",
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
         b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };
