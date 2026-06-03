@@ -120,7 +120,8 @@ public partial class MainWindow : Window
     string _detailView = "compare";        // "compare" (tooltip card) | "list"
     bool _rawView;                         // body shows the raw build details instead of the grid
     bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
-    Grid? _overviewCols;                   // the doll|rail two-column grid (for responsive reflow)
+    bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
+    const double TwoColMin = 1080;         // below this width the overview reflows to a single column
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
@@ -173,6 +174,12 @@ public partial class MainWindow : Window
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
+        // responsive reflow: re-render only when crossing the two-column width breakpoint
+        SizeChanged += (_, _) =>
+        {
+            bool n = ActualWidth < TwoColMin;
+            if (n != _narrow) { _narrow = n; if (_target != null && !_rawView && !_stepsView) Render(); }
+        };
     }
 
     void SetUrlText(string text)
@@ -604,6 +611,7 @@ public partial class MainWindow : Window
     {
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         _uiReady = true;
+        _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
         ReloadTarget();
         try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
         Render();
@@ -734,21 +742,33 @@ public partial class MainWindow : Window
             Body.Children.Add(actions);
         }
 
-        // glanceable two-column layout: the paper doll (visual anchor) on the left, the guidance rail
-        // (do-this-next + activities) on the right — so the core signal sits above the fold without scrolling.
-        var cols = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-        cols.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // doll: natural width
-        cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });  // rail: fills the rest
+        // glanceable layout: the paper doll (visual anchor) beside the guidance rail (do-this-next + activities)
+        // so the core signal sits above the fold. On narrow windows the two columns stack instead.
+        if (ActualWidth > 50) _narrow = ActualWidth < TwoColMin;
         var doll = PaperDoll(sections, r.TargetClass, r.Pct);
         ((FrameworkElement)doll).VerticalAlignment = VerticalAlignment.Top;
-        Grid.SetColumn(doll, 0); cols.Children.Add(doll);
-
-        var rail = new StackPanel { Margin = new Thickness(22, 0, 0, 0), MinWidth = 320 };
+        var rail = new StackPanel();
         var guide = GuidancePanel(r); if (guide != null) rail.Children.Add(guide);
         var acts = ActivitiesPanel(r); if (acts != null) rail.Children.Add(acts);
-        Grid.SetColumn(rail, 1); cols.Children.Add(rail);
-        Body.Children.Add(cols);
-        _overviewCols = cols;   // tracked for responsive reflow
+
+        if (_narrow)
+        {
+            ((FrameworkElement)doll).HorizontalAlignment = HorizontalAlignment.Center;
+            rail.Margin = new Thickness(0, 14, 0, 0);
+            var stack = new StackPanel();
+            stack.Children.Add(doll); stack.Children.Add(rail);
+            Body.Children.Add(stack);
+        }
+        else
+        {
+            rail.Margin = new Thickness(22, 0, 0, 0); rail.MinWidth = 320;
+            var cols = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // doll: natural width
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });  // rail: fills the rest
+            Grid.SetColumn(doll, 0); cols.Children.Add(doll);
+            Grid.SetColumn(rail, 1); cols.Children.Add(rail);
+            Body.Children.Add(cols);
+        }
 
         // compare deck (in the space freed by the two-column layout): pinned slots, each a FULL side-by-side
         // compare. A header lets you clear all at once; each panel can be unpinned or focused.
