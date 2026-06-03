@@ -119,6 +119,8 @@ public partial class MainWindow : Window
     string? _lastImportInput;              // the slug/url last imported (for profile re-import)
     string _detailView = "compare";        // "compare" (tooltip card) | "list"
     bool _rawView;                         // body shows the raw build details instead of the grid
+    bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
+    Grid? _overviewCols;                   // the doll|rail two-column grid (for responsive reflow)
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
@@ -711,9 +713,22 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         Body.Children.Add(SummaryStrip(r));
-        var guide = GuidancePanel(r); if (guide != null) Body.Children.Add(guide);
-        Body.Children.Add(PaperDoll(sections, r.TargetClass, r.Pct));
-        var acts = ActivitiesPanel(r); if (acts != null) Body.Children.Add(acts);
+
+        // glanceable two-column layout: the paper doll (visual anchor) on the left, the guidance rail
+        // (do-this-next + activities) on the right — so the core signal sits above the fold without scrolling.
+        var cols = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        cols.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // doll: natural width
+        cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });  // rail: fills the rest
+        var doll = PaperDoll(sections, r.TargetClass, r.Pct);
+        ((FrameworkElement)doll).VerticalAlignment = VerticalAlignment.Top;
+        Grid.SetColumn(doll, 0); cols.Children.Add(doll);
+
+        var rail = new StackPanel { Margin = new Thickness(22, 0, 0, 0), MinWidth = 320 };
+        var guide = GuidancePanel(r); if (guide != null) rail.Children.Add(guide);
+        var acts = ActivitiesPanel(r); if (acts != null) rail.Children.Add(acts);
+        Grid.SetColumn(rail, 1); cols.Children.Add(rail);
+        Body.Children.Add(cols);
+        _overviewCols = cols;   // tracked for responsive reflow
 
         // below the doll: ONLY pinned slots, each as a FULL compare (hover previews without pinning)
         foreach (var key in _pinned.ToList())
@@ -928,28 +943,40 @@ public partial class MainWindow : Window
         };
     }
 
-    // build-specific "go do this" list: which activities + crafters get the loot the build still needs
+    // build-specific "go do this" list: which activities + crafters get the loot the build still needs.
+    // Rendered as a collapsible accordion so it doesn't crowd the guidance rail (collapsed by default).
     FrameworkElement? ActivitiesPanel(DiffReport r)
     {
         var acts = Activities.Recommend(r);
         var sp = new StackPanel();
-        sp.Children.Add(TBs("RECOMMENDED ACTIVITIES", Gold, 13, true, new Thickness(0, 0, 0, 9)));
-        if (acts.Count == 0)
+
+        // clickable header row: chevron + title + count
+        var hdr = new DockPanel { Cursor = System.Windows.Input.Cursors.Hand };
+        var chev = TBs(_activitiesOpen ? "▾" : "▸", Gold, 13, true); chev.Margin = new Thickness(0, 0, 8, 0);
+        DockPanel.SetDock(chev, Dock.Left); hdr.Children.Add(chev);
+        if (acts.Count > 0) { var cnt = TB(acts.Count.ToString(), Soft, 11.5, false); cnt.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(cnt, Dock.Right); hdr.Children.Add(cnt); }
+        hdr.Children.Add(TBs("RECOMMENDED ACTIVITIES", Gold, 13, true));
+        hdr.MouseLeftButtonUp += (_, _) => { _activitiesOpen = !_activitiesOpen; Render(); };
+        sp.Children.Add(hdr);
+
+        if (_activitiesOpen)
         {
-            var none = TB("You're set on loot — nothing specific to farm right now. Remaining steps are crafting & equipping.", Soft, 12.5, false);
-            none.TextWrapping = TextWrapping.Wrap;
-            sp.Children.Add(none);
-            return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
+            if (acts.Count == 0)
+            {
+                var none = TB("You're set on loot — nothing specific to farm right now. Remaining steps are crafting & equipping.", Soft, 12.5, false);
+                none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 10, 0, 0);
+                sp.Children.Add(none);
+            }
+            foreach (var a in acts)
+            {
+                var row = new StackPanel { Margin = new Thickness(0, a == acts[0] ? 11 : 9, 0, 0) };
+                row.Children.Add(TBs(a.Title, Ink, 13, true));
+                var d = TB(a.Detail, Soft, 12, false, new Thickness(0, 2, 0, 0)); d.TextWrapping = TextWrapping.Wrap;
+                row.Children.Add(d);
+                sp.Children.Add(row);
+            }
         }
-        foreach (var a in acts)
-        {
-            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 9) };
-            row.Children.Add(TBs(a.Title, Ink, 13, true));
-            var d = TB(a.Detail, Soft, 12, false, new Thickness(0, 2, 0, 0)); d.TextWrapping = TextWrapping.Wrap;
-            row.Children.Add(d);
-            sp.Children.Add(row);
-        }
-        return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 14, 18, 8), Margin = new Thickness(0, 0, 0, 14) };
+        return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 13, 18, _activitiesOpen ? 14 : 13), Margin = new Thickness(0, 0, 0, 14) };
     }
 
     // one Do-Next row: verb chip + text + detail; click to jump to that slot/category (shared by DO NEXT + Next Steps)
@@ -1134,11 +1161,13 @@ public partial class MainWindow : Window
         foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
-        // center crest: class + overall completion %, framed (the character-screen centerpiece)
+        // center crest: class emblem + a progress bar + live indicator (the canonical % lives in the header band,
+        // so the crest shows progress visually rather than duplicating the number).
         var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
-        if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 14, true, new Thickness(0, 0, 0, 2))));
-        crest.Children.Add(Center(TBs(pct + "%", Gold, 30, true)));
-        crest.Children.Add(Center(TB("complete", Soft, 11, false)));
+        if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 15, true, new Thickness(0, 0, 0, 8))));
+        crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
+        bool liveGear = _live.Gear.Count > 0;
+        crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ waiting for game", liveGear ? Green : Faint, 10, true, new Thickness(0, 9, 0, 0))));
         center.Children.Add(new Border
         {
             Child = crest, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
@@ -1326,7 +1355,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
-        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 200; nm.ToolTip = name;
+        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 176; nm.ToolTip = name;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1335,7 +1364,7 @@ public partial class MainWindow : Window
         text.Children.Add(lbl); text.Children.Add(nm);
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 286 };
+        var dp = new DockPanel { Width = 256 };
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);

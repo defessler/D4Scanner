@@ -102,7 +102,7 @@
           <Grid Margin="0,20,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
-              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Accent}" FontSize="50" FontWeight="Bold"/>
+              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Accent}" FontSize="40" FontWeight="Bold"/>
               <TextBlock x:Name="OverallCount" Text="" Foreground="{StaticResource Soft}" FontSize="15"
                          VerticalAlignment="Bottom" Margin="18,0,0,11" TextWrapping="Wrap" MaxWidth="360"/>
             </StackPanel>
