@@ -1223,6 +1223,10 @@ public partial class MainWindow : Window
         });
 
         var shownCats = cats.Where(s => s.Total > 0).ToList();   // hide empty/non-functional categories
+        // uniques already appear on their doll slots — drop the redundant center "Uniques" tile, unless some
+        // target unique has no recognizable slot (then keep it so those stay reachable here).
+        bool allUniquesMapped = _target == null || _target.Uniques.All(u => SlotKey(u.Slot ?? "").Length > 0);
+        if (allUniquesMapped) shownCats = shownCats.Where(s => s.Cat?.Id != "uniques").ToList();
         if (shownCats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
         foreach (var s in shownCats) center.Children.Add(CatCell(s));
 
