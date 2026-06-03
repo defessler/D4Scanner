@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Dependency-free test console (mirrors tracker/diff.test.js): `dotnet run` it; exits non-zero on failure.
+       No xUnit/NUnit so it restores with nothing beyond what Core already pulls. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
+  </ItemGroup>
+</Project>

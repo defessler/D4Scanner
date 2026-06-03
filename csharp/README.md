@@ -71,6 +71,16 @@ dotnet run --project csharp\D4Scanner.Cli -- --target D:\Projects\D4Scanner\targ
 dotnet run --project csharp\D4Scanner.Cli -- --target D:\Projects\D4Scanner\target.json --watch
 ```
 
+## Tests
+
+Dependency-free regression checks on the Core diff + guidance logic (no test framework — just a console
+that asserts and exits non-zero on failure, mirroring the JS `tracker/diff.test.js`):
+```powershell
+dotnet run --project csharp\D4Scanner.Tests
+```
+Covers `Normalize` / `PhraseMatch` / `SlotBaseName`, `ScoreSlot` / `AffixMet`, full `DiffEngine.Diff`
+(met + under-rolled + missing), and `BuildGuide.Steps` ordering/verbs.
+
 ## Status
 
 - ✅ **Live WPF app** — paper-doll overview + impact-ordered "Do Next" guidance with a hero action,
