@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 namespace D4Scanner.App;
 
@@ -19,11 +21,98 @@ public static class CaptureSetup
 
     static readonly string[] GameCandidates =
     {
-        @"D:\Games\Blizzard\Diablo IV", @"C:\Program Files (x86)\Diablo IV",
-        @"C:\Program Files\Diablo IV", @"C:\Games\Diablo IV", @"C:\Program Files (x86)\Battle.net\Diablo IV",
+        @"C:\Program Files (x86)\Diablo IV", @"C:\Program Files\Diablo IV", @"C:\Games\Diablo IV",
+        @"D:\Games\Blizzard\Diablo IV", @"C:\Program Files (x86)\Battle.net\Diablo IV",
     };
 
-    public static string? GameDir() => GameCandidates.FirstOrDefault(d => File.Exists(Path.Combine(d, "Diablo IV.exe")));
+    /// <summary>Locate the Diablo IV install across every launcher / drive — Battle.net (and any installer that
+    /// writes an Uninstall entry) via the registry, Steam via its library folders, then common fixed paths and a
+    /// per-drive sweep of common folders. Works regardless of Battle.net vs Steam and custom install drives.</summary>
+    public static string? GameDir() =>
+        DetectGameDirs().Distinct(StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(d => !string.IsNullOrEmpty(d) && File.Exists(Path.Combine(d, "Diablo IV.exe")));
+
+    static List<string> DetectGameDirs()
+    {
+        var dirs = new List<string>();
+
+        // 1) Windows Uninstall registry — Battle.net writes "Diablo IV" here with its InstallLocation; most
+        //    reliable and covers custom install drives/folders.
+        foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+            foreach (var path in new[]
+            {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            })
+                try
+                {
+                    using var list = hive.OpenSubKey(path);
+                    if (list == null) continue;
+                    foreach (var sub in list.GetSubKeyNames())
+                        try
+                        {
+                            using var ik = list.OpenSubKey(sub);
+                            if (ik?.GetValue("DisplayName") is string name && name.Contains("Diablo IV", StringComparison.OrdinalIgnoreCase)
+                                && ik.GetValue("InstallLocation") is string loc && loc.Length > 0)
+                                dirs.Add(loc);
+                        }
+                        catch { }
+                }
+                catch { }
+
+        // 2) Steam — find Steam, read its library folders, and check each for the "Diablo IV" app folder.
+        foreach (var lib in SteamLibraries())
+            dirs.Add(Path.Combine(lib, "steamapps", "common", "Diablo IV"));
+
+        // 3) common fixed paths + a per-drive sweep of common install folders
+        dirs.AddRange(GameCandidates);
+        dirs.AddRange(DriveCandidates());
+        return dirs;
+    }
+
+    static List<string> SteamLibraries()
+    {
+        var libs = new List<string>();
+        string? steam = null;
+        try
+        {
+            steam = Registry.GetValue(@"HKEY_CURRENT_USER\SOFTWARE\Valve\Steam", "SteamPath", null) as string
+                 ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath", null) as string;
+        }
+        catch { }
+        if (string.IsNullOrEmpty(steam)) return libs;
+        steam = steam!.Replace('/', '\\');
+        libs.Add(steam);
+        try
+        {
+            var vdf = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
+            if (File.Exists(vdf))
+                foreach (Match m in Regex.Matches(File.ReadAllText(vdf), "\"path\"\\s*\"([^\"]+)\""))
+                    libs.Add(m.Groups[1].Value.Replace(@"\\", @"\"));
+        }
+        catch { }
+        return libs;
+    }
+
+    static List<string> DriveCandidates()
+    {
+        var outp = new List<string>();
+        DriveInfo[] drives;
+        try { drives = DriveInfo.GetDrives(); } catch { return outp; }
+        string[] subs =
+        {
+            @"Program Files (x86)\Diablo IV", @"Program Files\Diablo IV", @"Games\Diablo IV", @"Diablo IV",
+            @"Games\Blizzard\Diablo IV", @"Blizzard\Diablo IV",
+            @"SteamLibrary\steamapps\common\Diablo IV", @"Steam\steamapps\common\Diablo IV",
+            @"Games\Steam\steamapps\common\Diablo IV", @"Program Files (x86)\Steam\steamapps\common\Diablo IV",
+        };
+        foreach (var d in drives)
+        {
+            try { if (!d.IsReady || d.DriveType != DriveType.Fixed) continue; } catch { continue; }
+            foreach (var sub in subs) outp.Add(Path.Combine(d.RootDirectory.FullName, sub));
+        }
+        return outp;
+    }
 
     /// <summary>True if saapi64.dll is somewhere Diablo IV will find it (game folder, System32, or our PATH bin).</summary>
     public static bool Installed()
