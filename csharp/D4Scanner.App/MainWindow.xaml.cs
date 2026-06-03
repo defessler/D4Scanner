@@ -679,6 +679,24 @@ public partial class MainWindow : Window
             if (dupLabels.Contains(g.Name)) { int n = seen.GetValueOrDefault(g.Name) + 1; seen[g.Name] = n; label = $"{g.Name} {n}"; }
             sections.Add(new Section { Key = "gear:" + gi, Label = label, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
         }
+
+        // give the doll a tile for any worn slot whose target is a UNIQUE with no affix group (so every
+        // equipment slot shows, matching the in-game character screen — not just the affix-rolled ones)
+        var coveredKeys = new HashSet<string>(sections.Where(s => s.Gear != null).Select(s => SlotKey(s.Label)));
+        var liveNow = EffectiveLive();
+        foreach (var u in _target?.Uniques ?? new())
+        {
+            var sk = SlotKey(u.Slot ?? "");
+            if (sk.Length == 0 || coveredKeys.Contains(sk)) continue;
+            coveredKeys.Add(sk);
+            string slotLabel = string.IsNullOrEmpty(u.Slot) ? u.Name : char.ToUpperInvariant(u.Slot![0]) + u.Slot[1..];
+            var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.SlotBaseName(it.Slot) == DiffEngine.SlotBaseName(u.Slot ?? ""));
+            bool have = liveNow.Gear.Any(it => DiffEngine.PhraseMatch(u.Name, it.Name));
+            var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
+            if (eq != null) grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
+            sections.Add(new Section { Key = "uni:" + sk, Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
+        }
+
         foreach (var c in r.Categories)
             if (c.Id != "gear")
                 sections.Add(new Section { Key = "cat:" + c.Id, Label = ShortName(c.Id), Matched = c.Matched, Total = c.Total, Under = c.Under, Cat = c });
