@@ -174,9 +174,14 @@ When the gear parser misreads, update the regexes in `parser/d4_gear_capture.py`
 
 ## Status
 
-- ✅ **Live C# app** (`csharp/D4Scanner.App`) — WPF window tails the log + shows per-slot have-vs-need
-  with rolled values; **per-affix value thresholds** flag under-rolled affixes (header slider). The
-  primary front-end now (the HTML tracker still works for the offline/report flow).
+- ✅ **Live C# app** (`csharp/D4Scanner.App`) — **the primary product** (see `csharp/README.md`). A WPF
+  window that tails the log and shows a Diablo-IV-style **paper doll** beside an impact-ordered **"Do
+  Next"** plan: real item icons from your own install, in-app Maxroll import, one-click capture-DLL
+  install, vision capture, hover/pin compare with best-owned **substitutes**, **recommended activities**,
+  **loot-filter export**, keyboard shortcuts + zoom, and a first-run setup checklist. Per-affix value
+  thresholds flag under-rolled affixes (header slider). Shipped as a self-contained **single-file .exe**
+  on each `v*` tag — https://github.com/defessler/D4Scanner/releases. (The Python/HTML pipeline below
+  still works for the offline/report flow.)
 - ✅ Gear parser — verified on **real live D4 gear**; hardened against menu/map noise + entities; equipped-only
 - ✅ Capture — two routes, both **off the game folder**: SAAPI shim (default, confirmed loading in live D4)
   and the NVDA add-on (alternative, no forged DLL)
