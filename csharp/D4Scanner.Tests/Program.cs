@@ -86,6 +86,45 @@ Check("Steps: IMPROVE for the under-rolled affix", steps.Any(s => s.Verb == "IMP
 Check("Steps: FIND for the missing unique", steps.Any(s => s.Verb == "FIND"));
 Check("Steps: impact-ordered by tier", steps.Select(s => s.Tier).SequenceEqual(steps.Select(s => s.Tier).OrderBy(t => t)));
 
+// ---- GearParser: the seasonally-fragile TTS parser, against the canonical sample log fixture ----
+var sampleLog = Path.Combine(AppContext.BaseDirectory, "sample_tts.log");
+Check("sample_tts.log fixture present", File.Exists(sampleLog));
+if (File.Exists(sampleLog))
+{
+    var lb = LogWatcher.BuildFromFile(sampleLog, equippedOnly: false);
+    Eq("Parser: 5 items parsed", 5, lb.Gear.Count);
+
+    Item? Slot(string s) => lb.Gear.FirstOrDefault(g => g.Slot == s);
+    var helm = Slot("helm");
+    Check("Parser: helm parsed", helm != null);
+    if (helm != null)
+    {
+        Eq("Parser: helm name title-cased", "Archon Spellblade", helm.Name);
+        Eq("Parser: helm rarity Legendary", "Legendary", helm.Rarity ?? "");
+        Eq("Parser: helm item power 780", 780, helm.ItemPower ?? 0);
+        Eq("Parser: helm masterwork 4", 4, helm.MasterworkRank ?? 0);
+        Eq("Parser: helm temper used 2", 2, helm.TemperUsed ?? 0);
+        Eq("Parser: helm requires level 60", 60, helm.RequiresLevel ?? 0);
+        Eq("Parser: helm 4 affixes", 4, helm.Affixes.Count);
+        var life = helm.Affixes.FirstOrDefault(a => a.Text.Contains("Maximum Life"));
+        Check("Parser: helm has Maximum Life affix", life != null);
+        if (life != null)
+        {
+            Eq("Parser: Maximum Life value 1540", 1540d, life.Value ?? 0);
+            Eq("Parser: Maximum Life range min 1300", 1300d, life.Min ?? 0);
+            Eq("Parser: Maximum Life range max 1600", 1600d, life.Max ?? 0);
+            Check("Parser: Maximum Life is not a percent", !life.IsPercent);
+        }
+        var cdr = helm.Affixes.FirstOrDefault(a => a.Text.Contains("Cooldown"));
+        Check("Parser: Cooldown Reduction flagged percent", cdr != null && cdr.IsPercent);
+    }
+    Check("Parser: apostrophe name lower-cased after '", lb.Gear.Any(g => g.Name.Contains("Sorcerer's")));
+    var chest = Slot("chest");
+    Check("Parser: chest unique (Raiment)", chest != null && chest.IsUnique && chest.Name.Contains("Raiment"));
+    var ring = Slot("ring");
+    Check("Parser: ring mythic + ancestral (Tal Rasha's)", ring != null && ring.IsMythic && ring.IsUnique && ring.IsAncestral && ring.Name.Contains("Tal Rasha"));
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

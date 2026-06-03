@@ -12,4 +12,9 @@
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- the canonical TTS regression fixture, copied next to the test exe so the path is stable -->
+    <None Include="..\..\samples\sample_tts.log" Link="sample_tts.log" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

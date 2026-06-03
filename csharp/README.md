@@ -78,8 +78,10 @@ that asserts and exits non-zero on failure, mirroring the JS `tracker/diff.test.
 ```powershell
 dotnet run --project csharp\D4Scanner.Tests
 ```
-Covers `Normalize` / `PhraseMatch` / `SlotBaseName`, `ScoreSlot` / `AffixMet`, full `DiffEngine.Diff`
-(met + under-rolled + missing), and `BuildGuide.Steps` ordering/verbs.
+50 assertions covering `Normalize` / `PhraseMatch` / `SlotBaseName`, `ScoreSlot` / `AffixMet`, full
+`DiffEngine.Diff` (met + under-rolled + missing), `BuildGuide.Steps` ordering/verbs, and the fragile
+**GearParser** against `samples/sample_tts.log` (names, rarity/slot, item power, masterwork/temper,
+affix values + ranges + percent, unique/mythic/ancestral flags).
 
 ## Status
 

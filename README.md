@@ -167,7 +167,7 @@ S12 PTR.
 
 ```powershell
 node tracker\diff.test.js                      # 25 assertions on the matcher + sample diff (JS)
-dotnet run --project csharp\D4Scanner.Tests    # 31 assertions on the C# Core (diff + Do-Next guide)
+dotnet run --project csharp\D4Scanner.Tests    # 50 assertions on the C# Core (diff + Do-Next guide + gear parser)
 ```
 Blizzard changes the voiced tooltip **format most seasons** (and broke DLL loading on the S12 PTR).
 When the gear parser misreads, update the regexes in `parser/d4_gear_capture.py`; keep
