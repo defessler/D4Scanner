@@ -440,6 +440,7 @@ public partial class MainWindow : Window
                 _targetPath = fp; _lastImportInput = null; _lastUrl = null;   // switched build: source comes from its own metadata
                 _pinned.Clear(); _focusKey = null;
                 SaveSettings(); ReloadTarget(); ApplyProfileUi(); Render();
+                Toast($"Switched to  {name}");
             };
             BuildsList.Items.Add(item);
         }
@@ -486,6 +487,7 @@ public partial class MainWindow : Window
             Render();
             Status.Text = $"imported: {t.Name}" + (t.Profile != null ? $" [{t.Profile}]" : "")
                         + $" ({t.Gear.Count} gear, {t.Uniques.Count} uniques)";
+            Toast($"Imported  {t.Name}");
         }
         catch (Exception ex)
         {
@@ -541,6 +543,7 @@ public partial class MainWindow : Window
             var res = await VisionCapture.CaptureAsync(d.FileNames, key!, null, s => Dispatcher.Invoke(() => Status.Text = s));
             _vision = res; SaveVision(); Render();
             Status.Text = $"vision: {res.Skills.Count} skills, {res.Paragon.Count} boards, {res.Aspects.Count} aspects";
+            Toast($"Captured  {res.Skills.Count} skills · {res.Paragon.Count} boards · {res.Aspects.Count} aspects");
         }
         catch (Exception ex)
         {
@@ -784,7 +787,8 @@ public partial class MainWindow : Window
             File.WriteAllText(dlg.FileName, LootFilter.Markdown(_target));
             var jsonPath = Path.ChangeExtension(dlg.FileName, ".companion.json");
             File.WriteAllText(jsonPath, JsonSerializer.Serialize(LootFilter.CompanionPreset(_target), new JsonSerializerOptions { WriteIndented = true }));
-            MessageBox.Show($"Saved:\n  {dlg.FileName}\n  {jsonPath}", "Loot filter exported", MessageBoxButton.OK, MessageBoxImage.Information);
+            Status.Text = "exported: " + dlg.FileName;
+            Toast("Loot filter exported");
         }
         catch (Exception e) { MessageBox.Show("Export failed: " + e.Message, "Export", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
@@ -797,6 +801,28 @@ public partial class MainWindow : Window
         MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
         btn.IsEnabled = true; btn.Content = prev; Render();
+    }
+
+    // transient, non-blocking confirmation (bottom-center, auto-fades). Use instead of MessageBox for routine success.
+    void Toast(string msg)
+    {
+        var card = new Border
+        {
+            Background = B("#20222A"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 9, 18, 10), Margin = new Thickness(0, 6, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Center, Opacity = 0, Child = TB(msg, Ink, 13, true),
+        };
+        ToastHost.Children.Add(card);
+        card.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2400) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(280));
+            fade.Completed += (_, _) => { if (ToastHost.Children.Contains(card)) ToastHost.Children.Remove(card); };
+            card.BeginAnimation(OpacityProperty, fade);
+        };
+        timer.Start();
     }
 
     Brush VerbColor(string verb) => verb switch
@@ -906,9 +932,15 @@ public partial class MainWindow : Window
     FrameworkElement? ActivitiesPanel(DiffReport r)
     {
         var acts = Activities.Recommend(r);
-        if (acts.Count == 0) return null;
         var sp = new StackPanel();
         sp.Children.Add(TBs("RECOMMENDED ACTIVITIES", Gold, 13, true, new Thickness(0, 0, 0, 9)));
+        if (acts.Count == 0)
+        {
+            var none = TB("You're set on loot — nothing specific to farm right now. Remaining steps are crafting & equipping.", Soft, 12.5, false);
+            none.TextWrapping = TextWrapping.Wrap;
+            sp.Children.Add(none);
+            return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
+        }
         foreach (var a in acts)
         {
             var row = new StackPanel { Margin = new Thickness(0, 0, 0, 9) };
@@ -1246,6 +1278,19 @@ public partial class MainWindow : Window
     {
         if (s.Gear == null) return;
         var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+        // adaptive placement: slots near the right edge open their card to the LEFT so it doesn't clip off-screen
+        if (target is FrameworkElement fe)
+        {
+            try
+            {
+                var pt = fe.TransformToAncestor(this).Transform(new Point(0, 0));
+                bool nearRight = pt.X + fe.ActualWidth + 460 > ActualWidth;   // ~460 = compare-card width budget
+                _hoverPopup.Placement = nearRight
+                    ? System.Windows.Controls.Primitives.PlacementMode.Left
+                    : System.Windows.Controls.Primitives.PlacementMode.Right;
+            }
+            catch { /* not yet in the visual tree — keep default Right */ }
+        }
         _hoverPopup.PlacementTarget = target;
         _hoverPopup.Child = new Border
         {
@@ -1281,7 +1326,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
-        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 200;
+        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 200; nm.ToolTip = name;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1299,14 +1344,20 @@ public partial class MainWindow : Window
         {
             Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
             Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
-            BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(1),
+            BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(pinned ? 1.5 : 1),
             Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = "hover to compare · click to pin",
+            ToolTip = pinned ? "pinned · click to unpin" : "hover to compare · click to pin",
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
         b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };
         b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; _hoverPopup.IsOpen = false; };
-        b.MouseLeftButtonUp += (_, _) => { if (!_pinned.Remove(s.Key)) _pinned.Add(s.Key); _hoverPopup.IsOpen = false; Render(); };
+        b.MouseLeftButtonUp += (_, _) =>
+        {
+            bool wasPinned = _pinned.Remove(s.Key);
+            if (!wasPinned) _pinned.Add(s.Key);
+            _hoverPopup.IsOpen = false; Render();
+            Toast(wasPinned ? $"Unpinned  {s.Label}" : $"Pinned  {s.Label}");
+        };
         return b;
     }
 
