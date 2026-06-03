@@ -136,7 +136,7 @@ public partial class MainWindow : Window
         SetUrlText("");   // start empty with the placeholder; the loaded build shows in the header
         ImportBtn.Click += async (_, _) => await DoImport();
         VisionBtn.Click += async (_, _) => await DoVision();
-        TargetBtn.Click += (_, _) => PickTarget();
+        TargetBtn.Click += (_, _) => ShowBuilds();
         LogBtn.Click += (_, _) => PickLog();
         RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); };
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
@@ -411,6 +411,44 @@ public partial class MainWindow : Window
         if (d.ShowDialog() == true) { _targetPath = d.FileName; SaveSettings(); ReloadTarget(); Render(); }
     }
 
+    string BuildsDir => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "builds");
+    static string SafeFile(string? name)
+    {
+        var s = new string((name ?? "build").Select(c => char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' ? c : '_').ToArray()).Trim();
+        return s.Length == 0 ? "build" : s;
+    }
+
+    // dropdown of saved builds — switch which build you're comparing against (plus an "open a file" option)
+    void ShowBuilds()
+    {
+        BuildsList.Items.Clear();
+        var files = Directory.Exists(BuildsDir) ? Directory.GetFiles(BuildsDir, "*.json").ToList() : new List<string>();
+        if (_targetPath != null && File.Exists(_targetPath) && !files.Any(f => string.Equals(f, _targetPath, StringComparison.OrdinalIgnoreCase)))
+            files.Insert(0, _targetPath);   // include an active build saved outside the builds dir (e.g. a legacy target.json)
+        foreach (var f in files)
+        {
+            string name;
+            try { name = JsonSerializer.Deserialize<TargetBuild>(File.ReadAllText(f), D4Scanner.Core.Json.Opts)?.Name ?? Path.GetFileNameWithoutExtension(f); }
+            catch { name = Path.GetFileNameWithoutExtension(f); }
+            bool active = string.Equals(f, _targetPath, StringComparison.OrdinalIgnoreCase);
+            var item = new ListBoxItem { Content = TB((active ? "● " : "") + name, active ? Ink : Soft, 13.5, active), Tag = f };
+            var fp = f;
+            item.MouseLeftButtonUp += (_, _) =>
+            {
+                BuildsPopup.IsOpen = false;
+                if (string.Equals(fp, _targetPath, StringComparison.OrdinalIgnoreCase)) return;
+                _targetPath = fp; _lastImportInput = null; _lastUrl = null;   // switched build: source comes from its own metadata
+                _pinned.Clear(); _focusKey = null;
+                SaveSettings(); ReloadTarget(); ApplyProfileUi(); Render();
+            };
+            BuildsList.Items.Add(item);
+        }
+        var open = new ListBoxItem { Content = TB("＋ Open a .json file…", Steel, 13, false) };
+        open.MouseLeftButtonUp += (_, _) => { BuildsPopup.IsOpen = false; PickTarget(); };
+        BuildsList.Items.Add(open);
+        BuildsPopup.IsOpen = true;
+    }
+
     // Import button / Enter: import whatever the box resolves to (an autocomplete-picked slug, or free text).
     Task DoImport()
     {
@@ -433,8 +471,8 @@ public partial class MainWindow : Window
         try
         {
             var t = await MaxrollImporter.ImportAsync(input, profile, s => Dispatcher.Invoke(() => Status.Text = s));
-            var path = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "target.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Directory.CreateDirectory(BuildsDir);
+            var path = Path.Combine(BuildsDir, SafeFile(t.Name) + ".json");   // one file per build (kept for comparison switching)
             File.WriteAllText(path, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
             _target = t; _targetPath = path; _targetMtime = File.GetLastWriteTimeUtc(path);
             _lastUrl = UrlBox.Text.Trim(); _lastImportInput = input; _profile = t.Profile;
@@ -698,7 +736,13 @@ public partial class MainWindow : Window
     }
 
     // the reconstructed Maxroll URL of the build we're comparing against (null if unknown)
-    string? SourceUrl() => MaxrollImporter.BuildUrl(_lastImportInput) ?? MaxrollImporter.BuildUrl(_lastUrl);
+    string? SourceUrl()
+    {
+        var u = MaxrollImporter.BuildUrl(_lastImportInput) ?? MaxrollImporter.BuildUrl(_lastUrl);
+        if (u != null) return u;
+        var src = _target?.Source;   // a switched build carries its planner id in Source
+        return src != null && src != "maxroll" ? MaxrollImporter.BuildUrl(src) : null;
+    }
 
     void OpenSource()
     {
