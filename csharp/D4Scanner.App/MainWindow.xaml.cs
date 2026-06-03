@@ -1376,13 +1376,6 @@ public partial class MainWindow : Window
         return wp;
     }
 
-    UIElement SlotGrid(List<Section> sections)
-    {
-        var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        foreach (var s in sections) wp.Children.Add(SlotTile(s));
-        return wp;
-    }
-
     // Diablo IV character-screen layout: armor down the left, weapons/jewelry down the right,
     // build-wide categories (uniques / skills / paragon) in the middle.
     UIElement PaperDoll(List<Section> sections, string? className, int pct)
@@ -1597,24 +1590,6 @@ public partial class MainWindow : Window
         _hoverPopup.IsOpen = true;
     }
 
-    // compact pinned compare card (collected in a row so several slots compare side by side)
-    UIElement PinnedCard(Section s)
-    {
-        var g = s.Gear!;
-        var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
-        var (name, ncol, _, _, _) = WantedFor(s);
-        var inner = new StackPanel { Width = 290 };
-        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var x = TB("✕", Soft, 13, true); x.Cursor = System.Windows.Input.Cursors.Hand; x.VerticalAlignment = VerticalAlignment.Center;
-        x.MouseLeftButtonUp += (_, _) => { _pinned.Remove(s.Key); Render(); };
-        DockPanel.SetDock(x, Dock.Right); hdr.Children.Add(x);
-        hdr.Children.Add(TBs(s.Label, Ink, 13.5, true));
-        inner.Children.Add(hdr);
-        inner.Children.Add(TBs((it?.Name ?? name).ToUpperInvariant(), it != null ? RarityBrush(it.Rarity) : ncol, 12.5, true, new Thickness(0, 0, 0, 5)));
-        foreach (var i in g.Items) inner.Children.Add(EquippedRow(i));
-        return new Border { Child = inner, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 12, 14, 12), Margin = new Thickness(0, 0, 11, 11), VerticalAlignment = VerticalAlignment.Top };
-    }
-
     // a Mobalytics-style slot row: icon + (slot label / wanted item name); hover to compare, click to pin
     UIElement SlotCell(Section s, int num, bool alignRight)
     {
@@ -1657,39 +1632,6 @@ public partial class MainWindow : Window
             _hoverPopup.IsOpen = false; Render();
             Toast(wasPinned ? $"Unpinned  {s.Label}" : $"Pinned  {s.Label}");
         };
-        return b;
-    }
-
-    UIElement SlotTile(Section s)
-    {
-        var (glyph, col) = Look(s.Status);
-        bool selected = s.Key == _selectedKey;
-        double pct = s.Total > 0 ? 100.0 * s.Matched / s.Total : 0;
-
-        var sp = new StackPanel();
-        var top = new DockPanel();
-        top.Children.Add(Right(TB(s.Total > 0 ? $"{s.Matched}/{s.Total}" : "", Soft, 12.5, false)));
-        // gear slots show real item art (or a status-tinted silhouette); categories keep the diamond
-        string? eqName = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0].Name : null;
-        FrameworkElement marker = s.Gear != null ? SlotOrItemIcon(eqName, SlotKey(s.Label), col, 26)
-                                                 : TB(glyph, col, 13.5, true);
-        marker.Margin = new Thickness(0, 0, 10, 0);
-        DockPanel.SetDock(marker, Dock.Left); top.Children.Add(marker);
-        top.Children.Add(TBs(s.Label, Ink, 14, true));
-        sp.Children.Add(top);
-        sp.Children.Add(MiniBar(pct, s.Status == "missing" ? Crimson : col));
-
-        var b = new Border
-        {
-            Background = selected ? TileSel : Card,
-            BorderBrush = selected ? Gold : Edge, BorderThickness = new Thickness(selected ? 1.5 : 1),
-            CornerRadius = new CornerRadius(4), Padding = new Thickness(16, 13, 16, 14),
-            Margin = new Thickness(0, 0, 11, 11), Width = 208, Child = sp,
-            Cursor = System.Windows.Input.Cursors.Hand,
-        };
-        b.MouseEnter += (_, _) => { if (!selected) b.Background = CardHi; };
-        b.MouseLeave += (_, _) => { if (!selected) b.Background = Card; };
-        b.MouseLeftButtonUp += (_, _) => { _selectedKey = s.Key; Render(); };
         return b;
     }
 
