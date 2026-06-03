@@ -1535,7 +1535,7 @@ public partial class MainWindow : Window
         var (_, scol) = Look(s.Status);
         var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
         var rc = ((SolidColorBrush)rcol).Color;
-        const double box = 68, art = 54;                       // bigger, square — like a D4 inventory slot
+        const double box = 102, art = 81;                      // large, square — like a D4 inventory slot
         var grid = new Grid { Width = box, Height = box };
 
         // recessed slot: dark metallic outer frame over a rarity-lit radial fill (brighter toward the centre)
@@ -1556,18 +1556,18 @@ public partial class MainWindow : Window
         {
             var badge = new Border
             {
-                Background = scol, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1),
+                Background = scol, CornerRadius = new CornerRadius(4), Padding = new Thickness(7, 0, 7, 2),
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, -5, -6), Child = TB(num.ToString(), B("#0C0C0F"), 11, true),
+                Margin = new Thickness(0, 0, -6, -7), Child = TB(num.ToString(), B("#0C0C0F"), 13, true),
             };
             grid.Children.Add(badge);
         }
         if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)   // an upgrade is sitting in your bags
             grid.Children.Add(new Border
             {
-                Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1),
+                Background = Green, CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0, 6, 2),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(-5, -6, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
+                Margin = new Thickness(-6, -7, 0, 0), Child = TB("↑", B("#0C0C0F"), 13, true),
             });
         return grid;
     }
@@ -1617,7 +1617,7 @@ public partial class MainWindow : Window
         text.Children.Add(lbl); text.Children.Add(nm);
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 276 };
+        var dp = new DockPanel { Width = 310 };
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);
