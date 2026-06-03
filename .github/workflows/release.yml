@@ -25,25 +25,31 @@ jobs:
       - name: Build + sign capture shim (saapi64.dll)
         shell: pwsh
         run: |
+          # A self-signed signature reads as "untrusted" on the runner — that's expected; the app trusts the
+          # embedded .cer at install time. We just need the dll signed with the cert whose public key is exported.
+          $ok = $false
           try {
             $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
             $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
             if (-not $vs) { throw 'no MSVC C++ tools on runner' }
             $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
             Push-Location dll
-            cmd /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && cl /nologo /O2 /EHsc /LD /DUNICODE /D_UNICODE saapi64.cpp /Fe:saapi64.dll"
-            if (-not (Test-Path saapi64.dll)) { throw 'cl produced no dll' }
-            $cert = New-SelfSignedCertificate -Type CodeSigning -Subject 'CN=D4Scanner TTS Shim' `
-              -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
-            Export-Certificate -Cert $cert -FilePath d4scanner-tts.cer | Out-Null
-            Set-AuthenticodeSignature -FilePath saapi64.dll -Certificate $cert -HashAlgorithm SHA256 | Out-Null
-            if ((Get-AuthenticodeSignature saapi64.dll).Status -ne 'Valid') { throw 'signature not valid' }
-            Pop-Location
+            try {
+              cmd /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && cl /nologo /O2 /EHsc /LD /DUNICODE /D_UNICODE saapi64.cpp /Fe:saapi64.dll"
+              if (-not (Test-Path saapi64.dll)) { throw 'cl produced no dll' }
+              $cert = New-SelfSignedCertificate -Type CodeSigning -Subject 'CN=D4Scanner TTS Shim' `
+                -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+              Export-Certificate -Cert $cert -FilePath d4scanner-tts.cer | Out-Null
+              Set-AuthenticodeSignature -FilePath saapi64.dll -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+              $ok = $true
+            } finally { Pop-Location }
             Write-Host 'Built + signed saapi64.dll fresh from source.'
           } catch {
-            Write-Host "::warning::Shim rebuild failed ($_) — falling back to the committed prebuilt dll/cert."
-            git checkout -- dll/saapi64.dll dll/d4scanner-tts.cer
+            Write-Host "::warning::Shim rebuild failed ($_) — using the committed prebuilt dll/cert."
           }
+          if (-not $ok) { git checkout -- dll/saapi64.dll dll/d4scanner-tts.cer }
+          if (-not (Test-Path dll/saapi64.dll)) { throw 'no saapi64.dll available to embed' }
+          exit 0
 
       - name: Publish single-file self-contained exe
         shell: pwsh
