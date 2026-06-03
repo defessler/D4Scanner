@@ -708,6 +708,23 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    // export the target as a loot filter: a readable markdown checklist + a Diablo4Companion-shaped JSON
+    void ExportLootFilter()
+    {
+        if (_target == null) return;
+        var safe = new string((_target.Name ?? "build").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        var dlg = new SaveFileDialog { FileName = safe + "-loot-filter.md", Filter = "Markdown|*.md|All files|*.*", Title = "Export loot filter" };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            File.WriteAllText(dlg.FileName, LootFilter.Markdown(_target));
+            var jsonPath = Path.ChangeExtension(dlg.FileName, ".companion.json");
+            File.WriteAllText(jsonPath, JsonSerializer.Serialize(LootFilter.CompanionPreset(_target), new JsonSerializerOptions { WriteIndented = true }));
+            MessageBox.Show($"Saved:\n  {dlg.FileName}\n  {jsonPath}", "Loot filter exported", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception e) { MessageBox.Show("Export failed: " + e.Message, "Export", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+
     // shared install action for the banner button and the footer button
     void RunInstall(Button btn)
     {
@@ -867,6 +884,9 @@ public partial class MainWindow : Window
         var back = TB("← Overview", Steel, 13, false); back.Cursor = System.Windows.Input.Cursors.Hand; back.VerticalAlignment = VerticalAlignment.Center;
         back.MouseLeftButtonUp += (_, _) => { _stepsView = false; Render(); };
         DockPanel.SetDock(back, Dock.Right); hdr.Children.Add(back);
+        var exp = TB("⤓ Export loot filter", Steel, 12.5, false); exp.Cursor = System.Windows.Input.Cursors.Hand; exp.VerticalAlignment = VerticalAlignment.Center; exp.Margin = new Thickness(0, 0, 18, 0);
+        exp.MouseLeftButtonUp += (_, _) => ExportLootFilter();
+        DockPanel.SetDock(exp, Dock.Right); hdr.Children.Add(exp);
         hdr.Children.Add(TBs("NEXT STEPS", Gold, 16, true));
         root.Children.Add(hdr);
 
