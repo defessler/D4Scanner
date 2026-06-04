@@ -251,6 +251,48 @@ public static class CaptureSetup
         "  • Gameplay → 'Advanced Tooltip Information' = ON  (Game Language = English)\n\n" +
         "Then relaunch Diablo IV and hover an equipped item — the scanner will start filling in.";
 
+    /// <summary>Full removal: delete saapi64.dll from all install locations, remove its cert from the
+    /// user Root store (guarded to CN=D4Scanner TTS Shim only), and strip BinDir from User PATH.</summary>
+    public static (bool ok, string msg) Uninstall()
+    {
+        if (Process.GetProcessesByName("Diablo IV").Length > 0 || Process.GetProcessesByName("Diablo IV Launcher").Length > 0)
+            return (false, "Diablo IV is running, which locks the DLL. Fully quit the game, then try again.");
+
+        var removed = new List<string>();
+        var failed  = new List<string>();
+
+        // 1) delete DLL from all locations (best-effort)
+        var places = new List<string> { Path.Combine(BinDir, "saapi64.dll"), Path.Combine(System32, "saapi64.dll") };
+        var g = GameDir(); if (g != null) places.Add(Path.Combine(g, "saapi64.dll"));
+        foreach (var p in places)
+        {
+            if (!File.Exists(p)) continue;
+            try { File.Delete(p); removed.Add(p); }
+            catch (Exception e) { failed.Add($"{p} ({e.Message})"); }
+        }
+
+        // 2) remove cert — strictly only the D4Scanner TTS Shim cert
+        try
+        {
+            using var store = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
+            store.Open(OpenFlags.ReadWrite);
+            var toRemove = store.Certificates.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>()
+                .Where(c => string.Equals(c.Subject, "CN=D4Scanner TTS Shim", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var cert in toRemove) { store.Remove(cert); removed.Add("certificate"); }
+        }
+        catch (Exception e) { failed.Add($"cert ({e.Message})"); }
+
+        // 3) strip BinDir from User PATH
+        RemoveFromUserPath(BinDir);
+
+        if (failed.Count > 0)
+            return (false, $"Partially removed. Could not delete:\n{string.Join("\n", failed)}\n\nRemoved:\n{string.Join("\n", removed)}");
+        if (removed.Count == 0)
+            return (true, "Nothing found to remove — TTS capture was already uninstalled.");
+        return (true, $"TTS capture removed:\n{string.Join("\n", removed)}");
+    }
+
     static void AddToUserPath(string dir)
     {
         try
@@ -258,6 +300,17 @@ public static class CaptureSetup
             var p = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
             if (!p.Split(';').Contains(dir, StringComparer.OrdinalIgnoreCase))
                 Environment.SetEnvironmentVariable("Path", p.TrimEnd(';') + ";" + dir, EnvironmentVariableTarget.User);
+        }
+        catch { }
+    }
+
+    static void RemoveFromUserPath(string dir)
+    {
+        try
+        {
+            var p = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
+            var parts = p.Split(';').Where(s => !string.Equals(s.Trim(), dir.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            Environment.SetEnvironmentVariable("Path", string.Join(";", parts), EnvironmentVariableTarget.User);
         }
         catch { }
     }
