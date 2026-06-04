@@ -91,6 +91,7 @@ public class LiveBuild
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
     public string? Mercenary { get; set; }
+    /// <summary>Charm items seen in talisman slots.</summary>
     public List<Item> Charms { get; set; } = new();
     public List<Item> Seals { get; set; } = new();
     /// <summary>Rune items seen in stash/bags.</summary>
