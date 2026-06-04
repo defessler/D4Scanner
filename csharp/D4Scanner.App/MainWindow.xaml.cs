@@ -2272,20 +2272,22 @@ public partial class MainWindow : Window
         var backdropPortrait = LoadCharacterImage();
         if (backdropPortrait != null)
         {
-            backdropPortrait.Stretch = Stretch.Uniform;
+            // UniformToFill fills the entire container so the opacity mask has edge content to fade.
+            // VerticalAlignment.Top keeps the character's head anchored at the top of the space.
+            backdropPortrait.Stretch = Stretch.UniformToFill;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Top;
             backdropPortrait.Opacity = 0.55;
-            // Centre at Y=0.55 (below the character's torso) so the top edge (Y=0) sits inside the
-            // fading band rather than in the fully-opaque core — produces a smooth gradient fade at the top.
+            // Gradient centre at Y=0.55 (character torso) so the top edge is inside the fading band
+            // and all four edges dissolve smoothly rather than cutting off hard.
             var mask = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.55), Center = new Point(0.5, 0.55), RadiusX = 0.65, RadiusY = 0.85,
+                GradientOrigin = new Point(0.5, 0.50), Center = new Point(0.5, 0.50), RadiusX = 0.58, RadiusY = 0.68,
             };
             mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.28));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, 0, 0, 0), 0.60));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x18, 0, 0, 0), 0.85));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.26));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x90, 0, 0, 0), 0.52));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x20, 0, 0, 0), 0.76));
             mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
             backdropPortrait.OpacityMask = mask;
             Grid.SetRowSpan(backdropPortrait, 2);
