@@ -137,7 +137,12 @@ public sealed class LogWatcher : IDisposable
             .SelectMany(g =>
             {
                 int max = overrideMax > 0 ? overrideMax : (g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1);
-                return g.Reverse().Take(max);   // Reverse: last-in = most recently scanned
+                // Reverse (most-recently-scanned first) then deduplicate by item name before taking N.
+                // Without dedup: hovering the same ring twice fills both ring slots with the same item.
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return g.Reverse()
+                        .Where(it => seen.Add(it.RawName.Length > 0 ? it.RawName : it.Name))
+                        .Take(max);
             })
             .ToList();
     }
