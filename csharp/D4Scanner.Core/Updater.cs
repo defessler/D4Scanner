@@ -45,12 +45,22 @@ public static class Updater
     /// <summary>Returns the latest release tag (e.g. "v0.6.3"), or null on network/parse error.</summary>
     public static async Task<string?> GetLatestTagAsync()
     {
+        var info = await GetLatestReleaseInfoAsync();
+        return info?.tag;
+    }
+
+    /// <summary>Returns tag and release-notes body for the latest release, or null on error.</summary>
+    public static async Task<(string tag, string body)?> GetLatestReleaseInfoAsync()
+    {
         try
         {
             var json = await Http.GetStringAsync(
                 $"https://api.github.com/repos/{Repo}/releases/latest");
             using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.GetProperty("tag_name").GetString();
+            var root = doc.RootElement;
+            var tag  = root.GetProperty("tag_name").GetString() ?? "";
+            var body = root.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "";
+            return (tag, body);
         }
         catch { return null; }
     }

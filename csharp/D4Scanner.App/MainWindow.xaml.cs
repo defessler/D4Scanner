@@ -175,6 +175,7 @@ public partial class MainWindow : Window
     System.Threading.Timer? _updateTimer;
     string? _pendingUpdateTag;          // tag of a downloaded update ready to apply
     string? _skipUpdateVersion;         // user-chosen "remind me later" version (persisted)
+    bool _updateModalOpen;
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -197,21 +198,7 @@ public partial class MainWindow : Window
         HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         SettingsBtn.Click += (_, _) => ShowSettings();
-        CheckUpdatesBtn.Click += async (_, _) =>
-        {
-            CheckUpdatesBtn.IsEnabled = false; CheckUpdatesBtn.Content = "Checking…";
-            var latest = await Updater.GetLatestTagAsync();
-            CheckUpdatesBtn.IsEnabled = true;
-            if (latest == null) { CheckUpdatesBtn.Content = "Check failed"; return; }
-            if (Updater.IsNewer(latest, Updater.RunningVersion()))
-            {
-                CheckUpdatesBtn.Content = $"{latest} available!";
-                Toast($"{latest} is available — downloading…");
-                bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));
-                if (ok) ShowUpdateReady(latest);
-            }
-            else { CheckUpdatesBtn.Content = "Up to date ✓"; Toast("D4Scanner is up to date"); }
-        };
+        CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal();
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -249,7 +236,7 @@ public partial class MainWindow : Window
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
-        UpdateBtn.Click += (_, _) => RestartToApplyUpdate();
+        UpdateBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
@@ -1241,7 +1228,103 @@ public partial class MainWindow : Window
     {
         _pendingUpdateTag = tag;
         UpdateBtn.Visibility = Visibility.Visible;
-        Toast($"{tag} downloaded — restart to apply");
+        Toast($"{tag} downloaded — click ↑ Update to install");
+    }
+
+    async void ShowUpdateModal(string? knownTag = null)
+    {
+        if (_updateModalOpen) return;
+        _updateModalOpen = true;
+
+        var host = new Grid { Background = new SolidColorBrush(Color.FromArgb(0xB4, 0, 0, 0)) };
+        void CloseModal() { _updateModalOpen = false; RootLayer.Children.Remove(host); }
+        host.MouseLeftButtonDown += (_, e) => { if (e.Source == host) CloseModal(); };
+        RootLayer.Children.Add(host);
+
+        var sp = new StackPanel { MinWidth = 400, MaxWidth = 560 };
+
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var x = MakeLink("✕", Soft); x.FontSize = 15;
+        x.MouseLeftButtonUp += (_, _) => CloseModal();
+        DockPanel.SetDock(x, Dock.Right); hd.Children.Add(x);
+        hd.Children.Add(TBs("D4Scanner Update", Gold, 17, true));
+        sp.Children.Add(hd);
+
+        var running = Updater.RunningVersion();
+        var verLbl = TB($"Current: {running}", Soft, 12.5, false); verLbl.Margin = new Thickness(0, 0, 0, 14);
+        sp.Children.Add(verLbl);
+
+        sp.Children.Add(TB("Release Notes", Faint, 11, true));
+        var notesTB = new TextBlock { FontSize = 12.5, Foreground = Ink, TextWrapping = TextWrapping.Wrap, Text = "Loading…" };
+        var notesScroll = new ScrollViewer
+        {
+            Content = notesTB, MaxHeight = 200,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Margin = new Thickness(0, 6, 0, 16),
+        };
+        sp.Children.Add(notesScroll);
+
+        var progressRow = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 14) };
+        var progressLbl = TB("Downloading…", Soft, 12, false); progressLbl.Margin = new Thickness(0, 0, 0, 5);
+        var progressBar = new ProgressBar { Height = 8, IsIndeterminate = true };
+        progressRow.Children.Add(progressLbl); progressRow.Children.Add(progressBar);
+        sp.Children.Add(progressRow);
+
+        var btnRow = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
+        var skipBtn = new Button { Content = "Not now", FontSize = 13.5, Padding = new Thickness(14, 7, 14, 7) };
+        var installBtn = new Button { Content = "Install & Restart", FontSize = 13.5, Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary"), IsEnabled = false };
+        skipBtn.Click += (_, _) => CloseModal();
+        installBtn.Click += (_, _) => { CloseModal(); RestartToApplyUpdate(); };
+        DockPanel.SetDock(skipBtn, Dock.Left); btnRow.Children.Add(skipBtn);
+        DockPanel.SetDock(installBtn, Dock.Right); btnRow.Children.Add(installBtn);
+        sp.Children.Add(btnRow);
+
+        var panel = new Border
+        {
+            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24, 20, 24, 22), MaxWidth = 560,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+        };
+        host.Children.Add(panel);
+
+        // fetch release info async
+        var info = await Updater.GetLatestReleaseInfoAsync();
+        string? tag = knownTag ?? info?.tag;
+        string body = info?.body ?? "";
+        notesTB.Text = string.IsNullOrWhiteSpace(body) ? "(no release notes)" : body;
+
+        if (tag == null || !Updater.IsNewer(tag, running))
+        {
+            verLbl.Text = $"You are on the latest version ({running}).";
+            notesTB.Text = string.IsNullOrWhiteSpace(body) ? "(no release notes)" : body;
+            installBtn.IsEnabled = false; installBtn.Content = "Up to date";
+            return;
+        }
+
+        verLbl.Text = $"Current: {running}  →  New: {tag}";
+
+        if (Updater.FindStagedUpdate().HasValue)
+        {
+            installBtn.IsEnabled = true;
+        }
+        else
+        {
+            progressRow.Visibility = Visibility.Visible;
+            bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(tag));
+            progressRow.Visibility = Visibility.Collapsed;
+            if (ok)
+            {
+                _pendingUpdateTag = tag;
+                UpdateBtn.Visibility = Visibility.Visible;
+                installBtn.IsEnabled = true;
+            }
+            else
+            {
+                progressLbl.Text = "Download failed — check your connection and try again.";
+                progressLbl.Foreground = B("#CC3030");
+                progressRow.Visibility = Visibility.Visible;
+            }
+        }
     }
 
     void RestartToApplyUpdate()
@@ -2146,49 +2229,59 @@ public partial class MainWindow : Window
         Grid.SetColumn(center, 1); grid.Children.Add(center);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
 
-        // backdrop: character portrait (if loaded) with radial fade OR class-colour glow
+        var dollStack = new StackPanel();
+        dollStack.Children.Add(grid);
+        if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
+
+        // wrap is a 2-row Grid so the portrait backdrop bleeds behind the tab bar row too;
+        // the toggle buttons sit on top (opaque) while the portrait fades through beneath them.
         var bc = ((SolidColorBrush)ClassColor(className)).Color;
-        var outer = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        var wrap = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var backdropPortrait = LoadCharacterImage();
         if (backdropPortrait != null)
         {
-            // Full-bleed character image behind the doll, radially faded so edges dissolve
-            // before reaching the slot icons — cinematic D4 character-screen feel.
             backdropPortrait.Stretch = Stretch.UniformToFill;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
             backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
             backdropPortrait.Opacity = 0.55;
-            // Radial opacity mask: fully visible in the very centre, fades to transparent at ~50% radius
             var mask = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.38), Center = new Point(0.5, 0.38), RadiusX = 0.46, RadiusY = 0.58,
+                GradientOrigin = new Point(0.5, 0.40), Center = new Point(0.5, 0.40), RadiusX = 0.50, RadiusY = 0.62,
             };
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));       // opaque at centre
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.42));    // fully visible to 42%
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.72));  // 40% at edge
-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1)); // fully transparent
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.38));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.68));
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
             backdropPortrait.OpacityMask = mask;
-            outer.Children.Add(backdropPortrait);
+            Grid.SetRowSpan(backdropPortrait, 2);
+            wrap.Children.Add(backdropPortrait);
         }
         else
         {
-            // No portrait — fall back to class-colour glow
-            outer.Background = new RadialGradientBrush
+            var glow = new Border
             {
-                GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
-                GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+                Background = new RadialGradientBrush
+                {
+                    GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
+                    GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+                }
             };
+            Grid.SetRowSpan(glow, 2);
+            wrap.Children.Add(glow);
         }
 
-        var dollStack = new StackPanel();
-        dollStack.Children.Add(grid);
-        if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
-        outer.Children.Add(dollStack);
+        var toggle = DollToggle();
+        Grid.SetRow(toggle, 0);
+        wrap.Children.Add(toggle);
 
-        var wrap = new StackPanel();
-        wrap.Children.Add(DollToggle());
-        wrap.Children.Add(outer);
+        var dollOuter = new Grid();
+        dollOuter.Children.Add(dollStack);
+        Grid.SetRow(dollOuter, 1);
+        wrap.Children.Add(dollOuter);
+
         return wrap;
     }
 
@@ -2390,8 +2483,8 @@ public partial class MainWindow : Window
         bool pinned = _pinned.Contains(s.Key);
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        var lbl = TB(s.Label, Soft, 11.5, false);
-        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 176;
+        var lbl = TB(s.Label, Faint, 10.5, false);
+        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 38;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
