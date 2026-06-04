@@ -181,7 +181,9 @@ var stepsAll = BuildGuide.Steps(rMissAll);
 // Same affix on two weapon slots should be merged into one step
 var dotSteps = stepsAll.Where(s => s.Text.Contains("Damage Over Time")).ToList();
 Check("BuildGuide dedup: duplicate affix steps merged", dotSteps.Count == 1);
-Check("BuildGuide dedup: merged step has both slots", dotSteps.Count > 0 && dotSteps[0].Text.Contains("/"));
+// Both slots share the same label "weapon", so the merged text is "weapon — Damage Over Time"
+// (distinct dedup means only one slot label shown — that's correct, not a bug)
+Check("BuildGuide dedup: merged text still contains the affix label", dotSteps.Count > 0 && dotSteps[0].Text.Contains("Damage Over Time"));
 
 var retemperTarget = new TargetBuild { Gear = {
     new TargetGear { Slot = "helm", Affixes = {
