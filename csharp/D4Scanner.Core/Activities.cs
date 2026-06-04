@@ -24,7 +24,7 @@ public static class Activities
             .Any(g => g.Name == "Glyphs" && g.Items.Any(i => !i.Done)) ?? false;
 
         if (MissingIn("uniques"))
-            acts.Add(new("Hunt your missing uniques",
+            acts.Add(new("Hunt your missing uniques 🗡",
                 "Target-farm the relevant Tormented Bosses (use boss summoning materials), gamble that slot at the " +
                 "Purveyor of Curiosities with Obols, or run the Undercity in Nahantu for Unique drops."));
 
