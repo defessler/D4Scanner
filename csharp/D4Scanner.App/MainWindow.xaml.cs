@@ -2110,7 +2110,7 @@ public partial class MainWindow : Window
         if (_debugMode && s.Gear != null)
         {
             var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
-            string dbgTxt = it != null && it.RunewordName != null ? it.RunewordName : it != null
+            string dbgTxt = it != null
                 ? $"{it.Rarity ?? "?"} · {(it.ItemPower > 0 ? "IP " + it.ItemPower : "no IP")} · {s.Key}"
                 : $"empty · {s.Key}";
             var dbg = TB(dbgTxt, Faint, 9.5, false); dbg.TextWrapping = TextWrapping.Wrap; text.Children.Add(dbg);
