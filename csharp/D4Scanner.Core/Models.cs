@@ -48,6 +48,8 @@ public class Item
     public string? RunewordName { get; set; }
     /// <summary>Positional slot within a multi-slot category (1-based), e.g. 1 or 2 for rings. 0 = unknown.</summary>
     public int SlotPosition { get; set; }
+    /// <summary>UTC ticks when this item was last scanned from the TTS log.</summary>
+    public long LastScannedTicks { get; set; }
 }
 
 /// <summary>The D4 UI surface an item was captured from. Derived from TTS context signals.</summary>
