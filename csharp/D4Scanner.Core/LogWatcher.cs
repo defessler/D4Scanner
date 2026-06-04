@@ -23,6 +23,21 @@ public sealed class LogWatcher : IDisposable
     string _buf = "";
     System.Threading.Timer? _timer;
 
+    // Panel context state machine: tracks the active D4 UI panel from voiced navigation lines.
+    // Provides richer UiContext classification (e.g. TakeAction from Stash vs. Inventory).
+    string? _currentPanel;
+    static readonly Dictionary<string, string> PanelMarkers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Equipment"] = "Character",   ["Head"] = "Character",   ["Torso"] = "Character",
+        ["Stash"]     = "Stash",       ["Inventory"] = "Inventory",
+        ["Vendor"]    = "Vendor",      ["Purveyor of Curiosities"] = "Vendor",
+        ["BUYBACK"]   = "Vendor",      ["Paragon"] = "Paragon",
+        ["Available Points"] = "Paragon", ["Refund All"] = "Paragon",
+        ["Skill Tree"] = "Skills",     ["MODIFIERS"] = "Skills",
+        ["Talisman"] = "Talisman",     ["Seals"] = "Seals",
+        ["Charms"] = "Charms",
+    };
+
     public LiveBuild Build { get; private set; } = new();
     public event Action<LiveBuild>? Updated;
 
@@ -58,8 +73,13 @@ public sealed class LogWatcher : IDisposable
             bool changed = false;
             for (int i = 0; i < lines.Length - 1; i++)
             {
+                // Panel state machine: update current panel from navigation lines
+                var rawLine = GearParser.Clean(lines[i]);
+                if (PanelMarkers.TryGetValue(rawLine, out var panel)) _currentPanel = panel;
+
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
+                item.UiPanel = _currentPanel;   // attach the active panel to the item for richer context
                 ClassifyContext(item, lines, i, lines.Length - 1);
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
                 if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }

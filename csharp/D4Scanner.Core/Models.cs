@@ -38,6 +38,7 @@ public class Item
     public bool IsComparison { get; set; }   // "Properties lost when equipped:" seen — bag/stash item, NOT worn
     public bool FromCharPanel { get; set; }  // preceded by a character-panel slot header — definitively worn
     public UiContext Context { get; set; }   // classified surface (WornGear / BagItem / etc.)
+    public string? UiPanel { get; set; }    // active D4 UI panel when this item was hovered (Character/Stash/Vendor/…)
     public List<Affix> Affixes { get; set; } = new();
     public List<string> PowerText { get; set; } = new();
     /// <summary>Rune codes found in sockets, e.g. ["Neo", "Vex"] from "NeoVex (200/100) - Graceful Heart".</summary>
