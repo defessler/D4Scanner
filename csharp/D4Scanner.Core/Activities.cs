@@ -38,7 +38,7 @@ public static class Activities
 
         if (needTemper)
             acts.Add(new("Temper at the Blacksmith",
-                "Add the build's manual affixes via Tempering (limited rerolls per item). Stock Tempering Manuals from Whisper caches and Helltides."));
+                "Add the build's manual affixes via Tempering (limited rerolls per item — check the counter before tempering). Stock Tempering Manuals from Whisper caches and Helltides."));
 
         if (wantSockets)
             acts.Add(new("Socket gems & runes (Jeweler)",
