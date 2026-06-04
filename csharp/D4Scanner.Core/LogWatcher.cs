@@ -99,6 +99,13 @@ public sealed class LogWatcher : IDisposable
     /// lookahead. All decisions are driven by TTS text content — no memory reads, no cursor position needed.</summary>
     static void ClassifyContext(Item item, string[] lines, int i, int lineCount)
     {
+        // Panel fast-path: if the active UI panel is known, pre-classify before any text signal.
+        // Stash and Vendor items are always non-equipped; skip the lookahead scan entirely.
+        if (item.UiPanel == "Stash"  && !item.FromCharPanel)
+            { item.Equipped = false; item.Context = UiContext.StashItem; return; }
+        if (item.UiPanel == "Vendor" && !item.FromCharPanel)
+            { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
+
         // Fast path 1: "Properties lost when equipped:" was seen inside the body — this is a bag/stash
         // comparison item even if the EQUIPPED marker appeared before its name.
         if (item.IsComparison)
