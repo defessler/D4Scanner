@@ -155,6 +155,7 @@ public partial class MainWindow : Window
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
     readonly HashSet<string> _pinned = new();   // slot keys pinned for side-by-side compare
+    readonly Dictionary<string, Section> _inventorySections = new();  // synthetic sections for pinned inventory items
     readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
 
@@ -977,7 +978,8 @@ public partial class MainWindow : Window
         // compare deck (in the space freed by the two-column layout): pinned slots, each a FULL side-by-side
         // compare. A header lets you clear all at once; each panel can be unpinned or focused.
         var pinnedSecs = _pinned.ToList()
-            .Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null))
+            .Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null)
+                      ?? (_inventorySections.TryGetValue(k, out var inv) ? inv : null))
             .Where(p => p != null).Cast<Section>().ToList();
         if (pinnedSecs.Count > 0)
         {
@@ -1413,66 +1415,183 @@ public partial class MainWindow : Window
 
     // ---- Item Inventory Modal ----
     // Shows all scanned items (equipped + bag) with slot, name, age, and a delete button per entry.
+    // Build a synthetic Section from a raw scanned Item so it can be hovered / pinned.
+    Section ItemToSection(Item item)
+    {
+        var key = $"inv:{DiffEngine.Normalize(item.Name)}:{item.Slot}";
+        var grp = new Group { Name = item.Slot ?? "item", Kind = "gear" };
+        foreach (var aff in item.Affixes)
+        {
+            double? pct = null;
+            if (aff.Min.HasValue && aff.Max.HasValue && aff.Max > aff.Min)
+                pct = Math.Max(0, Math.Min(100, ((aff.Value ?? 0) - aff.Min.Value) / (aff.Max.Value - aff.Min.Value) * 100));
+            string val = aff.Value.HasValue
+                ? (aff.IsPercent ? $"+{aff.Value:0.#}%" : aff.IsMultiplier ? $"x{aff.Value:0.##}" : $"+{aff.Value:#,0.##}")
+                : "";
+            string need = aff.Min.HasValue ? $"≥ {aff.Min:#,0.##}" : pct.HasValue ? $"{pct:0}% roll" : "";
+            grp.Items.Add(new ReqItem
+            {
+                Label = aff.Text, Val = val, Need = need,
+                Done = true, Status = string.IsNullOrEmpty(need) ? "met" : (pct >= 75 ? "met" : "under"),
+                RollPct = pct, Tempered = false,
+            });
+        }
+        grp.Matched = grp.Total = grp.Items.Count;
+        grp.LiveItems.Add(new GearLiveItem
+        {
+            Name = item.Name, Rarity = item.Rarity, ItemPower = item.ItemPower,
+            IsUnique = item.IsUnique, IsAncestral = item.IsAncestral, Aspect = item.Aspect,
+        });
+        var sec = new Section
+        {
+            Key = key, Label = item.Slot ?? item.ItemType ?? "item",
+            Gear = grp, Matched = grp.Matched, Total = grp.Total, Under = 0,
+        };
+        _inventorySections[key] = sec;
+        return sec;
+    }
+
     void ShowInventoryModal()
     {
-        var overlay = new Grid();
-        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xC0, 0, 0, 0)) };
-        backdrop.MouseLeftButtonDown += (_, _) => { RootLayer.Children.Remove(overlay); };
+        var overlay = new Grid { IsHitTestVisible = true };
+        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xBB, 0, 0, 0)) };
+        backdrop.MouseLeftButtonDown += (_, _) => { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; };
         overlay.Children.Add(backdrop);
 
-        var allGear = EffectiveLive().Gear.Concat(EffectiveLive().Inventory).ToList();
+        void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; }
+
+        var live = EffectiveLive();
+        var allItems = live.Gear.Concat(live.Inventory).ToList();
         var now = DateTime.UtcNow.Ticks;
 
-        var sp = new StackPanel { MinWidth = 600, MaxWidth = 900 };
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        // ---- header ----
+        var sp = new StackPanel { MinWidth = 700, MaxWidth = 1000 };
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
         var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
-        xb.MouseLeftButtonUp += (_, _) => { RootLayer.Children.Remove(overlay); };
+        xb.MouseLeftButtonUp += (_, _) => Close();
         hd.Children.Add(xb);
-        hd.Children.Add(TBs($"Scanned Items  ({allGear.Count})", Gold, 17, true));
+        hd.Children.Add(TBs($"All scanned items  ·  {allItems.Count}", Gold, 17, true));
         sp.Children.Add(hd);
-        sp.Children.Add(TB("Items the app has seen from hovering. Click ✕ to remove stale entries.", Soft, 12, false, new Thickness(0, 0, 0, 10)));
+        sp.Children.Add(TB("Hover for compare · click to pin · ✕ to delete stale entries", Soft, 12, false, new Thickness(0, 0, 0, 12)));
 
-        var scroll = new ScrollViewer { MaxHeight = 480, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var rows = new StackPanel();
-        foreach (var item in allGear.OrderBy(i => i.Slot ?? "").ThenBy(i => i.Name))
+        // ---- item grid ----
+        var scroll = new ScrollViewer { MaxHeight = 560, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+
+        foreach (var item in allItems.OrderBy(i => i.Slot ?? "").ThenByDescending(i => i.ItemPower ?? 0).ThenBy(i => i.Name))
         {
-            var age = item.LastScannedTicks > 0
+            var sec = ItemToSection(item);
+            var rcol = RarityBrush(item.Rarity);
+            var rc = ((SolidColorBrush)rcol).Color;
+            bool pinned = _pinned.Contains(sec.Key);
+            bool eq = item.Equipped;
+
+            // age string
+            string age = item.LastScannedTicks > 0
                 ? TimeSpan.FromTicks(now - item.LastScannedTicks) is var ts
                   ? ts.TotalSeconds < 120 ? $"{(int)ts.TotalSeconds}s ago"
                   : ts.TotalMinutes < 60  ? $"{(int)ts.TotalMinutes}m ago"
                   : $"{ts.TotalHours:0.0}h ago"
-                  : "unknown"
-                : "unknown";
-            var capSlot = string.IsNullOrEmpty(item.Slot) ? "?" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
-            var eq = item.Equipped;
+                  : "?"
+                : "?";
 
-            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
-            var del = MakeLink("✕", Soft); del.Margin = new Thickness(8, 0, 0, 0);
-            DockPanel.SetDock(del, Dock.Right);
-            var captured = item;
-            del.MouseLeftButtonUp += (_, _) =>
+            // portrait icon with rarity overlay (same as paper doll)
+            var iconGrid = new Grid { Width = 54, Height = 76, Margin = new Thickness(0, 0, 10, 0) };
+            iconGrid.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
+            var ovl = new LinearGradientBrush { StartPoint = new Point(1, 0), EndPoint = new Point(0.1, 1) };
+            ovl.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, rc.R, rc.G, rc.B), 0));
+            ovl.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, rc.R, rc.G, rc.B), 1));
+            iconGrid.Children.Add(new Border { Background = ovl, CornerRadius = new CornerRadius(4) });
+            iconGrid.Children.Add(new Border { BorderBrush = rcol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+            if (IsAncestral(item.Rarity))
+                iconGrid.Children.Add(new Border { BorderBrush = RAncestral, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3), Opacity = 0.5 });
+            var art = SlotOrItemIcon(item.Name, SlotKey(item.Slot ?? ""), rcol, 42, 62);
+            art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
+            iconGrid.Children.Add(art);
+
+            // item details
+            var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
+            var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
+            details.Children.Add(TB(slotLbl + (eq ? "  ●" : "  ○"), Faint, 10, false));
+            var nameBlock = TB(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap; nameBlock.MaxWidth = 180;
+            details.Children.Add(nameBlock);
+            if (item.ItemPower > 0)
+                details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
+            // top 3 affixes
+            foreach (var aff in item.Affixes.Take(3))
             {
-                // Remove this item from live build
-                _live.Gear.Remove(captured);
-                _live.Inventory.Remove(captured);
-                SaveLive();
-                RootLayer.Children.Remove(overlay);
-                Render();
-                ShowInventoryModal();   // reopen with updated list
+                var av = aff.Value.HasValue ? (aff.IsPercent ? $"+{aff.Value:0.#}%" : $"+{aff.Value:#,0.##}") : "";
+                details.Children.Add(TB($"{aff.Text}  {av}", Soft, 9.5, false));
+            }
+            if (item.Affixes.Count > 3) details.Children.Add(TB($"…+{item.Affixes.Count - 3} more", Faint, 9, false));
+            details.Children.Add(TB(age, Faint, 9, false, new Thickness(0, 3, 0, 0)));
+
+            // card container
+            var dp = new DockPanel();
+            DockPanel.SetDock(iconGrid, Dock.Left); dp.Children.Add(iconGrid); dp.Children.Add(details);
+
+            // delete button overlay (top-right)
+            var delGrid = new Grid();
+            delGrid.Children.Add(dp);
+            var delBtn = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x0E, 0x0E, 0x11)),
+                BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 1, 5, 2), Cursor = System.Windows.Input.Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -4, -4, 0), Child = TB("✕", Soft, 9.5, true), Visibility = Visibility.Collapsed,
             };
-            row.Children.Add(del);
-            row.Children.Add(TB($"{capSlot,-10} {(eq ? "●" : "○")}  {item.Name,-40}  {item.Rarity ?? "?"}  IP:{item.ItemPower}  {age}",
-                eq ? Ink : Soft, 11.5, false));
-            rows.Children.Add(row);
+            delGrid.Children.Add(delBtn);
+            var capturedItem = item; var capturedSec = sec;
+            delBtn.MouseLeftButtonUp += (_, _) =>
+            {
+                _live.Gear.Remove(capturedItem); _live.Inventory.Remove(capturedItem);
+                _pinned.Remove(capturedSec.Key); _inventorySections.Remove(capturedSec.Key);
+                SaveLive(); Close(); Render(); ShowInventoryModal();
+            };
+
+            var card = new Border
+            {
+                Child = delGrid,
+                Padding = new Thickness(10, 8, 10, 8), Margin = new Thickness(0, 0, 8, 8),
+                CornerRadius = new CornerRadius(6), Width = 260,
+                Background = pinned ? TileSel : Card,
+                BorderBrush = pinned ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B)),
+                BorderThickness = new Thickness(pinned ? 1.5 : 1),
+                Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            card.MouseEnter += (_, _) =>
+            {
+                if (!pinned) card.Background = CardHi;
+                delBtn.Visibility = Visibility.Visible;
+                ShowHover(capturedSec, card);
+            };
+            card.MouseLeave += (_, _) =>
+            {
+                if (!pinned) card.Background = Card;
+                delBtn.Visibility = Visibility.Collapsed;
+                _hoverPopup.IsOpen = false;
+            };
+            card.MouseLeftButtonUp += (_, _) =>
+            {
+                bool wasPinned = _pinned.Remove(capturedSec.Key);
+                if (!wasPinned) _pinned.Add(capturedSec.Key);
+                _hoverPopup.IsOpen = false;
+                Close(); Render();
+                Toast(wasPinned ? $"Unpinned {capturedItem.Name}" : $"Pinned {capturedItem.Name}");
+            };
+            wrap.Children.Add(card);
         }
-        scroll.Content = rows;
+        scroll.Content = wrap;
         sp.Children.Add(scroll);
 
         var panel = new Border
         {
-            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(24, 18, 24, 20), MaxWidth = 920,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+            Background = B("#0D0D10"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(22, 18, 22, 20),
+            MaxWidth = 1060, MaxHeight = 700,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Child = sp, ClipToBounds = true,
         };
         overlay.Children.Add(panel);
         RootLayer.Children.Add(overlay);
