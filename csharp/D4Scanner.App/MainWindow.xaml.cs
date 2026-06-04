@@ -2113,8 +2113,18 @@ public partial class MainWindow : Window
         if (_debugMode && s.Gear != null)
         {
             var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+            // Find the raw Item from the live build for timing info
+            var rawItem = EffectiveLive().Gear.FirstOrDefault(g => it != null && DiffEngine.PhraseMatch(g.Name, it.Name));
+            string age = "";
+            if (rawItem?.LastScannedTicks > 0)
+            {
+                var ago = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - rawItem.LastScannedTicks);
+                age = ago.TotalSeconds < 120 ? $" · {(int)ago.TotalSeconds}s ago"
+                    : ago.TotalMinutes < 60  ? $" · {(int)ago.TotalMinutes}m ago"
+                    : $" · {ago.TotalHours:0.0}h ago";
+            }
             string dbgTxt = it != null
-                ? $"{it.Rarity ?? "?"} · {(it.ItemPower > 0 ? "IP " + it.ItemPower : "no IP")} · {s.Key}"
+                ? $"{it.Rarity ?? "?"} · IP {it.ItemPower}{age} · {s.Key}"
                 : $"empty · {s.Key}";
             var dbg = TB(dbgTxt, Faint, 9.5, false); dbg.TextWrapping = TextWrapping.Wrap; text.Children.Add(dbg);
         }
