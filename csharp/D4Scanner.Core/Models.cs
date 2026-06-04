@@ -32,6 +32,7 @@ public class Item
     public int? MasterworkMax { get; set; }
     public int? TemperUsed { get; set; }
     public int? TemperMax { get; set; }
+    public int? Quality { get; set; }    // Season 8 item quality score
     public int? RequiresLevel { get; set; }
     public string? Aspect { get; set; }
     public bool Equipped { get; set; }

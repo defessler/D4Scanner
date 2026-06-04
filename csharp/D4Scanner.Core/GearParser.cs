@@ -143,6 +143,8 @@ public class GearParser
             { item.ItemPower = (int?)ToNum(mp.Groups[1].Value); continue; }
             var md = ReDps.Match(ln);
             if (md.Success && item.Dps == null) { item.Dps = ToNum(md.Groups[1].Value); continue; }
+            var mq = ReQuality.Match(ln);
+            if (mq.Success && item.Quality == null) { item.Quality = int.Parse(mq.Groups[1].Value); continue; }
             var mm = ReMasterwork.Match(ln);
             if (mm.Success) { item.MasterworkRank = int.Parse(mm.Groups[1].Value); item.MasterworkMax = int.Parse(mm.Groups[2].Value); continue; }
             var mt = ReTemper.Match(ln);
