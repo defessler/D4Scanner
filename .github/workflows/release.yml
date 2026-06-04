@@ -35,7 +35,7 @@ jobs:
             $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
             Push-Location dll
             try {
-              cmd /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && cl /nologo /O2 /EHsc /LD /DUNICODE /D_UNICODE saapi64.cpp /Fe:saapi64.dll"
+              cmd /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && cl /nologo /O2 /EHsc /LD /DUNICODE /D_UNICODE saapi64.cpp /Fe:saapi64.dll /link /VERSION:2.0"
               if (-not (Test-Path saapi64.dll)) { throw 'cl produced no dll' }
               $cert = New-SelfSignedCertificate -Type CodeSigning -Subject 'CN=D4Scanner TTS Shim' `
                 -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)

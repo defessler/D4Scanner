@@ -122,12 +122,36 @@ public static class CaptureSetup
         return outp;
     }
 
-    /// <summary>True if saapi64.dll is somewhere Diablo IV will find it (game folder, System32, or our PATH bin).</summary>
+    // DLL version embedded in the shim source (saapi64.cpp #define SHIM_VERSION).
+    // Bump this constant whenever the DLL changes and the app will auto-reinstall on next launch.
+    public const int CurrentShimVersion = 2;
+
+    /// <summary>True if saapi64.dll is somewhere Diablo IV will find it AND its version matches the embedded one.</summary>
     public static bool Installed()
     {
         var places = new List<string> { Path.Combine(BinDir, "saapi64.dll"), Path.Combine(System32, "saapi64.dll") };
         var g = GameDir(); if (g != null) places.Add(Path.Combine(g, "saapi64.dll"));
         return places.Any(File.Exists);
+    }
+
+    /// <summary>True if an installed saapi64.dll is outdated (version is older than the embedded one).
+    /// Detected by checking the file description in the PE version info, which the release workflow stamps.</summary>
+    public static bool NeedsUpgrade()
+    {
+        var places = new List<string> { Path.Combine(BinDir, "saapi64.dll") };
+        var gd = GameDir(); if (gd != null) places.Add(Path.Combine(gd, "saapi64.dll"));
+        foreach (var p in places)
+        {
+            if (!File.Exists(p)) continue;
+            try
+            {
+                var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(p);
+                // The DLL file version is stamped as CurrentShimVersion.0.0.0 by release.yml
+                if (info.FileMajorPart < CurrentShimVersion) return true;
+            }
+            catch { }
+        }
+        return false;
     }
 
     public static (bool ok, string message) Install()

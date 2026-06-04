@@ -41,7 +41,11 @@ public class GearParser
     public static string Clean(string s)
     {
         s = WebUtility.HtmlDecode(s ?? "");
-        s = s.Replace('’', '\'').Replace('‘', '\'').Replace('“', '"').Replace('”', '"');
+        // Strip optional ISO timestamp prefix added by the enhanced DLL: [2026-06-04T00:30:15Z]
+        // Format is exactly 22 chars: [YYYY-MM-DDTHH:MM:SSZ]
+        if (s.Length > 22 && s[0] == '[' && s[21] == ']')
+            s = s.Substring(22);
+        s = s.Replace((char)0x2018, (char)0x27).Replace((char)0x2019, (char)0x27).Replace((char)0x201C, (char)0x22).Replace((char)0x201D, (char)0x22);
         s = Regex.Replace(s, @"\s+", " ").Trim();
         return s;
     }

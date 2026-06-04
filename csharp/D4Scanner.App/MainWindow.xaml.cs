@@ -191,7 +191,19 @@ public partial class MainWindow : Window
             _pickedSlug = null;          // user is typing free text now
             UpdateAutocomplete();
         };
-        UrlBox.GotFocus += (_, _) => { if (_uiReady && UrlBox.Text.Length == 0) UpdateAutocomplete(); };
+        UrlBox.GotFocus += (_, _) =>
+        {
+            // Restore the search hint as placeholder (hides the loaded-build-name display)
+            UrlPlaceholder.Text = "Search builds  (e.g. dance of knives)  or paste a Maxroll URL…";
+            UrlPlaceholder.Foreground = Faint;
+            if (_uiReady && UrlBox.Text.Length == 0) UpdateAutocomplete();
+        };
+        UrlBox.LostFocus += (_, _) => UpdateBuildNamePlaceholder();
+        // Select all on click when the box is not already focused (makes switching builds fast)
+        UrlBox.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (!UrlBox.IsKeyboardFocused) { UrlBox.Focus(); UrlBox.SelectAll(); e.Handled = true; }
+        };
         UrlBox.PreviewKeyDown += UrlBox_PreviewKeyDown;
         AcList.PreviewKeyDown += AcList_PreviewKeyDown;
         AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
@@ -217,6 +229,25 @@ public partial class MainWindow : Window
         UrlBox.Text = text;
         _settingText = false;
         UrlPlaceholder.Visibility = text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Show the loaded build name as placeholder text when the box is not focused and empty.
+    // This replaces the large BuildName header while keeping the search box as the primary UI.
+    void UpdateBuildNamePlaceholder()
+    {
+        if (UrlBox.IsKeyboardFocused) return;   // don't overwrite what the user is typing
+        if (UrlBox.Text.Length > 0) return;     // showing import input — leave it
+        if (_target != null)
+        {
+            UrlPlaceholder.Text = _target.Name + (_target.Class != null ? "  ·  " + _target.Class : "");
+            UrlPlaceholder.Foreground = B("#9DA1AB");   // Soft — distinct from dim search hint
+        }
+        else
+        {
+            UrlPlaceholder.Text = "Search builds  (e.g. dance of knives)  or paste a Maxroll URL…";
+            UrlPlaceholder.Foreground = Faint;
+        }
+        UrlPlaceholder.Visibility = Visibility.Visible;
     }
 
     static bool LooksLikeUrl(string s) => s.Contains("://") || s.Contains("maxroll.gg");
@@ -414,6 +445,9 @@ public partial class MainWindow : Window
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
+        // Auto-upgrade the capture shim if the embedded version is newer than what's installed
+        if (CaptureSetup.Installed() && CaptureSetup.NeedsUpgrade())
+            Task.Run(() => { CaptureSetup.Install(); Dispatcher.Invoke(Render); });
         CheckForUpdatesAsync();        // check on every launch
         _updateTimer?.Dispose();
         _updateTimer = new System.Threading.Timer(
@@ -775,7 +809,7 @@ public partial class MainWindow : Window
         OpenSrcBtn.Visibility = SourceUrl() != null ? Visibility.Visible : Visibility.Collapsed;
         if (_target == null)
         {
-            BuildName.Text = "D4Scanner — Live Build Tracker";
+            UpdateBuildNamePlaceholder();
             OverallPct.Text = "—";
             OverallCount.Text = "No build loaded yet — import one to start your guide";
             OverallBar.Value = 0; Body.Children.Clear();
@@ -785,7 +819,7 @@ public partial class MainWindow : Window
             return;
         }
         var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
-        BuildName.Text = r.TargetName + (r.TargetClass != null ? "  ·  " + r.TargetClass : "");
+        UpdateBuildNamePlaceholder();
         OverallPct.Text = r.Pct + "%";
 
         // skills/paragon hidden from UI for now — vision button only for aspects
@@ -1216,6 +1250,30 @@ public partial class MainWindow : Window
 
         // separator
         sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 4, 0, 16) });
+
+        // affix roll-quality threshold
+        sp.Children.Add(TBs("Affix roll quality", Faint, 10, true, new Thickness(0, 0, 0, 8)));
+        var thrDesc = TB("Flag affixes whose roll is below this threshold. Flagged affixes show ⚠ in the diff and count as under-rolled.", Soft, 12, false);
+        thrDesc.TextWrapping = TextWrapping.Wrap; thrDesc.Margin = new Thickness(0, 0, 0, 10); sp.Children.Add(thrDesc);
+        var thrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var thrLblRight = TBs(((int)_minRollPct) + "%", Crimson, 13.5, true);
+        thrLblRight.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(thrLblRight, Dock.Right); thrRow.Children.Add(thrLblRight);
+        var settingsThreshSlider = new System.Windows.Controls.Slider
+        {
+            Minimum = 0, Maximum = 100, Value = _minRollPct,
+            TickFrequency = 5, IsSnapToTickEnabled = true, VerticalAlignment = VerticalAlignment.Center,
+        };
+        settingsThreshSlider.ValueChanged += (_, _) =>
+        {
+            _minRollPct = settingsThreshSlider.Value;
+            ThreshSlider.Value = _minRollPct;
+            ThreshLbl.Text = ((int)_minRollPct) + "%";
+            thrLblRight.Text = ((int)_minRollPct) + "%";
+            SaveSettings(); Render();
+        };
+        thrRow.Children.Add(settingsThreshSlider); sp.Children.Add(thrRow);
+        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 14, 0, 16) });
 
         // cache clear
         sp.Children.Add(TBs("Cache", Faint, 10, true, new Thickness(0, 0, 0, 8)));
