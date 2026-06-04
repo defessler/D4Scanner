@@ -139,6 +139,7 @@ public partial class MainWindow : Window
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
     bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
     bool _settingsOpen;                    // settings panel visible
+    bool _shimNeedsUpgrade;                // cached at StartWatching; cleared when user installs this session
     const double TwoColMin = 1080;         // below this width the overview reflows to a single column
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
@@ -446,6 +447,8 @@ public partial class MainWindow : Window
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
         // No longer auto-upgrades the DLL silently — the user is prompted via UpgradeBanner() in Render().
+        // Cache the result so we don't re-check on every Render() after the user installs this session.
+        _shimNeedsUpgrade = CaptureSetup.Installed() && CaptureSetup.NeedsUpgrade();
         CheckForUpdatesAsync();        // check on every launch
         _updateTimer?.Dispose();
         _updateTimer = new System.Threading.Timer(
@@ -812,7 +815,7 @@ public partial class MainWindow : Window
             OverallCount.Text = "No build loaded yet — import one to start your guide";
             OverallBar.Value = 0; Body.Children.Clear();
             if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
-        else if (CaptureSetup.NeedsUpgrade()) Body.Children.Add(UpgradeBanner());
+        else if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
             Body.Children.Add(WelcomeCard());
             Status.Text = $"log: {_log}";
             return;
@@ -900,7 +903,7 @@ public partial class MainWindow : Window
 
         Body.Children.Clear();
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
-        else if (CaptureSetup.NeedsUpgrade()) Body.Children.Add(UpgradeBanner());
+        else if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
@@ -1105,7 +1108,9 @@ public partial class MainWindow : Window
         var (ok, msg) = CaptureSetup.Install();
         MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        btn.IsEnabled = true; btn.Content = prev; Render();
+        btn.IsEnabled = true; btn.Content = prev;
+        if (ok) _shimNeedsUpgrade = false;   // banner gone — don't re-show until next launch
+        Render();
     }
 
     // transient, non-blocking confirmation (bottom-center, auto-fades). Use instead of MessageBox for routine success.
