@@ -1590,7 +1590,7 @@ public partial class MainWindow : Window
     {
         var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
         var rc = ((SolidColorBrush)rcol).Color;
-        const double box = 102, art = 81;                      // large, square — like a D4 inventory slot
+        const double box = 70, art = 54;                       // large, square — 1.5× the original 48px icon
         var grid = new Grid { Width = box, Height = box };
 
         // recessed slot: dark metallic outer frame over a rarity-lit radial fill (brighter toward the centre)
@@ -1661,14 +1661,14 @@ public partial class MainWindow : Window
         text.Children.Add(lbl); text.Children.Add(nm);
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 310 };
+        var dp = new DockPanel { Width = 244 };
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);
 
         var b = new Border
         {
-            Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
+            Child = dp, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 7), CornerRadius = new CornerRadius(5),
             Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
             BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent,
             BorderThickness = new Thickness(pinned ? 1.5 : 1),

@@ -1,7 +1,7 @@
 <Window x:Class="D4Scanner.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="D4Scanner" Height="980" Width="1600" MinWidth="760" MinHeight="620" WindowStartupLocation="CenterScreen"
+        Title="D4Scanner" Height="1040" Width="1600" MinWidth="760" MinHeight="620" WindowStartupLocation="CenterScreen"
         WindowStyle="None" Background="{StaticResource Bg}"
         FontFamily="Segoe UI" UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
   <WindowChrome.WindowChrome>
@@ -34,7 +34,7 @@
       </Grid>
 
       <!-- header -->
-      <Border Grid.Row="1" Padding="24,18,24,20" BorderThickness="0,0,0,1">
+      <Border Grid.Row="1" Padding="24,12,24,14" BorderThickness="0,0,0,1">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="#1A1B20" Offset="0"/><GradientStop Color="#0E0E11" Offset="1"/>
@@ -78,7 +78,7 @@
           </Grid>
 
           <!-- smart import: one box (search guides or paste a URL) + fuzzy autocomplete -->
-          <Grid Margin="0,18,0,0">
+          <Grid Margin="0,12,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
               <TextBox x:Name="UrlBox" HorizontalContentAlignment="Left" TextAlignment="Left"
@@ -100,10 +100,10 @@
             <Button x:Name="ImportBtn" Grid.Column="1" Style="{StaticResource Primary}" Content="Import" Padding="28,8" Margin="10,0,0,0"/>
           </Grid>
 
-          <Grid Margin="0,20,0,0">
+          <Grid Margin="0,12,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
-              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Accent}" FontSize="40" FontWeight="Bold"/>
+              <TextBlock x:Name="OverallPct" Text="—" Foreground="{StaticResource Accent}" FontSize="34" FontWeight="Bold"/>
               <TextBlock x:Name="OverallCount" Text="" Foreground="{StaticResource Soft}" FontSize="15"
                          VerticalAlignment="Bottom" Margin="18,0,0,11" TextWrapping="Wrap" MaxWidth="360"/>
             </StackPanel>

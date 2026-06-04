@@ -62,12 +62,32 @@ public sealed class LogWatcher : IDisposable
             }
             if (changed)
             {
-                Build = new LiveBuild { Gear = _items.Values.ToList(), Inventory = _inv.Values.ToList() };
+                Build = new LiveBuild { Gear = LatestPerSlot(_items.Values), Inventory = _inv.Values.ToList() };
                 Updated?.Invoke(Build);
             }
         }
         catch { /* file was mid-write; retry on the next tick */ }
     }
+
+    /// <summary>For each slot base name keep only the N most recently logged items (last entries in the
+    /// append-only log). This drops stale items when the player swaps gear mid-session — the old item
+    /// stays in the log file but its entry is older, so it loses to the newer one here.
+    /// N = 2 for rings (two ring slots), up to 4 for weapons (Barbarian has 4), 1 for everything else.</summary>
+    static List<Item> LatestPerSlot(IEnumerable<Item> items)
+    {
+        return items
+            .GroupBy(it => SlotBaseName(it.Slot ?? ""))
+            .SelectMany(g =>
+            {
+                int max = g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1;
+                return g.Reverse().Take(max);   // Reverse: last-in = most recently scanned = currently equipped
+            })
+            .ToList();
+    }
+
+    static string SlotBaseName(string slot) => System.Text.RegularExpressions.Regex.Replace(
+        System.Text.RegularExpressions.Regex.Replace((slot).ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim(),
+        @"\s*\d+$", "").Trim();
 
     public void Dispose() => _timer?.Dispose();
 
@@ -83,7 +103,7 @@ public sealed class LogWatcher : IDisposable
             if (equippedOnly && !item.Equipped) continue;
             items[(item.Slot ?? "?") + ":" + item.RawName] = item;
         }
-        return new LiveBuild { Gear = items.Values.ToList() };
+        return new LiveBuild { Gear = LatestPerSlot(items.Values) };
     }
 }
 
