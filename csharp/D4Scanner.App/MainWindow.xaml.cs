@@ -308,6 +308,8 @@ public partial class MainWindow : Window
                         _minRollPct = Math.Clamp(mrv, 0, 100);
                     if (s.TryGetValue("zoom", out var z) && double.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out var zv))
                         _uiScale = Math.Clamp(zv, 0.7, 1.6);
+                    if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
+                        CaptureSetup.UserGameDir = gd;
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -339,7 +341,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0" }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir }));
         }
         catch { }
     }
@@ -707,10 +709,8 @@ public partial class MainWindow : Window
         BuildName.Text = r.TargetName + (r.TargetClass != null ? "  ·  " + r.TargetClass : "");
         OverallPct.Text = r.Pct + "%";
 
-        // progressive disclosure: only show the vision (Paragon/Skills) button when the build actually
-        // has something for it to fill — otherwise it does nothing useful yet.
-        bool hasVisionTargets = _target.Skills.Count > 0 || _target.KeyPassives.Count > 0 ||
-            (_target.Paragon?.Boards.Count ?? 0) > 0 || (_target.Paragon?.Glyphs.Count ?? 0) > 0 || _target.Aspects.Count > 0;
+        // skills/paragon hidden from UI for now — vision button only for aspects
+        bool hasVisionTargets = _target.Aspects.Count > 0;
         VisionBtn.Visibility = hasVisionTargets ? Visibility.Visible : Visibility.Collapsed;
         OverallCount.Text = $"{r.Matched} / {r.Total} met  ·  {_live.Gear.Count} equipped items"
             + (_vision != null ? "  ·  + vision" : "")
@@ -777,7 +777,7 @@ public partial class MainWindow : Window
         }
 
         foreach (var c in r.Categories)
-            if (c.Id != "gear")
+            if (c.Id != "gear" && c.Id != "skills" && c.Id != "paragon" && c.Id != "mercenary")
                 sections.Add(new Section { Key = "cat:" + c.Id, Label = ShortName(c.Id), Matched = c.Matched, Total = c.Total, Under = c.Under, Cat = c });
 
         // keep selection if still present, else default to the first thing needing work
@@ -941,6 +941,28 @@ public partial class MainWindow : Window
     // shared install action for the banner button and the footer button
     void RunInstall(Button btn)
     {
+        // if the game can't be auto-detected, ask the user to locate Diablo IV.exe before installing
+        if (CaptureSetup.GameDir() == null)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Locate Diablo IV.exe",
+                Filter = "Diablo IV|Diablo IV.exe|All executables|*.exe",
+                FileName = "Diablo IV.exe",
+            };
+            if (dlg.ShowDialog() != true) return;
+            var dir = Path.GetDirectoryName(dlg.FileName);
+            if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "Diablo IV.exe")))
+            {
+                MessageBox.Show("That doesn't look like the Diablo IV folder — please select Diablo IV.exe inside the game's install folder.",
+                    "Wrong file", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            CaptureSetup.UserGameDir = dir;
+            GameDataIcons.GameDir = dir;
+            SaveSettings();   // persist so the next launch remembers it
+        }
+
         btn.IsEnabled = false; var prev = btn.Content; btn.Content = "installing…";
         var (ok, msg) = CaptureSetup.Install();
         MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
@@ -1382,7 +1404,7 @@ public partial class MainWindow : Window
     UIElement SummaryStrip(DiffReport r)
     {
         var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 14) };
-        foreach (var c in r.Categories)
+        foreach (var c in r.Categories.Where(c => c.Id != "skills" && c.Id != "paragon" && c.Id != "mercenary"))
         {
             var tb = TB($"{ShortName(c.Id)}  {c.Matched}/{c.Total}" + (c.Under > 0 ? $"  ⚠{c.Under}" : ""),
                 c.Under > 0 ? Amber : (c.Matched == c.Total ? Green : Soft), 13, true);
@@ -1451,11 +1473,11 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(8), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14),
         });
 
-        var shownCats = cats.Where(s => s.Total > 0).ToList();   // hide empty/non-functional categories
-        // uniques already appear on their doll slots — drop the redundant center "Uniques" tile, unless some
-        // target unique has no recognizable slot (then keep it so those stay reachable here).
+        // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot
         bool allUniquesMapped = _target == null || _target.Uniques.All(u => SlotKey(u.Slot ?? "").Length > 0);
-        if (allUniquesMapped) shownCats = shownCats.Where(s => s.Cat?.Id != "uniques").ToList();
+        var shownCats = cats.Where(s => s.Total > 0
+            && s.Cat?.Id != "skills" && s.Cat?.Id != "paragon" && s.Cat?.Id != "mercenary"
+            && (s.Cat?.Id != "uniques" || !allUniquesMapped)).ToList();
         if (shownCats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
         foreach (var s in shownCats) center.Children.Add(CatCell(s));
 
@@ -1701,11 +1723,9 @@ public partial class MainWindow : Window
             var sub = SubFor(s);
             if (sub != null) sp.Children.Add(SubstituteBlock(sub));
         }
-        else if (s.Cat != null)
+        else if (s.Cat != null && s.Cat.Id != "skills" && s.Cat.Id != "paragon" && s.Cat.Id != "mercenary")
         {
-            if (s.Cat.Id == "skills") SkillsView(sp, s.Cat);
-            else if (s.Cat.Id == "paragon") ParagonView(sp, s.Cat);
-            else foreach (var g in s.Cat.Groups) GroupRows(sp, g);
+            foreach (var g in s.Cat.Groups) GroupRows(sp, g);
         }
 
         return new Border
@@ -2170,19 +2190,7 @@ public partial class MainWindow : Window
                 sp.Children.Add(RawLine("◆  " + u.Name + (u.Slot != null ? "   —   " + u.Slot : "") + (u.Mythic ? "   (Mythic)" : "")));
         }
         if (t.Aspects.Count > 0) { RawHeader(sp, "ASPECTS"); foreach (var a in t.Aspects) sp.Children.Add(RawLine("◆  " + a)); }
-        if (t.Skills.Count > 0)
-        {
-            RawHeader(sp, "SKILLS");
-            foreach (var s in t.Skills) sp.Children.Add(RawLine("◆  " + s.Name + (s.Rank != null ? $"   (rank {s.Rank})" : "")));
-        }
-        if (t.KeyPassives.Count > 0) { RawHeader(sp, "KEY PASSIVES"); foreach (var k in t.KeyPassives) sp.Children.Add(RawLine("◆  " + k)); }
-        if (t.Paragon != null && (t.Paragon.Boards.Count > 0 || t.Paragon.Glyphs.Count > 0))
-        {
-            RawHeader(sp, "PARAGON");
-            foreach (var b in t.Paragon.Boards) sp.Children.Add(RawLine("▸  " + b));
-            foreach (var gl in t.Paragon.Glyphs)
-                sp.Children.Add(RawLine("◆  glyph: " + gl.Name + (gl.Level != null ? $"   (lvl {gl.Level})" : "")));
-        }
+        // skills/paragon intentionally omitted from the raw view for now
 
         if (_vision != null && (!string.IsNullOrEmpty(_vision.Mercenary) || _vision.Talismans.Count > 0 || _vision.Gems.Count > 0 || _vision.Runes.Count > 0))
         {

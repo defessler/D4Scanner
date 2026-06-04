@@ -25,12 +25,20 @@ public static class CaptureSetup
         @"D:\Games\Blizzard\Diablo IV", @"C:\Program Files (x86)\Battle.net\Diablo IV",
     };
 
+    // user-overridden game path (saved to app.json by the UI layer after a successful file-picker selection)
+    public static string? UserGameDir { get; set; }
+
     /// <summary>Locate the Diablo IV install across every launcher / drive — Battle.net (and any installer that
     /// writes an Uninstall entry) via the registry, Steam via its library folders, then common fixed paths and a
-    /// per-drive sweep of common folders. Works regardless of Battle.net vs Steam and custom install drives.</summary>
-    public static string? GameDir() =>
-        DetectGameDirs().Distinct(StringComparer.OrdinalIgnoreCase)
+    /// per-drive sweep of common folders. Works regardless of Battle.net vs Steam and custom install drives.
+    /// Returns null if the game can't be found automatically (UI should offer a file picker in that case).</summary>
+    public static string? GameDir()
+    {
+        if (!string.IsNullOrEmpty(UserGameDir) && File.Exists(Path.Combine(UserGameDir!, "Diablo IV.exe")))
+            return UserGameDir;
+        return DetectGameDirs().Distinct(StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(d => !string.IsNullOrEmpty(d) && File.Exists(Path.Combine(d, "Diablo IV.exe")));
+    }
 
     static List<string> DetectGameDirs()
     {
