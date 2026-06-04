@@ -1901,13 +1901,9 @@ public partial class MainWindow : Window
             catch { /* not yet in the visual tree — keep default Right */ }
         }
         _hoverPopup.PlacementTarget = target;
-        var cc = CompareCard(s.Gear, it, s.Label);
-        ((FrameworkElement)cc).MaxWidth = 780;
-        _hoverPopup.Child = new Border
-        {
-            Background = B("#0D0D10"), BorderBrush = Edge, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(7), Padding = new Thickness(10), Child = cc,
-        };
+        var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
+        cc.MaxWidth = 780;
+        _hoverPopup.Child = cc;   // no outer wrapper — each panel has its own opaque background
         _hoverPopup.IsOpen = true;
     }
 
@@ -1919,7 +1915,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
-        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 176; nm.ToolTip = name;
+        var nm = TB(name, ncol, 13.5, true); nm.TextTrimming = TextTrimming.CharacterEllipsis; nm.MaxWidth = 176;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1991,7 +1987,7 @@ public partial class MainWindow : Window
 
         if (s.Gear != null)
         {
-            GearDetail(sp, s.Gear, s.Label);
+            GearDetail(sp, s.Gear, s.Label, s.Key);
             var sub = SubFor(s);
             if (sub != null) sp.Children.Add(SubstituteBlock(sub));
         }
@@ -2008,7 +2004,7 @@ public partial class MainWindow : Window
         };
     }
 
-    void GearDetail(StackPanel sp, Group g, string label)
+    void GearDetail(StackPanel sp, Group g, string label, string sectionKey = "")
     {
         var it = g.LiveItems.Count > 0 ? g.LiveItems[0] : null;
         if (_detailView == "list")
@@ -2020,7 +2016,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            sp.Children.Add(CompareCard(g, it, label));
+            sp.Children.Add(CompareCard(g, it, label, sectionKey));
             if (g.UpgradeItems.Count > 0) sp.Children.Add(StashUpgrades(g.UpgradeItems));
         }
     }
@@ -2151,14 +2147,23 @@ public partial class MainWindow : Window
         string.Join("   ·   ", new[] { it.IsAncestral ? "Ancestral" : "", it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
 
     // ---- compare view: equipped item beside what the build wants (D4 hold-to-compare idiom) ----
-    UIElement CompareCard(Group g, GearLiveItem? it, string label)
+    UIElement CompareCard(Group g, GearLiveItem? it, string label, string sectionKey = "")
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // EQUIPPED (left): your item + your rolls, colored by how they compare to the target
+        // Resolve the target gear for this section to get real icon handles.
+        // For gear:N sections, this is the N-th target gear item.
+        // For uni:* sections, the unique itself carries its icon.
+        TargetGear? tg = null;
+        if (sectionKey.StartsWith("gear:") && int.TryParse(sectionKey.AsSpan(5), out var gi)
+            && _target != null && gi >= 0 && gi < _target.Gear.Count)
+            tg = _target.Gear[gi];
+
+        // EQUIPPED (left): your item + your rolls, colored by how they compare to the target.
+        // Use the target gear's icon handle so the compare card shows real game art.
         var eq = new StackPanel();
         foreach (var i in g.Items) eq.Children.Add(EquippedRow(i));
         if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
@@ -2167,14 +2172,23 @@ public partial class MainWindow : Window
             eq.Children.Add(Divider(RarityColor(it?.Rarity), 0x44));
             eq.Children.Add(TB("also: " + string.Join("   ·   ", g.Extras), Soft, 11, false));
         }
+        // Borrow the target slot's icon for live items (live scans have no image handle of their own)
+        var eqIconId  = it != null ? tg?.ItemId  : null;
+        var eqIconImg = it != null ? tg?.Image   : null;
         var left = TooltipPanel("EQUIPPED",
             it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
             it != null ? RarityBrush(it.Rarity) : Miss,
             it != null ? Sub(it) : "nothing scanned in this slot yet",
-            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label), null, null);
+            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label), eqIconId, eqIconImg);
 
-        // BUILD WANTS (right): the wanted item (a slot unique, if any) + the wanted affixes/thresholds
-        var wantUnique = _target?.Uniques.FirstOrDefault(u => SlotKey(u.Slot ?? "") == SlotKey(label));
+        // BUILD WANTS (right): the wanted item + wanted affixes/thresholds.
+        // Only show a specific unique when this is a synthesised unique section (uni:*).
+        // For gear affix sections (gear:N), never let a weapon unique "leak" into all weapon slots.
+        bool isUniqueSection = sectionKey.StartsWith("uni:");
+        var wantUnique = isUniqueSection
+            ? _target?.Uniques.FirstOrDefault(u => DiffEngine.PhraseMatch(u.Name, label)
+                                                   || SlotKey(u.Slot ?? "") == SlotKey(label))
+            : null;
         bool myth = wantUnique?.Mythic == true;
         Color wrc = wantUnique != null ? (myth ? Col("#D1492E") : Col("#C9A45C")) : Col("#C8A24E");
         Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
@@ -2182,11 +2196,13 @@ public partial class MainWindow : Window
         foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
+        var wantIconId  = wantUnique?.ItemId  ?? tg?.ItemId;
+        var wantIconImg = wantUnique?.Image   ?? tg?.Image;
         var right = TooltipPanel("BUILD WANTS",
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,
             wantUnique != null ? (myth ? "Mythic Unique" : "Unique") : "any item with these affixes",
-            wrc, wp, wantUnique?.Name, SlotKey(label), wantUnique?.ItemId, wantUnique?.Image);
+            wrc, wp, wantUnique?.Name ?? label, SlotKey(label), wantIconId, wantIconImg);
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
