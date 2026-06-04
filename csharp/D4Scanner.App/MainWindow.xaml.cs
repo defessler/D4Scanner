@@ -445,22 +445,7 @@ public partial class MainWindow : Window
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
-        // Auto-upgrade the capture shim if the installed version is older than the embedded one,
-        // including the legacy versionless DLL (SA_GetVersion absent → version 0 < 2).
-        if (CaptureSetup.NeedsUpgrade())
-        {
-            int oldVer = CaptureSetup.InstalledShimVersion();
-            string badge = oldVer <= 0 ? "versionless" : $"v{oldVer}";
-            Task.Run(() =>
-            {
-                var (ok, _) = CaptureSetup.Install();
-                Dispatcher.Invoke(() =>
-                {
-                    if (ok) Toast($"Capture DLL updated ({badge} → v{CaptureSetup.CurrentShimVersion})");
-                    Render();
-                });
-            });
-        }
+        // No longer auto-upgrades the DLL silently — the user is prompted via UpgradeBanner() in Render().
         CheckForUpdatesAsync();        // check on every launch
         _updateTimer?.Dispose();
         _updateTimer = new System.Threading.Timer(
@@ -827,6 +812,7 @@ public partial class MainWindow : Window
             OverallCount.Text = "No build loaded yet — import one to start your guide";
             OverallBar.Value = 0; Body.Children.Clear();
             if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
+        else if (CaptureSetup.NeedsUpgrade()) Body.Children.Add(UpgradeBanner());
             Body.Children.Add(WelcomeCard());
             Status.Text = $"log: {_log}";
             return;
@@ -914,6 +900,7 @@ public partial class MainWindow : Window
 
         Body.Children.Clear();
         if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
+        else if (CaptureSetup.NeedsUpgrade()) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
@@ -1024,6 +1011,31 @@ public partial class MainWindow : Window
         {
             Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0xA5, 0x2E)),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0xA5, 0x2E)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(16, 12, 16, 12), Child = dp,
+        };
+    }
+
+    UIElement UpgradeBanner()
+    {
+        int installedVer = CaptureSetup.InstalledShimVersion();
+        string oldLabel = installedVer <= 0 ? "an older version" : $"v{installedVer}";
+
+        var dp = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var btn = new Button { Content = "Update capture DLL", Style = (Style)FindResource("Primary"), Padding = new Thickness(18, 7, 18, 7), VerticalAlignment = VerticalAlignment.Center };
+        btn.Click += (_, _) => RunInstall(btn);
+        DockPanel.SetDock(btn, Dock.Right); dp.Children.Add(btn);
+
+        var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        txt.Children.Add(TBs("Capture DLL update available", Amber, 13.5, true));
+        txt.Children.Add(TB($"You have {oldLabel} installed. Update to v{CaptureSetup.CurrentShimVersion} to get timestamps, deduplication, and better session tracking.",
+            Soft, 12, false, new Thickness(0, 2, 0, 0)));
+        dp.Children.Add(txt);
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x18, 0xE0, 0xA5, 0x2E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xE0, 0xA5, 0x2E)),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(16, 12, 16, 12), Child = dp,
         };
