@@ -114,7 +114,6 @@ public partial class MainWindow : Window
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
     string? _focusKey;       // when set, DO NEXT shows only this slot/category (one-thing-at-a-time focus)
-    string? _nextActionKey;  // the slot the #1 DO-NEXT step targets — highlighted on the doll to link guide↔doll
     string _dollView = "mine";     // paper doll previews "mine" (equipped) or "target" (build wants)
     bool _stepsView;               // the full searchable/paged Next-Steps screen
     string _stepsSearch = "";
@@ -759,21 +758,23 @@ public partial class MainWindow : Window
             sections.Add(new Section { Key = "gear:" + gi, Label = label, Matched = g.Matched, Total = g.Total, Under = g.Under, Gear = g });
         }
 
-        // give the doll a tile for any worn slot whose target is a UNIQUE with no affix group (so every
-        // equipment slot shows, matching the in-game character screen — not just the affix-rolled ones)
-        var coveredKeys = new HashSet<string>(sections.Where(s => s.Gear != null).Select(s => SlotKey(s.Label)));
+        // give the doll a tile for every target unique that doesn't have its own gear section.
+        // Key by unique name (not slot key) so multi-weapon builds (crossbow + sword + unique dagger)
+        // each get their own tile — we don't block by slot key since a slot can hold several weapons.
+        var synthesizedUniques = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var liveNow = EffectiveLive();
         foreach (var u in _target?.Uniques ?? new())
         {
             var sk = SlotKey(u.Slot ?? "");
-            if (sk.Length == 0 || coveredKeys.Contains(sk)) continue;
-            coveredKeys.Add(sk);
+            if (sk.Length == 0 || !synthesizedUniques.Add(u.Name)) continue;   // skip if no slot or already added
             string slotLabel = string.IsNullOrEmpty(u.Slot) ? u.Name : char.ToUpperInvariant(u.Slot![0]) + u.Slot[1..];
-            var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.SlotBaseName(it.Slot) == DiffEngine.SlotBaseName(u.Slot ?? ""));
+            var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.PhraseMatch(u.Name, it.Name))   // prefer the specific unique
+                  ?? liveNow.Gear.FirstOrDefault(it => DiffEngine.SlotBaseName(it.Slot) == DiffEngine.SlotBaseName(u.Slot ?? "")
+                         && !synthesizedUniques.Any(n => !n.Equals(u.Name, StringComparison.OrdinalIgnoreCase) && DiffEngine.PhraseMatch(n, it.Name)));
             bool have = liveNow.Gear.Any(it => DiffEngine.PhraseMatch(u.Name, it.Name));
             var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
             if (eq != null) grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
-            sections.Add(new Section { Key = "uni:" + sk, Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
+            sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
         }
 
         foreach (var c in r.Categories)
@@ -811,8 +812,6 @@ public partial class MainWindow : Window
         // glanceable layout: the paper doll (visual anchor) beside the guidance rail (do-this-next + activities)
         // so the core signal sits above the fold. On narrow windows the two columns stack instead.
         if (ActualWidth > 50) _narrow = ActualWidth < TwoColMin;
-        // the slot the top step points at (only when not focused) — the doll rings it to connect guide↔doll
-        _nextActionKey = _focusKey == null ? BuildGuide.Steps(r).FirstOrDefault(s => s.FocusKey != null)?.FocusKey : null;
         var doll = PaperDoll(sections, r.TargetClass, r.Pct);
         ((FrameworkElement)doll).VerticalAlignment = VerticalAlignment.Top;
         var rail = new StackPanel();
@@ -1650,7 +1649,6 @@ public partial class MainWindow : Window
     {
         var (name, ncol, _, _, _) = SlotDisplay(s);
         bool pinned = _pinned.Contains(s.Key);
-        bool isNext = !pinned && _nextActionKey != null && s.Key == _nextActionKey;   // the #1 do-next slot
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Soft, 11.5, false);
@@ -1672,10 +1670,10 @@ public partial class MainWindow : Window
         {
             Child = dp, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 0, 9), CornerRadius = new CornerRadius(5),
             Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
-            BorderBrush = pinned ? Gold : isNext ? Steel : System.Windows.Media.Brushes.Transparent,
-            BorderThickness = new Thickness(pinned ? 1.5 : isNext ? 1.2 : 1),
+            BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(pinned ? 1.5 : 1),
             Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = pinned ? "pinned · click to unpin" : isNext ? "your next action · click to pin" : "hover to compare · click to pin",
+            ToolTip = pinned ? "pinned · click to unpin" : "hover to compare · click to pin",
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
         b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };
