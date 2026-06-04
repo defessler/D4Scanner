@@ -1253,6 +1253,7 @@ public partial class MainWindow : Window
         Row("Alt + O", "Overview");
         Row("Alt + N", "Next Steps");
         Row("Alt + B", "Build details");
+        Row("Alt + I", "Item inventory (all scanned items)");
         Row("/", "Jump to the build search box");
         Row("Ctrl  + / − / 0", "Zoom in · out · reset");
         Row("Esc", "Close popup → clear focus → clear pins → back to overview");
@@ -1281,6 +1282,11 @@ public partial class MainWindow : Window
         xb.MouseLeftButtonUp += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
         hd.Children.Add(xb); hd.Children.Add(TBs("Settings", Gold, 17, true));
         sp.Children.Add(hd);
+
+        // inventory modal button
+        var invBtn = new Button { Content = "View all scanned items…", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 0, 14) };
+        invBtn.Click += (_, _) => { SettingsHost.Visibility = Visibility.Collapsed; ShowInventoryModal(); };
+        sp.Children.Add(invBtn);
 
         // debug mode toggle
         var dbgRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
@@ -1405,6 +1411,73 @@ public partial class MainWindow : Window
 
     static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
 
+    // ---- Item Inventory Modal ----
+    // Shows all scanned items (equipped + bag) with slot, name, age, and a delete button per entry.
+    void ShowInventoryModal()
+    {
+        var overlay = new Grid();
+        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xC0, 0, 0, 0)) };
+        backdrop.MouseLeftButtonDown += (_, _) => { RootLayer.Children.Remove(overlay); };
+        overlay.Children.Add(backdrop);
+
+        var allGear = EffectiveLive().Gear.Concat(EffectiveLive().Inventory).ToList();
+        var now = DateTime.UtcNow.Ticks;
+
+        var sp = new StackPanel { MinWidth = 600, MaxWidth = 900 };
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
+        xb.MouseLeftButtonUp += (_, _) => { RootLayer.Children.Remove(overlay); };
+        hd.Children.Add(xb);
+        hd.Children.Add(TBs($"Scanned Items  ({allGear.Count})", Gold, 17, true));
+        sp.Children.Add(hd);
+        sp.Children.Add(TB("Items the app has seen from hovering. Click ✕ to remove stale entries.", Soft, 12, false, new Thickness(0, 0, 0, 10)));
+
+        var scroll = new ScrollViewer { MaxHeight = 480, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var rows = new StackPanel();
+        foreach (var item in allGear.OrderBy(i => i.Slot ?? "").ThenBy(i => i.Name))
+        {
+            var age = item.LastScannedTicks > 0
+                ? TimeSpan.FromTicks(now - item.LastScannedTicks) is var ts
+                  ? ts.TotalSeconds < 120 ? $"{(int)ts.TotalSeconds}s ago"
+                  : ts.TotalMinutes < 60  ? $"{(int)ts.TotalMinutes}m ago"
+                  : $"{ts.TotalHours:0.0}h ago"
+                  : "unknown"
+                : "unknown";
+            var capSlot = string.IsNullOrEmpty(item.Slot) ? "?" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
+            var eq = item.Equipped;
+
+            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
+            var del = MakeLink("✕", Soft); del.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(del, Dock.Right);
+            var captured = item;
+            del.MouseLeftButtonUp += (_, _) =>
+            {
+                // Remove this item from live build
+                _live.Gear.Remove(captured);
+                _live.Inventory.Remove(captured);
+                SaveLive();
+                RootLayer.Children.Remove(overlay);
+                Render();
+                ShowInventoryModal();   // reopen with updated list
+            };
+            row.Children.Add(del);
+            row.Children.Add(TB($"{capSlot,-10} {(eq ? "●" : "○")}  {item.Name,-40}  {item.Rarity ?? "?"}  IP:{item.ItemPower}  {age}",
+                eq ? Ink : Soft, 11.5, false));
+            rows.Children.Add(row);
+        }
+        scroll.Content = rows;
+        sp.Children.Add(scroll);
+
+        var panel = new Border
+        {
+            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24, 18, 24, 20), MaxWidth = 920,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+        };
+        overlay.Children.Add(panel);
+        RootLayer.Children.Add(overlay);
+    }
+
     // ---- character portrait capture (PrintWindow) ----
     // Captures the D4 game window and saves a region as character.png.
     // Uses PrintWindow with PW_RENDERFULLCONTENT which works for DX11/DX12 borderless games.
@@ -1472,6 +1545,7 @@ public partial class MainWindow : Window
         else if (alt && k == System.Windows.Input.Key.O && _target != null) { GoOverview(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.N && _target != null) { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.I) { ShowInventoryModal(); e.Handled = true; }
         else if (k == System.Windows.Input.Key.Oem2 && !UrlBox.IsFocused) { UrlBox.Focus(); UrlBox.SelectAll(); e.Handled = true; }   // "/" focuses search
         else if (k == System.Windows.Input.Key.Escape)
         {
