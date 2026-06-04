@@ -60,19 +60,7 @@ public sealed class LogWatcher : IDisposable
             {
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
-                // D4 Season 8 outputs "EQUIPPED" before bag items in comparison mode, not just for
-                // genuinely worn gear. The post-end-marker action is the only reliable signal:
-                //   "Unequip" → confirmed worn; "Store"/"Mark as Junk"/"Salvage" → bag item.
-                if (item.Equipped)
-                {
-                    for (int look = i + 1; look < Math.Min(i + 12, lines.Length - 1); look++)
-                    {
-                        var ctx = lines[look].Trim().ToLowerInvariant();
-                        if (ctx.Contains("unequip")) break;                        // confirmed worn
-                        if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
-                            { item.Equipped = false; break; }                      // bag item
-                    }
-                }
+                ClassifyContext(item, lines, i, lines.Length - 1);
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
                 if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
                 else { _inv[key] = item; _invOrdered.Add(item); }
@@ -85,6 +73,56 @@ public sealed class LogWatcher : IDisposable
             }
         }
         catch { /* file was mid-write; retry on the next tick */ }
+    }
+
+    /// <summary>Classify an item's UiContext and fix its Equipped flag using in-body signals and a post-end-marker
+    /// lookahead. All decisions are driven by TTS text content — no memory reads, no cursor position needed.</summary>
+    static void ClassifyContext(Item item, string[] lines, int i, int lineCount)
+    {
+        // Fast path 1: "Properties lost when equipped:" was seen inside the body — this is a bag/stash
+        // comparison item even if the EQUIPPED marker appeared before its name.
+        if (item.IsComparison)
+        {
+            item.Equipped = false;
+            item.Context = UiContext.BagItem;
+            return;
+        }
+        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) appeared immediately before the EQUIPPED
+        // block — definitively the character panel; override any subsequent misleading Store/Take signal.
+        if (item.FromCharPanel)
+        {
+            item.Equipped = true;
+            item.Context = UiContext.WornGear;
+            return;
+        }
+        // Fallback: scan up to 12 post-end-marker lines for the action verb.
+        if (item.Equipped)
+        {
+            for (int look = i + 1; look < Math.Min(i + 12, lineCount); look++)
+            {
+                var ctx = lines[look].Trim().ToLowerInvariant();
+                if (ctx.Contains("unequip"))   { item.Context = UiContext.WornGear;  return; }
+                if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
+                    { item.Equipped = false; item.Context = UiContext.BagItem;  return; }
+                if (ctx.Contains("take"))      { item.Equipped = false; item.Context = UiContext.StashItem; return; }
+                if (ctx.Contains("buy"))       { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
+                if (ctx.Contains("unlock") || ctx.Contains("refund"))
+                    { item.Equipped = false; item.Context = UiContext.ParagonNode; return; }
+            }
+            // No confirming signal within the window — trust the EQUIPPED marker as before
+            item.Context = UiContext.WornGear;
+        }
+        else
+        {
+            // Not initially flagged as equipped; classify via post-end action if visible
+            for (int look = i + 1; look < Math.Min(i + 8, lineCount); look++)
+            {
+                var ctx = lines[look].Trim().ToLowerInvariant();
+                if (ctx.Contains("take"))  { item.Context = UiContext.StashItem; return; }
+                if (ctx.Contains("store")) { item.Context = UiContext.BagItem;   return; }
+                if (ctx.Contains("buy"))   { item.Context = UiContext.VendorItem; return; }
+            }
+        }
     }
 
     /// <summary>For each slot base name keep only the N most recently logged items (last entries in the
@@ -124,17 +162,7 @@ public sealed class LogWatcher : IDisposable
         {
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
-            // Same post-end-marker lookahead as Poll(): confirm equipped vs bag item
-            if (item.Equipped)
-            {
-                for (int look = i + 1; look < Math.Min(i + 12, allLines.Length); look++)
-                {
-                    var ctx = allLines[look].Trim().ToLowerInvariant();
-                    if (ctx.Contains("unequip")) break;
-                    if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
-                        { item.Equipped = false; break; }
-                }
-            }
+            ClassifyContext(item, allLines, i, allLines.Length);
             if (equippedOnly && !item.Equipped) continue;
             ordered.Add(item);
         }

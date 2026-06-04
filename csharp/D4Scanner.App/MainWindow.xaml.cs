@@ -193,7 +193,7 @@ public partial class MainWindow : Window
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
-        Closing += (_, _) => SaveSettings();   // remember the window size (ActualWidth is still valid here)
+        Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
         Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
@@ -379,8 +379,18 @@ public partial class MainWindow : Window
     // content — re-scans with identical gear don't toast, and the initial empty→full load is silent).
     void OnLiveUpdate(LiveBuild b)
     {
-        var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, b);
-        _live = b;
+        var merged = new LiveBuild
+        {
+            Gear      = MergeGear(_live.Gear, b.Gear),
+            Inventory = b.Inventory,
+            Aspects   = b.Aspects.Count > 0 ? b.Aspects : _live.Aspects,
+            Skills    = b.Skills.Count  > 0 ? b.Skills  : _live.Skills,
+            Paragon   = b.Paragon.Count > 0 ? b.Paragon : _live.Paragon,
+            Mercenary = b.Mercenary ?? _live.Mercenary,
+        };
+        var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, merged);
+        _live = merged;
+        SaveLive();
         Render();
         if (added.Count == 1) Toast($"Equipped  {added[0]}");
         else if (added.Count > 1) Toast($"Gear updated — {added.Count} new items");
@@ -399,11 +409,21 @@ public partial class MainWindow : Window
         LoadIconIndex();
         ReloadTarget();
         LoadVision();
+        LoadLive();   // seed paper doll immediately from last-known state
         _watcher?.Dispose();
         _watcher = new LogWatcher(_log, equippedOnly: true);
         _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
         _watcher.Start();
-        _live = _watcher.Build;
+        // Merge the one-shot scan into the persisted state (rather than overwriting it wholesale)
+        _live = new LiveBuild
+        {
+            Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
+            Inventory = _watcher.Build.Inventory,
+            Aspects   = _watcher.Build.Aspects.Count > 0 ? _watcher.Build.Aspects : _live.Aspects,
+            Skills    = _watcher.Build.Skills.Count  > 0 ? _watcher.Build.Skills  : _live.Skills,
+            Paragon   = _watcher.Build.Paragon.Count > 0 ? _watcher.Build.Paragon : _live.Paragon,
+            Mercenary = _watcher.Build.Mercenary ?? _live.Mercenary,
+        };
 
         _targetPoll?.Dispose();
         _targetPoll = new System.Threading.Timer(_ =>
@@ -507,6 +527,9 @@ public partial class MainWindow : Window
                 if (string.Equals(fp, _targetPath, StringComparison.OrdinalIgnoreCase)) return;
                 _targetPath = fp; _lastImportInput = null; _lastUrl = null;   // switched build: source comes from its own metadata
                 _pinned.Clear(); _focusKey = null;
+                // Invalidate persisted gear — it was for the previous build
+                _live = new LiveBuild();
+                try { if (File.Exists(LivePath)) File.Delete(LivePath); } catch { }
                 SaveSettings(); ReloadTarget(); ApplyProfileUi(); Render();
                 Toast($"Switched to  {name}");
             };
@@ -586,6 +609,39 @@ public partial class MainWindow : Window
     {
         try { Directory.CreateDirectory(Path.GetDirectoryName(VisionPath)!); File.WriteAllText(VisionPath, JsonSerializer.Serialize(_vision, D4Scanner.Core.Json.Opts)); }
         catch { }
+    }
+
+    // Persist the last-known gear state so the paper doll shows immediately on next launch
+    // without requiring the user to re-hover all their equipped items.  Mirrors vision.json.
+    string LivePath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "live.json");
+    void LoadLive()
+    {
+        try
+        {
+            if (File.Exists(LivePath))
+            {
+                var lb = JsonSerializer.Deserialize<LiveBuild>(File.ReadAllText(LivePath), D4Scanner.Core.Json.Opts);
+                if (lb != null) _live = lb;
+            }
+        }
+        catch { }
+    }
+    void SaveLive()
+    {
+        try { File.WriteAllText(LivePath, JsonSerializer.Serialize(_live, D4Scanner.Core.Json.Opts)); }
+        catch { }
+    }
+
+    // Merge fresh scan results into the persisted live state: update slots that were re-hovered,
+    // keep persisted slots that haven't been re-hovered yet this session.
+    static List<Item> MergeGear(List<Item> persisted, List<Item> fresh)
+    {
+        if (fresh.Count == 0) return persisted;
+        var freshSlots = new HashSet<string>(
+            fresh.Select(it => DiffEngine.SlotBaseName(it.Slot ?? "")), StringComparer.OrdinalIgnoreCase);
+        var kept = persisted.Where(it => !freshSlots.Contains(DiffEngine.SlotBaseName(it.Slot ?? ""))).ToList();
+        kept.AddRange(fresh);
+        return kept;
     }
 
     async Task DoVision()

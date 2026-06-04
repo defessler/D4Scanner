@@ -35,8 +35,27 @@ public class Item
     public int? RequiresLevel { get; set; }
     public string? Aspect { get; set; }
     public bool Equipped { get; set; }
+    public bool IsComparison { get; set; }   // "Properties lost when equipped:" seen — bag/stash item, NOT worn
+    public bool FromCharPanel { get; set; }  // preceded by a character-panel slot header — definitively worn
+    public UiContext Context { get; set; }   // classified surface (WornGear / BagItem / etc.)
     public List<Affix> Affixes { get; set; } = new();
     public List<string> PowerText { get; set; } = new();
+}
+
+/// <summary>The D4 UI surface an item was captured from. Derived from TTS context signals.</summary>
+public enum UiContext
+{
+    Unknown,
+    WornGear,       // character panel: Unequip action, slot header, or FromCharPanel
+    BagItem,        // inventory: Store/Mark as Junk/Salvage action
+    StashItem,      // stash: Take action
+    VendorItem,     // vendor: Buy + Cost : N Obols
+    ParagonNode,    // Unlock/Refund + Normal/Magic/Rare/Legendary Node
+    ParagonGlyph,   // Glyph Socket + SOCKETED GLYPH (drops via LooksLikeItem — only for future use)
+    Skill,          // RANK n/m + MODIFIERS + Item Contribution
+    Charm,          // Set Charm / Unique Charm + Talisman header
+    HoradricSeal,   // Horadric Seal type + Unlocks N Charm Slots
+    Rune,           // Rune of Invocation/Ritual + In bags: N
 }
 
 public class LiveSkill

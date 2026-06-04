@@ -145,6 +145,7 @@ public class GearParser
             if (af != null) { item.Affixes.Add(af); continue; }
             if (ln.Any(char.IsLower) && ln.Length > 8) item.PowerText.Add(ln);
         }
+        item.IsComparison = afterPropertiesLost;   // bag/stash comparison — never worn
         return item;
     }
 
@@ -159,14 +160,29 @@ public class GearParser
     string? _name;
     List<string> _body = new();
     bool _equip, _blockEquip;
+    bool _seenSlotHeader, _blockFromCharPanel;
 
-    void Start(string nc) { _name = nc; _body = new(); _blockEquip = _equip; _equip = false; }
+    // D4 character-panel slot headers — voiced when the player opens the character sheet.
+    // If one of these immediately precedes an EQUIPPED block it confirms the item is definitively worn.
+    static readonly HashSet<string> SlotHeaders = new(StringComparer.OrdinalIgnoreCase)
+        { "Head", "Torso", "Hands", "Legs", "Feet", "Ring", "Neck",
+          "Main Hand", "Off-Hand", "Ranged", "Ranged Weapon" };
+
+    void Start(string nc)
+    {
+        _name = nc; _body = new();
+        _blockEquip = _equip;
+        _blockFromCharPanel = _seenSlotHeader;
+        _equip = false; _seenSlotHeader = false;
+    }
 
     /// <summary>Feed one raw log line; returns a completed Item when a tooltip block ends (else null).</summary>
     public Item? Feed(string raw)
     {
         var ln = Clean(raw);
         if (ln.Length == 0) return null;
+        // Slot headers confirm character panel; detect before the EQUIPPED check so they're not consumed by it
+        if (SlotHeaders.Contains(ln)) { _seenSlotHeader = true; return null; }
         if (ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) { _equip = true; return null; }
         var low = ln.ToLowerInvariant();
         var nc = NameCandidate(ln);
@@ -175,7 +191,8 @@ public class GearParser
         {
             var item = ParseBlock(_name, _body);
             item.Equipped = _blockEquip;
-            _name = null; _body = new(); _blockEquip = false;
+            item.FromCharPanel = _blockFromCharPanel;
+            _name = null; _body = new(); _blockEquip = false; _blockFromCharPanel = false;
             return LooksLikeItem(item) ? item : null;   // drop menu/map noise
         }
         if (nc != null) { Start(nc); return null; }
