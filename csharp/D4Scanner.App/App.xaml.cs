@@ -1,3 +1,6 @@
+using D4Scanner.Core;
+using System.Diagnostics;
+
 namespace D4Scanner.App;
 
 public partial class App : System.Windows.Application
@@ -18,6 +21,31 @@ public partial class App : System.Windows.Application
             Shutdown(0);
             return;
         }
+
+        // Auto-update: if a newer staged exe is already downloaded from a previous session,
+        // apply it now (before any window appears) — rename the running image, copy the new
+        // one into its place, relaunch, and exit.  Falls back gracefully if the swap fails.
+        var staged = Updater.FindStagedUpdate();
+        if (staged.HasValue)
+        {
+            var exe = System.Environment.ProcessPath
+                   ?? Process.GetCurrentProcess().MainModule!.FileName;
+            if (Updater.TryApplyStaged(staged.Value.path, exe))
+            {
+                Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+                Shutdown(0);
+                return;
+            }
+        }
+
+        // Clean up the .old sidecar left by a prior successful update (best-effort)
+        try
+        {
+            Updater.CleanUpOld(System.Environment.ProcessPath
+                             ?? Process.GetCurrentProcess().MainModule!.FileName);
+        }
+        catch { }
+
         base.OnStartup(e);
     }
 }

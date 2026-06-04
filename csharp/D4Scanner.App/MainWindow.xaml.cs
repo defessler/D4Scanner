@@ -147,6 +147,11 @@ public partial class MainWindow : Window
     readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
 
+    // auto-updater state
+    System.Threading.Timer? _updateTimer;
+    string? _pendingUpdateTag;          // tag of a downloaded update ready to apply
+    string? _skipUpdateVersion;         // user-chosen "remind me later" version (persisted)
+
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
 
@@ -193,8 +198,9 @@ public partial class MainWindow : Window
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
+        UpdateBtn.Click += (_, _) => RestartToApplyUpdate();
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
-        Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); };
+        Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
         {
@@ -318,6 +324,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
                         CaptureSetup.UserGameDir = gd;
                     if (s.TryGetValue("debug", out var dbg)) _debugMode = dbg == "1";
+                    if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -349,7 +356,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0" }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion }));
         }
         catch { }
     }
@@ -407,6 +414,13 @@ public partial class MainWindow : Window
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
+        CheckForUpdatesAsync();        // check on every launch
+        _updateTimer?.Dispose();
+        _updateTimer = new System.Threading.Timer(
+            _ => Dispatcher.Invoke(CheckForUpdatesAsync),
+            null,
+            TimeSpan.FromHours(4),     // first periodic check: 4 hours after launch
+            TimeSpan.FromHours(4));    // then every 4 hours while running
         ReloadTarget();
         LoadVision();
         LoadLive();   // seed paper doll immediately from last-known state
@@ -1094,6 +1108,38 @@ public partial class MainWindow : Window
         if (Math.Abs(z - _uiScale) < 0.001) return;
         _uiScale = z; ApplyZoom(); SaveSettings();
         Toast($"Zoom  {(int)Math.Round(_uiScale * 100)}%");
+    }
+
+    // ---- auto-updater ----
+
+    async void CheckForUpdatesAsync()
+    {
+        var latest = await Updater.GetLatestTagAsync();
+        if (latest == null) return;
+        if (!Updater.IsNewer(latest, Updater.RunningVersion())) return;   // already current
+        if (latest == _skipUpdateVersion) return;                         // user skipped this version
+
+        // Already staged from a prior check?
+        if (Updater.FindStagedUpdate().HasValue) { ShowUpdateReady(latest); return; }
+
+        // Download in background; ~70 MB — show Toast when done
+        bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));
+        if (ok) Dispatcher.Invoke(() => ShowUpdateReady(latest));
+    }
+
+    void ShowUpdateReady(string tag)
+    {
+        _pendingUpdateTag = tag;
+        UpdateBtn.Visibility = Visibility.Visible;
+        Toast($"{tag} downloaded — restart to apply");
+    }
+
+    void RestartToApplyUpdate()
+    {
+        var exe = System.Environment.ProcessPath
+               ?? System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
+        Application.Current.Shutdown();
     }
 
     void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build details"; Render(); }

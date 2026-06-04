@@ -54,11 +54,14 @@ jobs:
       - name: Publish single-file self-contained exe
         shell: pwsh
         run: |
-          dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained true `
-            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true -o publish
           $tag = "${{ github.ref_name }}"
           if (-not $tag.StartsWith('v')) { $tag = 'dev' }   # workflow_dispatch has no tag
+          # Embed the version in the assembly so the auto-updater can compare it at runtime
+          $ver = $tag.TrimStart('v')
+          if ($ver -notmatch '^\d') { $ver = '0.0.0' }
+          dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true -p:Version=$ver -o publish
           Copy-Item publish/D4Scanner.exe "D4Scanner-$tag-win-x64.exe"
 
       # Optional Authenticode signing — only runs if a CODESIGN_PFX_BASE64 secret is set.

@@ -9,6 +9,7 @@
     <AssemblyName>D4Scanner</AssemblyName>
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.6.2</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
