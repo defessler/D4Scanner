@@ -14,6 +14,11 @@ public sealed class LogWatcher : IDisposable
     readonly GearParser _seg = new();
     readonly Dictionary<string, Item> _items = new();
     readonly Dictionary<string, Item> _inv = new();
+    // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
+    // Reverse().GroupBy().Take(N) gives the N most recently scanned items per slot — not the N
+    // items whose key was first inserted earliest, which is the bug with dict insertion order.
+    readonly List<Item> _itemsOrdered = new();
+    readonly List<Item> _invOrdered = new();
     long _pos;
     string _buf = "";
     System.Threading.Timer? _timer;
@@ -55,16 +60,15 @@ public sealed class LogWatcher : IDisposable
             {
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
+                var key = (item.Slot ?? "?") + ":" + item.RawName;
                 // equipped items are the live build; non-equipped (bags/stash) feed upgrade-finding
-                if (item.Equipped || !_equippedOnly) _items[(item.Slot ?? "?") + ":" + item.RawName] = item;
-                else _inv[(item.Slot ?? "?") + ":" + item.RawName] = item;
+                if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
+                else { _inv[key] = item; _invOrdered.Add(item); }
                 changed = true;
             }
             if (changed)
             {
-                // Inventory also gets deduped by slot (keep last 15 per slot — enough for a full bag row
-                // while dropping very old items from previous sessions that would otherwise cause false upgrades)
-                Build = new LiveBuild { Gear = LatestPerSlot(_items.Values), Inventory = LatestPerSlot(_inv.Values, 15) };
+                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15) };
                 Updated?.Invoke(Build);
             }
         }
@@ -98,15 +102,19 @@ public sealed class LogWatcher : IDisposable
     public static LiveBuild BuildFromFile(string path, bool equippedOnly = true)
     {
         var seg = new GearParser();
-        var items = new Dictionary<string, Item>();
+        // Use a list (not a dict) so items appear in FILE ORDER — re-scans of the same item
+        // append a newer entry after the older one, letting LatestPerSlot correctly pick the
+        // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
+        // slot:rawname key was first inserted earliest in the log.
+        var ordered = new List<Item>();
         foreach (var raw in File.ReadLines(path))
         {
             var item = seg.Feed(raw);
             if (item == null) continue;
             if (equippedOnly && !item.Equipped) continue;
-            items[(item.Slot ?? "?") + ":" + item.RawName] = item;
+            ordered.Add(item);
         }
-        return new LiveBuild { Gear = LatestPerSlot(items.Values) };
+        return new LiveBuild { Gear = LatestPerSlot(ordered) };
     }
 }
 

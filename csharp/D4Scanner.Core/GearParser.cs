@@ -119,8 +119,14 @@ public class GearParser
     static Item ParseBlock(string name, List<string> body)
     {
         var item = new Item { Name = DisplayName(name), RawName = name };
+        bool afterPropertiesLost = false;   // skip comparison-diff stats after this marker
         foreach (var ln in body)
         {
+            // "Properties lost when equipped:" marks the start of comparison diff stats (e.g. "+925 Armor"
+            // showing what you'd lose from the current item). Skip everything after this line so those
+            // fake stats don't get parsed as the NEW item's affixes.
+            if (ln.Contains("Properties lost when equipped", StringComparison.OrdinalIgnoreCase)) { afterPropertiesLost = true; continue; }
+            if (afterPropertiesLost) continue;
             var mp = ReItemPower.Match(ln);
             if (mp.Success && item.ItemPower == null && !ln.ToLowerInvariant().Contains("per second"))
             { item.ItemPower = (int?)ToNum(mp.Groups[1].Value); continue; }
