@@ -199,7 +199,7 @@ public partial class MainWindow : Window
         HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         SettingsBtn.Click += (_, _) => ShowSettings();
-        CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal();
+        // CheckUpdatesBtn.Click is wired later (after UpdateBtn.Click override) — no-op here
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -237,7 +237,7 @@ public partial class MainWindow : Window
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
-        UpdateBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
+        CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
         Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _jsonl?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
@@ -454,8 +454,8 @@ public partial class MainWindow : Window
         _live = merged;
         SaveLive();
         Render();
-        if (added.Count == 1) Toast($"Equipped  {added[0]}");
-        else if (added.Count > 1) Toast($"Gear updated — {added.Count} new items");
+        if (added.Count == 1) { Toast($"Equipped  {added[0]}"); AppLog($"equipped: {added[0]}"); }
+        else if (added.Count > 1) { Toast($"Gear updated — {added.Count} new items"); AppLog($"gear update: {added.Count} new items — {string.Join(", ", added)}"); }
     }
 
     static List<string> NewlyEquipped(LiveBuild oldB, LiveBuild newB)
@@ -466,6 +466,7 @@ public partial class MainWindow : Window
 
     void StartWatching()
     {
+        AppLog($"D4Scanner {Updater.RunningVersion()} started — log: {_log}");
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
@@ -986,7 +987,19 @@ public partial class MainWindow : Window
         var selCat = sections.FirstOrDefault(x => x.Key == _selectedKey && x.Cat != null);
         if (selCat != null) Body.Children.Add(DetailPanel(selCat));
 
-        Status.Text = $"● live  ·  log: {_log}  ·  target: {Path.GetFileName(_targetPath)}";
+        int gearCount = _live.Gear.Count;
+        string ago = "";
+        long latestTick = _live.Gear.Count > 0 ? _live.Gear.Max(g => g.LastScannedTicks) : 0;
+        if (latestTick > 0)
+        {
+            var since = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - latestTick);
+            ago = since.TotalSeconds < 120 ? $" · last scan {(int)since.TotalSeconds}s ago"
+                : since.TotalMinutes < 60  ? $" · last scan {(int)since.TotalMinutes}m ago"
+                : $" · last scan {since.TotalHours:0.0}h ago";
+        }
+        string src = _useTts && _useCapture ? "TTS+OCR" : _useTts ? "TTS" : _useCapture ? "OCR" : "offline";
+        Status.Text = $"● live  ·  {gearCount} items  ·  {src}{ago}";
+        StatusDetail.Text = $"{Path.GetFileName(_log)}";
     }
 
     // shown when the TTS capture shim isn't installed — one-click install into the Diablo IV folder
@@ -1114,6 +1127,26 @@ public partial class MainWindow : Window
     }
 
     // transient, non-blocking confirmation (bottom-center, auto-fades). Use instead of MessageBox for routine success.
+    string AppLogPath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "d4scanner_app.log");
+
+    void AppLog(string msg)
+    {
+        try
+        {
+            var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}";
+            File.AppendAllText(AppLogPath, line + Environment.NewLine);
+            // Trim to last 2000 lines to prevent unbounded growth
+            var path = AppLogPath;
+            try
+            {
+                var lines = File.ReadAllLines(path);
+                if (lines.Length > 2500) File.WriteAllLines(path, lines[^2000..]);
+            }
+            catch { }
+        }
+        catch { }
+    }
+
     void Toast(string msg)
     {
         var card = new Border
@@ -1194,8 +1227,10 @@ public partial class MainWindow : Window
     void ShowUpdateReady(string tag)
     {
         _pendingUpdateTag = tag;
-        UpdateBtn.Visibility = Visibility.Visible;
-        Toast($"{tag} downloaded — click ↑ Update to install");
+        CheckUpdatesBtn.Content = $"↑ Update {tag}";
+        CheckUpdatesBtn.Style = (Style)FindResource("Primary");
+        AppLog($"update {tag} staged and ready to install");
+        Toast($"{tag} ready — click Update in the status bar to install");
     }
 
     async void ShowUpdateModal(string? knownTag = null)
@@ -1281,8 +1316,7 @@ public partial class MainWindow : Window
             progressRow.Visibility = Visibility.Collapsed;
             if (ok)
             {
-                _pendingUpdateTag = tag;
-                UpdateBtn.Visibility = Visibility.Visible;
+                ShowUpdateReady(tag);
                 installBtn.IsEnabled = true;
             }
             else
@@ -2238,9 +2272,9 @@ public partial class MainWindow : Window
         var backdropPortrait = LoadCharacterImage();
         if (backdropPortrait != null)
         {
-            backdropPortrait.Stretch = Stretch.UniformToFill;
+            backdropPortrait.Stretch = Stretch.Uniform;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Top;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
             backdropPortrait.Opacity = 0.55;
             // Gradient centre shifted to Y=0.28 so the character's head stays fully opaque at the top edge.
             var mask = new RadialGradientBrush

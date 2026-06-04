@@ -90,9 +90,6 @@
                 </Border>
               </Popup>
               <Button x:Name="LogBtn" Content="Log" FontSize="14" Margin="9,0,0,0"/>
-              <Button x:Name="UpdateBtn" Content="↑ Update" FontSize="14" Margin="9,0,0,0"
-                      Visibility="Collapsed" Style="{StaticResource Primary}"
-                      ToolTip="A new version has been downloaded — restart to apply"/>
               <Button x:Name="SettingsBtn" Content="⚙" FontSize="14" Margin="9,0,0,0" ToolTip="Settings"/>
             </StackPanel>
           </Grid>
@@ -137,6 +134,8 @@
                   Content="Install capture DLL" FontSize="12.5" Padding="14,4" Margin="12,0,0,0" Visibility="Collapsed"/>
           <Button x:Name="CheckUpdatesBtn" DockPanel.Dock="Right" Content="Check for updates"
                   FontSize="12" Padding="12,4" Margin="12,0,0,0" ToolTip="Check for a newer version of D4Scanner"/>
+          <TextBlock x:Name="StatusDetail" DockPanel.Dock="Right" Foreground="{StaticResource Faint}"
+                     FontSize="11.5" VerticalAlignment="Center" Margin="0,0,18,0"/>
           <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…"
                      VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
