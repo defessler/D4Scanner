@@ -121,7 +121,12 @@ public static class DiffEngine
         if (id.Contains("polearm") && lt.Contains("polearm")) return true;
         if (id.Contains("spear") && lt.Contains("spear")) return true;
         if (id.Contains("wand") && lt.Contains("wand")) return true;
-        if (id.Contains("glaive") && lt.Contains("glaive")) return true;
+        if (id.Contains("glaive")      && lt.Contains("glaive"))      return true;
+        if (id.Contains("quarterstaff") && lt.Contains("quarterstaff")) return true;
+        if (id.Contains("spear")        && lt.Contains("spear"))        return true;
+        if (id.Contains("totem")        && lt.Contains("totem"))        return true;
+        if (id.Contains("focus")        && lt.Contains("focus"))        return true;
+        if (id.Contains("shield")       && lt.Contains("shield"))       return true;
         return false;
     }
 
