@@ -176,7 +176,7 @@ public class GearParser
     {
         if (it == null) return false;
         if (it.ItemPower != null) return true;
-        if (it.Slot is "seal" or "charm") return it.Rarity != null;   // Season 8: no Item Power line
+        if (it.Slot is "seal" or "charm" or "rune") return it.Rarity != null;   // Season 8: no Item Power line
         return it.Rarity != null && it.Affixes.Count > 0;
     }
 
