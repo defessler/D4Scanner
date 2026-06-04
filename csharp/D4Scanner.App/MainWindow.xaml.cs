@@ -1798,10 +1798,13 @@ public partial class MainWindow : Window
             catch { /* not yet in the visual tree — keep default Right */ }
         }
         _hoverPopup.PlacementTarget = target;
-        // no outer wrapper — the compare card's own panels provide all the visual background
         var cc = CompareCard(s.Gear, it, s.Label);
         ((FrameworkElement)cc).MaxWidth = 780;
-        _hoverPopup.Child = cc;
+        _hoverPopup.Child = new Border
+        {
+            Background = B("#0D0D10"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7), Padding = new Thickness(10), Child = cc,
+        };
         _hoverPopup.IsOpen = true;
     }
 
