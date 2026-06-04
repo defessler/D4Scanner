@@ -1599,13 +1599,35 @@ public partial class MainWindow : Window
                 delBtn.Visibility = Visibility.Collapsed;
                 _hoverPopup.IsOpen = false;
             };
+            // Tiny inline "Pinned ✓" / "Unpinned" label that fades in/out on the card — modal stays open
+            var pinLabel = new TextBlock
+            {
+                FontSize = 9.5, FontWeight = System.Windows.FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2, 4, 0), Opacity = 0,
+            };
+            delGrid.Children.Add(pinLabel);
+
             card.MouseLeftButtonUp += (_, _) =>
             {
                 bool wasPinned = _pinned.Remove(capturedSec.Key);
                 if (!wasPinned) _pinned.Add(capturedSec.Key);
                 _hoverPopup.IsOpen = false;
-                Close(); Render();
-                Toast(wasPinned ? $"Unpinned {capturedItem.Name}" : $"Pinned {capturedItem.Name}");
+
+                // Update card visuals in-place (avoid closing the modal)
+                bool nowPinned = !wasPinned;
+                card.Background = nowPinned ? TileSel : Card;
+                card.BorderBrush = nowPinned ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B));
+                card.BorderThickness = new Thickness(nowPinned ? 1.5 : 1);
+                pinLabel.Text = nowPinned ? "Pinned ✓" : "Unpinned";
+                pinLabel.Foreground = nowPinned ? Gold : Soft;
+
+                // Fade in then out
+                pinLabel.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120)));
+                var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(300)) { BeginTime = TimeSpan.FromMilliseconds(1200) };
+                pinLabel.BeginAnimation(OpacityProperty, fade);
+
+                Render();   // update compare deck in the main window behind the modal
             };
             wrap.Children.Add(card);
         }
