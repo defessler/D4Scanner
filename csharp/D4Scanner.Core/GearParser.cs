@@ -24,6 +24,8 @@ public class GearParser
         ("Polearm", "weapon"), ("Scythe", "weapon"), ("Glaive", "weapon"),
         ("Quarterstaff", "weapon"), ("Spear", "weapon"),
         ("Focus", "offhand"), ("Shield", "offhand"), ("Totem", "offhand"),
+        // Season 8 (Vessel of Hatred) item types
+        ("Horadric Seal", "seal"), ("Set Charm", "charm"), ("Unique Charm", "charm"),
     };
     static readonly string[] Rarities =
         { "Mythic Unique", "Mythic", "Unique", "Legendary", "Rare", "Magic", "Common" };
@@ -173,6 +175,7 @@ public class GearParser
     {
         if (it == null) return false;
         if (it.ItemPower != null) return true;
+        if (it.Slot is "seal" or "charm") return it.Rarity != null;   // Season 8: no Item Power line
         return it.Rarity != null && it.Affixes.Count > 0;
     }
 
