@@ -9,7 +9,7 @@
     <AssemblyName>D4Scanner</AssemblyName>
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.6.4</Version>
+    <Version>0.6.5</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
@@ -28,3 +28,4 @@
     <EmbeddedResource Include="..\..\dll\d4scanner-tts.cer"><LogicalName>d4scanner-tts.cer</LogicalName></EmbeddedResource>
   </ItemGroup>
 </Project>
+
