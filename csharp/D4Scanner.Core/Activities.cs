@@ -30,7 +30,7 @@ public static class Activities
 
         if (MissingIn("aspects"))
             acts.Add(new("Fill your Codex of Power (or enchant)",
-                "Salvage spare Legendaries at the Blacksmith to extract their Aspects into your Codex, then imprint them onto gear at the Occultist."));
+                "Salvage spare Legendaries at the Blacksmith to extract Aspects into your Codex, then Imprint at the Occultist. Codex unlocks are permanent and free to imprint."));
 
         if (missAffix)
             acts.Add(new("Chase the missing affixes",
