@@ -152,6 +152,11 @@ public sealed class LogWatcher : IDisposable
                             var key = it.SlotPosition > 0 ? $"{name}:{it.SlotPosition}" : name;
                             return seen.Add(key);
                         })
+                        // Stable ordering so ring/weapon assignment doesn't flip with scan order:
+                        // items scanned from the character panel (SlotPosition > 0) sort by their
+                        // known panel position; items without position sort after, alphabetically.
+                        .OrderBy(it => it.SlotPosition > 0 ? it.SlotPosition : 999)
+                        .ThenBy(it => it.RawName.Length > 0 ? it.RawName : it.Name, StringComparer.OrdinalIgnoreCase)
                         .Take(max);
             })
             .ToList();

@@ -42,6 +42,16 @@ public partial class MainWindow : Window
     static Color RarityColor(string? rarity) => ((SolidColorBrush)RarityBrush(rarity)).Color;
     static Color Lighten(Color c, double f) =>
         Color.FromRgb((byte)(c.R + (255 - c.R) * f), (byte)(c.G + (255 - c.G) * f), (byte)(c.B + (255 - c.B) * f));
+    // Composite a semi-transparent rarity colour onto the dark base (#16171B) to get a fully opaque result.
+    // Used for the tooltip gradient so the panel is never transparent regardless of what's behind the popup.
+    static Color BlendOntoBase(Color rc, byte alpha)
+    {
+        float a = alpha / 255f;
+        return Color.FromRgb(
+            (byte)(rc.R * a + 0x16 * (1 - a)),
+            (byte)(rc.G * a + 0x17 * (1 - a)),
+            (byte)(rc.B * a + 0x1B * (1 - a)));
+    }
 
     // a horizontal transparent→color→transparent gradient (ornamental dividers / tints)
     static Brush HGrad(Color c, byte midAlpha)
@@ -879,13 +889,20 @@ public partial class MainWindow : Window
         // each get their own tile — we don't block by slot key since a slot can hold several weapons.
         var synthesizedUniques = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var liveNow = EffectiveLive();
+        // Track which live items were already assigned to gear sections by DiffEngine so the unique
+        // section fallback doesn't show the same weapon for both gear:N and the unique tile.
+        var assignedLiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sec in sections)
+            if (sec.Gear != null)
+                foreach (var li in sec.Gear.LiveItems) assignedLiveNames.Add(li.Name);
         foreach (var u in _target?.Uniques ?? new())
         {
             var sk = SlotKey(u.Slot ?? "");
             if (sk.Length == 0 || !synthesizedUniques.Add(u.Name)) continue;   // skip if no slot or already added
             string slotLabel = string.IsNullOrEmpty(u.Slot) ? u.Name : char.ToUpperInvariant(u.Slot![0]) + u.Slot[1..];
-            var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.PhraseMatch(u.Name, it.Name))   // prefer the specific unique
+            var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.PhraseMatch(u.Name, it.Name))   // prefer exact unique match
                   ?? liveNow.Gear.FirstOrDefault(it => DiffEngine.SlotBaseName(it.Slot) == DiffEngine.SlotBaseName(u.Slot ?? "")
+                         && !assignedLiveNames.Contains(it.Name)     // don't re-use a weapon already shown on a gear slot
                          && !synthesizedUniques.Any(n => !n.Equals(u.Name, StringComparison.OrdinalIgnoreCase) && DiffEngine.PhraseMatch(n, it.Name)));
             bool have = liveNow.Gear.Any(it => DiffEngine.PhraseMatch(u.Name, it.Name));
             var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
@@ -2389,7 +2406,7 @@ public partial class MainWindow : Window
         inner.Children.Add(rows);
         return new Border
         {
-            Background = new LinearGradientBrush(Color.FromArgb(0x22, rarity.R, rarity.G, rarity.B), Col("#16171B"), 90),
+            Background = new LinearGradientBrush(BlendOntoBase(rarity, 0x22), Col("#16171B"), 90),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0xC8, rarity.R, rarity.G, rarity.B)),
             BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(7),
             Padding = new Thickness(18, 14, 18, 16), VerticalAlignment = VerticalAlignment.Top, Child = inner,

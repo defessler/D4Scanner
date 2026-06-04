@@ -103,6 +103,28 @@ public static class DiffEngine
         return false;
     }
 
+    /// <summary>True when a target ItemId and a live ItemType refer to the same weapon type.
+    /// Used to give a big assignment-score bonus so a crossbow target always picks the crossbow.</summary>
+    static bool WeaponTypeMatch(string? targetItemId, string? liveItemType)
+    {
+        if (string.IsNullOrEmpty(targetItemId) || string.IsNullOrEmpty(liveItemType)) return false;
+        var id = targetItemId.ToLowerInvariant();
+        var lt = liveItemType.ToLowerInvariant();
+        if (id.Contains("crossbow") && lt.Contains("crossbow")) return true;
+        if (id.Contains("bow") && !id.Contains("crossbow") && lt.Contains("bow") && !lt.Contains("crossbow")) return true;
+        if (id.Contains("sword") && lt.Contains("sword")) return true;
+        if (id.Contains("dagger") && lt.Contains("dagger")) return true;
+        if (id.Contains("mace") && lt.Contains("mace")) return true;
+        if (id.Contains("axe") && lt.Contains("axe")) return true;
+        if (id.Contains("staff") && lt.Contains("staff")) return true;
+        if (id.Contains("scythe") && lt.Contains("scythe")) return true;
+        if (id.Contains("polearm") && lt.Contains("polearm")) return true;
+        if (id.Contains("spear") && lt.Contains("spear")) return true;
+        if (id.Contains("wand") && lt.Contains("wand")) return true;
+        if (id.Contains("glaive") && lt.Contains("glaive")) return true;
+        return false;
+    }
+
     /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
     public static string SlotBaseName(string? slot) => SlotBase(slot);
 
@@ -134,6 +156,12 @@ public static class DiffEngine
                     {
                         if (taken[i]) continue;
                         int score = aff.Count(a => liveIts[i].Affixes.Any(x => PhraseMatch(a.Name, x.Text)));
+                        // Type-affinity bonus: when the target slot has an ItemId encoding a weapon type (e.g.
+                        // "2HCrossbow_Legendary_..."), strongly prefer a live item whose ItemType matches.
+                        // A 100-point bonus dominates the affix-count score so a crossbow target always picks
+                        // the crossbow over a sword with more matching affixes.
+                        if (kv.Key == "weapon" && WeaponTypeMatch(target.Gear[idx].ItemId, liveIts[i].ItemType))
+                            score += 100;
                         if (score > bestScore) { bestScore = score; best = i; }
                     }
                     if (best >= 0) { taken[best] = true; assigned[idx] = liveIts[best]; } else assigned[idx] = null;
