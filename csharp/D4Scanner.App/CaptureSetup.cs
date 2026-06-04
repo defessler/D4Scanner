@@ -134,8 +134,18 @@ public static class CaptureSetup
         return places.Any(File.Exists);
     }
 
-    /// <summary>Reads the shim version from an installed DLL by calling the exported SA_GetVersion() function.
-    /// Returns 0 if the DLL is versionless (pre-v2), missing, or the export is absent.</summary>
+    [System.Runtime.InteropServices.DllImport("kernel32", SetLastError = true)]
+    static extern IntPtr LoadLibraryExW([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string path, IntPtr file, uint flags);
+    [System.Runtime.InteropServices.DllImport("kernel32")]
+    static extern IntPtr GetProcAddress(IntPtr module, string name);
+    [System.Runtime.InteropServices.DllImport("kernel32")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool FreeLibrary(IntPtr module);
+    const uint LOAD_LIBRARY_AS_DATAFILE = 0x00000002;
+
+    /// <summary>Reads the shim version from an installed DLL by scanning for the SA_GetVersion export.
+    /// Uses LOAD_LIBRARY_AS_DATAFILE so DllMain never runs (no log writes, no conflict with D4).
+    /// Returns 0 if the DLL is versionless (pre-v2). Returns -1 if no DLL is installed or it can't be read.</summary>
     public static int InstalledShimVersion()
     {
         var places = new List<string> { Path.Combine(BinDir, "saapi64.dll") };
@@ -143,27 +153,51 @@ public static class CaptureSetup
         foreach (var p in places)
         {
             if (!File.Exists(p)) continue;
-            IntPtr lib = IntPtr.Zero;
+            var lib = IntPtr.Zero;
             try
             {
-                // Load as a data file — does NOT invoke DllMain or register it as a screen reader
-                lib = System.Runtime.InteropServices.NativeLibrary.Load(p);
-                if (System.Runtime.InteropServices.NativeLibrary.TryGetExport(lib, "SA_GetVersion", out var addr))
+                lib = LoadLibraryExW(p, IntPtr.Zero, LOAD_LIBRARY_AS_DATAFILE);
+                if (lib == IntPtr.Zero) return 0;   // loaded as data — GetProcAddress won't work on data-only loads
+                // LOAD_LIBRARY_AS_DATAFILE: GetProcAddress works only on full loads.
+                // Fall back to searching the export by name in the raw PE bytes instead.
+            }
+            finally { if (lib != IntPtr.Zero) FreeLibrary(lib); }
+
+            // Scan the raw DLL bytes for the SA_GetVersion export name — reliable without full load.
+            try
+            {
+                var bytes = File.ReadAllBytes(p);
+                bool hasExport = System.Text.Encoding.ASCII.GetString(bytes).Contains("SA_GetVersion");
+                if (!hasExport) return 0;   // versionless DLL — no SA_GetVersion export
+                // Export exists; now call it via a full (non-data) load to get the actual version
+                var fullLib = IntPtr.Zero;
+                try
                 {
+                    fullLib = LoadLibraryExW(p, IntPtr.Zero, 0);
+                    if (fullLib == IntPtr.Zero) return 0;
+                    var addr = GetProcAddress(fullLib, "SA_GetVersion");
+                    if (addr == IntPtr.Zero) return 0;
                     var fn = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<Func<int>>(addr);
                     return fn();
                 }
-                // No SA_GetVersion export → pre-v2 versionless DLL
-                return 0;
+                finally { if (fullLib != IntPtr.Zero) FreeLibrary(fullLib); }
             }
-            catch { }
-            finally { if (lib != IntPtr.Zero) System.Runtime.InteropServices.NativeLibrary.Free(lib); }
+            catch { return 0; }
         }
-        return -1;   // not installed
+        return -1;   // no DLL found
     }
 
-    /// <summary>True if an installed saapi64.dll is older than the embedded one (includes the versionless legacy DLL).</summary>
-    public static bool NeedsUpgrade() => Installed() && InstalledShimVersion() < CurrentShimVersion;
+    /// <summary>True if an installed saapi64.dll is confirmed outdated. Returns false when the version
+    /// cannot be determined (avoids a spurious banner when D4 locks the DLL or other load failures).</summary>
+    public static bool NeedsUpgrade()
+    {
+        if (!Installed()) return false;
+        int v = InstalledShimVersion();
+        // Only prompt when we CONFIRMED a specific version lower than current.
+        // -1 = can't determine (no DLL or unreadable) → don't prompt.
+        // 0  = versionless legacy DLL → prompt.
+        return v >= 0 && v < CurrentShimVersion;
+    }
 
     public static (bool ok, string message) Install()
     {
