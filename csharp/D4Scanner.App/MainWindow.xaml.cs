@@ -1983,9 +1983,16 @@ public partial class MainWindow : Window
     // also returns the item id/image so icon sources keyed by id/image can resolve it.
     (string name, Brush col, string? iconName, string? id, long? image) WantedFor(Section s)
     {
-        var key = SlotKey(s.Label);
-        var u = _target?.Uniques.FirstOrDefault(x => SlotKey(x.Slot ?? "") == key);
-        if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
+        // Gear affix sections (gear:N) never show a unique — the unique has its own separate tile (uni:*).
+        // Showing a unique here caused ALL weapon/ring slots to show the same unique (e.g. both the
+        // Crossbow and Sword sections both matched "Etna's Lost Dagger" via SlotKey=="weapon").
+        // Unique sections (uni:*) match by the normalized unique name embedded in the section key.
+        if (s.Key.StartsWith("uni:"))
+        {
+            var normalizedKey = s.Key.Substring(4);   // strip "uni:" to get the normalized unique name
+            var u = _target?.Uniques.FirstOrDefault(x => DiffEngine.Normalize(x.Name) == normalizedKey);
+            if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
+        }
         var tg = TargetGearOf(s);
         if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null, tg?.ItemId, tg?.Image);
         return ("Any " + s.Label, Soft, null, tg?.ItemId, tg?.Image);
