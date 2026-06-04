@@ -36,6 +36,7 @@ public static class Activities
             acts.Add(new("Chase the missing affixes",
                 "Enchant a single affix at the Occultist to reroll toward a missing stat, gamble fresh items at the Purveyor, or farm targeted drops in Helltides and Nightmare Dungeons."));
 
+        // Temper step shown when the build has manually-forged affixes that are missing
         if (needTemper)
             acts.Add(new("Temper at the Blacksmith",
                 "Add the build's manual affixes via Tempering (limited rerolls per item — check the counter before tempering). Stock Tempering Manuals from Whisper caches and Helltides."));
