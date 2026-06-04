@@ -44,6 +44,7 @@ public static class Activities
             acts.Add(new("Socket gems & runes (Jeweler)",
                 "Add sockets and craft/upgrade the gems and runes your build wants at the Jeweler; you can unsocket without losing them."));
 
+        // Helltide farming is valuable when gear actively needs crafting work
         if (under && (missAffix || needTemper || wantSockets))
             acts.Add(new("Run Helltides for crafting currency",
                 "Helltides drop Forgotten Souls (for enchanting), Sigil Powder, and raw materials. Open Tortured Gifts for targeted gear drops."));
