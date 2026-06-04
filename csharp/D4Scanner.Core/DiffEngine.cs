@@ -133,7 +133,7 @@ public static class DiffEngine
     public static string? WeaponTypeFromItemId(string? itemId) {
         if (string.IsNullOrEmpty(itemId)) return null;
         var p = itemId.Split("_")[0]; var h = (p.StartsWith("1H")||p.StartsWith("2H")) ? p.Substring(2) : p;
-        return h.Length > 1 ? h : null;
+        return h.Length > 1 ? char.ToUpperInvariant(h[0]) + h.Substring(1).ToLowerInvariant() : null;
     }
 
     /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
