@@ -134,6 +134,7 @@ public partial class MainWindow : Window
     OcrCaptureEngine? _captureEngine;
     bool _useTts = true;
     bool _useCapture = false;
+    LogToJsonlConverter? _jsonl;   // mirrors the TTS log to a one-item-per-line .jsonl side-car
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
     LiveBuild _live = new();
@@ -162,7 +163,6 @@ public partial class MainWindow : Window
     bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
     bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
-    bool _settingsOpen;                    // settings panel visible
     bool _shimNeedsUpgrade;                // cached at StartWatching; cleared when user installs this session
     const double TwoColMin = 1080;         // below this width the overview reflows to a single column
     string? _classFilter;                  // active class chip in the search dropdown
@@ -239,7 +239,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
         UpdateBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
-        Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
+        Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _jsonl?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
         {
@@ -487,7 +487,9 @@ public partial class MainWindow : Window
             _watcher = new LogWatcher(_log, equippedOnly: true);
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.Start();
-            // Merge the one-shot scan into the persisted state (rather than overwriting it wholesale)
+            _jsonl?.Dispose();
+            _jsonl = new LogToJsonlConverter(_log);
+            _jsonl.Start();
             _live = new LiveBuild
             {
                 Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
@@ -2238,15 +2240,16 @@ public partial class MainWindow : Window
         {
             backdropPortrait.Stretch = Stretch.UniformToFill;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Top;
             backdropPortrait.Opacity = 0.55;
+            // Gradient centre shifted to Y=0.28 so the character's head stays fully opaque at the top edge.
             var mask = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.40), Center = new Point(0.5, 0.40), RadiusX = 0.50, RadiusY = 0.62,
+                GradientOrigin = new Point(0.5, 0.28), Center = new Point(0.5, 0.28), RadiusX = 0.54, RadiusY = 0.74,
             };
             mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.38));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.68));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.44));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.72));
             mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
             backdropPortrait.OpacityMask = mask;
             Grid.SetRowSpan(backdropPortrait, 2);
@@ -2477,7 +2480,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Faint, 10.5, false);
-        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 38;
+        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 46;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;

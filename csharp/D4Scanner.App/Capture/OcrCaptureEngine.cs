@@ -163,10 +163,14 @@ public sealed class OcrCaptureEngine : IDisposable
 
     static async Task<SoftwareBitmap?> BitmapToSoftwareBitmapAsync(System.Drawing.Bitmap bmp)
     {
+        using var iras = new Windows.Storage.Streams.InMemoryRandomAccessStream();
         using var ms = new MemoryStream();
         bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
-        ms.Seek(0, SeekOrigin.Begin);
-        var decoder = await BitmapDecoder.CreateAsync(ms.AsRandomAccessStream()).AsTask().ConfigureAwait(false);
+        var writer = new Windows.Storage.Streams.DataWriter(iras);
+        writer.WriteBytes(ms.ToArray());
+        await writer.StoreAsync().AsTask().ConfigureAwait(false);
+        iras.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(iras).AsTask().ConfigureAwait(false);
         return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied).AsTask().ConfigureAwait(false);
     }
 

@@ -229,18 +229,17 @@ Check("ParseTooltipLines: empty list returns null", GearParser.ParseTooltipLines
 Check("ParseTooltipLines: no name returns null",
     GearParser.ParseTooltipLines(new[] { "Legendary Helm", "780 Item Power" }) == null);
 
-// ReQuality regex fix: TTS emits "50 +50/25 Quality" (no parens) — verify the fixed \d+/\s/[+-] escapes match
-var qualityBlock = new[]
-{
-    "MYTHIC RING",
-    "Mythic Unique Ring",
-    "800 Item Power",
-    "50 +50/25 Quality",
-    "+500 Maximum Life",
-};
+// ReQuality: both TTS "50 +50/25 Quality" (no parens) and OCR "50 (+30/25) Quality" (parens) formats
+var qualityBlock = new[] { "MYTHIC RING", "Mythic Unique Ring", "800 Item Power", "50 +50/25 Quality", "+500 Maximum Life" };
 var qualityItem = GearParser.ParseTooltipLines(qualityBlock);
-Check("ReQuality fix: Quality line parsed", qualityItem != null);
-Check("ReQuality fix: item.Quality == 50", qualityItem?.Quality == 50);
+Check("ReQuality fix: unparenthesized '50 +50/25 Quality' parsed", qualityItem != null);
+Check("ReQuality fix: item.Quality == 50 (no parens)", qualityItem?.Quality == 50);
+
+var qLines = new[] { "SOME UNIQUE ITEM", "850 Item Power", "Legendary", "50 (+30/25) Quality", "Left mouse button" };
+var qSeg = new GearParser();
+Item? qParsed = null;
+foreach (var ln in qLines) { var r = qSeg.Feed(ln); if (r != null) qParsed = r; }
+Check("ReQuality fix: parenthesized '50 (+30/25) Quality' parsed", qParsed?.Quality == 50);
 
 // ItemSource: LogWatcher stamps Source=Tts on all parsed items
 if (File.Exists(sampleLog))
@@ -249,6 +248,15 @@ if (File.Exists(sampleLog))
     Check("ItemSource: all TTS-parsed items stamped Tts",
         lbTts.Gear.Count > 0 && lbTts.Gear.All(g => g.Source == ItemSource.Tts));
 }
+
+// LogToJsonlConverter: compact serialization produces one line per item (no newlines in the JSON).
+var testItem = new Item { Name = "Doom", Slot = "helm", Rarity = "Legendary",
+    Affixes = { new Affix { Text = "Max Life", Value = 1000 } } };
+var compact = System.Text.Json.JsonSerializer.Serialize(testItem, new System.Text.Json.JsonSerializerOptions
+{
+    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+});
+Check("LogToJsonlConverter compact JSON fits on one line", !compact.Contains('\n'));
 
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");

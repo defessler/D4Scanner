@@ -35,9 +35,8 @@ On first run a **setup checklist** walks three steps (the checks fill in as you 
 2. **Enable in-game capture** — click **Install capture DLL** (one click; installs the signed shim
    to a user PATH dir — nothing in the game folder). Then in D4: Accessibility → *Use Screen Reader*
    + *Use 3rd-Party Screen Reader* ON, Gameplay → *Advanced Tooltip Information* ON, language English.
-3. **Capture skills & paragon** — the **Paragon / Skills** button: pick screenshots of your paragon
-   boards / glyph tooltips / skill tree to fill the non-gear half via Claude vision
-   (needs `ANTHROPIC_API_KEY`; the result is saved and reloaded).
+3. **Screen capture (optional)** — enable *Screen capture* in ⚙ Settings. The app will OCR the game
+   window every 20 s when D4 is in the foreground and update equipped gear automatically; no API key needed.
 
 Then play. The **overview** is a two-column glance:
 

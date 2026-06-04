@@ -22,6 +22,9 @@ public static class WindowsGraphicsCapture
     const uint PW_RENDERFULLCONTENT = 2;
 
     // ---- D3D11 ----
+    [DllImport("combase.dll", CharSet = CharSet.Unicode)]
+    static extern int RoGetActivationFactory(string activatableClassId, ref Guid iid, out IntPtr factory);
+
     [DllImport("d3d11.dll")]
     static extern int D3D11CreateDevice(IntPtr pAdapter, int driverType, IntPtr software, uint flags,
         IntPtr pFeatureLevels, uint nFeatureLevels, uint sdkVersion,
@@ -61,10 +64,14 @@ public static class WindowsGraphicsCapture
 
     static async Task<System.Drawing.Bitmap?> GrabViaWgcAsync(IntPtr hwnd)
     {
-        // 1. Build capture item via the COM factory interop
-        var iid = typeof(GraphicsCaptureItem).GUID;
-        var factory = WinRT.ActivationFactory<GraphicsCaptureItem>.As<IGraphicsCaptureItemInterop>();
-        var itemPtr = factory.CreateForWindow(hwnd, ref iid);
+        // 1. Build capture item via RoGetActivationFactory → IGraphicsCaptureItemInterop
+        var captureItemGuid = typeof(GraphicsCaptureItem).GUID;
+        var interopGuid = typeof(IGraphicsCaptureItemInterop).GUID;
+        var roHr = RoGetActivationFactory("Windows.Graphics.Capture.GraphicsCaptureItem", ref interopGuid, out var factoryPtr);
+        if (roHr < 0) throw new InvalidOperationException($"RoGetActivationFactory: 0x{roHr:X8}");
+        var factory = (IGraphicsCaptureItemInterop)Marshal.GetObjectForIUnknown(factoryPtr);
+        Marshal.Release(factoryPtr);
+        var itemPtr = factory.CreateForWindow(hwnd, ref captureItemGuid);
         var item = GraphicsCaptureItem.FromAbi(itemPtr);
         Marshal.Release(itemPtr);
 
@@ -91,7 +98,8 @@ public static class WindowsGraphicsCapture
         using var pool = Direct3D11CaptureFramePool.Create(
             d3dDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
         using var session = pool.CreateCaptureSession(item);
-        try { session.IsBorderRequired = false; } catch { }  // Win11 only
+        // IsBorderRequired added in Win11 22000; set via reflection so the SDK 19041 TFM compiles
+        try { typeof(GraphicsCaptureSession).GetProperty("IsBorderRequired")?.SetValue(session, false); } catch { }
 
         var tcs = new TaskCompletionSource<Direct3D11CaptureFrame?>(TaskCreationOptions.RunContinuationsAsynchronously);
         Windows.Foundation.TypedEventHandler<Direct3D11CaptureFramePool, object> handler = null!;
@@ -108,21 +116,23 @@ public static class WindowsGraphicsCapture
         return await SoftwareBitmapToBitmapAsync(sb).ConfigureAwait(false);
     }
 
-    internal static async Task<System.Drawing.Bitmap?> SoftwareBitmapToBitmapAsync(SoftwareBitmap sb)
+    internal static Task<System.Drawing.Bitmap?> SoftwareBitmapToBitmapAsync(SoftwareBitmap sb)
     {
-        // Encode to PNG in memory, then decode with System.Drawing — avoids manual pixel layout math.
-        using var ms = new System.IO.MemoryStream();
-        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, ms.AsRandomAccessStream()).AsTask().ConfigureAwait(false);
-        encoder.SetSoftwareBitmap(sb);
-        await encoder.FlushAsync().AsTask().ConfigureAwait(false);
-        ms.Seek(0, System.IO.SeekOrigin.Begin);
-        using var tmp = new System.Drawing.Bitmap(ms);
-        // Black-frame sanity check
-        int w = tmp.Width, h = tmp.Height;
-        var mid = tmp.GetPixel(w / 2, h / 2);
-        if (mid.R < 5 && mid.G < 5 && mid.B < 5) return null;
-        // Clone detaches the bitmap from the MemoryStream (Bitmap keeps a reference to the stream it was loaded from)
-        return (System.Drawing.Bitmap)tmp.Clone(new System.Drawing.Rectangle(0, 0, w, h), tmp.PixelFormat);
+        // Convert SoftwareBitmap → pixel array → System.Drawing.Bitmap directly (no stream extension needed)
+        var converted = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        int w = converted.PixelWidth, h = converted.PixelHeight;
+        var buf = new byte[w * h * 4];
+        converted.CopyToBuffer(buf.AsBuffer());
+        converted.Dispose();
+        var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var bits = bmp.LockBits(new System.Drawing.Rectangle(0, 0, w, h),
+            System.Drawing.Imaging.ImageLockMode.WriteOnly,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        System.Runtime.InteropServices.Marshal.Copy(buf, 0, bits.Scan0, buf.Length);
+        bmp.UnlockBits(bits);
+        var mid = bmp.GetPixel(w / 2, h / 2);
+        if (mid.R < 5 && mid.G < 5 && mid.B < 5) { bmp.Dispose(); return Task.FromResult<System.Drawing.Bitmap?>(null); }
+        return Task.FromResult<System.Drawing.Bitmap?>(bmp);
     }
 
     static System.Drawing.Bitmap? GrabViaPrintWindow(IntPtr hwnd)

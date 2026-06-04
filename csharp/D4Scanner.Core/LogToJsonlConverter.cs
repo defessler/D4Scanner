@@ -66,11 +66,18 @@ public sealed class LogToJsonlConverter : IDisposable
         catch { /* file mid-write; retry next tick */ }
     }
 
+    // Compact (non-indented) options so each item is exactly one line in the .jsonl file.
+    static readonly JsonSerializerOptions CompactOpts = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
     void EmitJson(Item item)
     {
         try
         {
-            var json = JsonSerializer.Serialize(item, Json.Opts);
+            var json = JsonSerializer.Serialize(item, CompactOpts);
             File.AppendAllText(_jsonlPath, json + "\n");
         }
         catch { }
@@ -92,7 +99,7 @@ public sealed class LogToJsonlConverter : IDisposable
             foreach (var line in File.ReadLines(jsonlPath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                var item = JsonSerializer.Deserialize<Item>(line, Json.Opts);
+                var item = JsonSerializer.Deserialize<Item>(line, CompactOpts);
                 if (item != null) items.Add(item);
             }
             return new LiveBuild { Gear = LogWatcher.LatestPerSlot(items) };

@@ -6,10 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>D4Scanner</AssemblyName>
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.7.0</Version>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>0.7.1</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
@@ -21,6 +23,7 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\Fonts\Cinzel.ttf" />
+    <Resource Include="Assets\app.ico" />
   </ItemGroup>
   <ItemGroup>
     <!-- prebuilt, signed capture shim + its public cert, for the in-app installer -->
