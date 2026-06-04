@@ -33,7 +33,7 @@ public static class Activities
                 "Salvage spare Legendaries at the Blacksmith to extract Aspects into your Codex, then Imprint at the Occultist. Codex unlocks are permanent and free to imprint."));
 
         if (missAffix)
-            acts.Add(new("Chase the missing affixes"  /* Enchant/gamble/farm */,
+            acts.Add(new("Chase the missing affixes",
                 "Enchant a single affix at the Occultist to reroll toward a missing stat, gamble fresh items at the Purveyor, or farm targeted drops in Helltides and Nightmare Dungeons."));
 
         if (needTemper)
