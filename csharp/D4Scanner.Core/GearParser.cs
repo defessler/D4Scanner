@@ -26,6 +26,7 @@ public class GearParser
         ("Focus", "offhand"), ("Shield", "offhand"), ("Totem", "offhand"),
         // Season 8 (Vessel of Hatred) item types
         ("Horadric Seal", "seal"), ("Set Charm", "charm"), ("Unique Charm", "charm"),
+        ("Rune of Invocation", "rune"), ("Rune of Ritual", "rune"),
     };
     static readonly string[] Rarities =
         { "Mythic Unique", "Mythic", "Unique", "Legendary", "Rare", "Magic", "Common" };
