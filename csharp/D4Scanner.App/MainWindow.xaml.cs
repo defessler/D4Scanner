@@ -1423,7 +1423,7 @@ public partial class MainWindow : Window
             if (!CaptureSetup.Installed()) RunInstall(ttsChk);
             else StartWatching();
         };
-        ttsChk.Unchecked += async (_, _) =>
+        ttsChk.Unchecked += (_, _) =>
         {
             var confirm = MessageBox.Show(
                 "Turning off TTS capture will delete the DLL shim from your system, remove its certificate from the Root store, and clean it from PATH.\n\nContinue?",
