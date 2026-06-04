@@ -35,6 +35,8 @@ public sealed class LogWatcher : IDisposable
         ["Available Points"] = "Paragon", ["Refund All"] = "Paragon",
         ["Skill Tree"] = "Skills",     ["MODIFIERS"] = "Skills",
         ["Talisman"] = "Talisman",     ["Seals"] = "Seals",
+        ["Charms"] = "Charms",       ["Runes"] = "Runes",
+        ["Gems"] = "Gems",           ["Uniques"] = "Stash",
         ["Charms"] = "Charms",
     };
 
