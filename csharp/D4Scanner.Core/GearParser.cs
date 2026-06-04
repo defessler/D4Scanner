@@ -43,6 +43,9 @@ public class GearParser
     static readonly Regex ReImprinted = new(@"^Imprinted:\s*(.+)", RegexOptions.IgnoreCase);
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
     // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
+    static readonly Regex ReInBags = new(@"^In bags:s*(d+)", RegexOptions.IgnoreCase);
+    // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
+    // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
     static readonly Regex ReRuneword = new(@"^([A-Z][a-zA-Z]{1,8})\s*\(\d+/\d+\)\s*-\s*(.+)", RegexOptions.None);
 
     public static string Clean(string s)
