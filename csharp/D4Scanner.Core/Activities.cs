@@ -46,7 +46,7 @@ public static class Activities
 
         if (under)
             acts.Add(new("Masterwork to push rolls higher",
-                "Masterwork items at the Blacksmith to boost affixes and crit specific ones. Farm Masterwork materials in The Pit and Nightmare Dungeons."));
+                "Masterwork items at the Blacksmith to boost affixes and crit specific ones. Farm Masterwork materials in The Pit (all tiers) — Obducite/Ingolith/Neathiron drop from different Pit tiers."));
 
         if (missGlyph)
             acts.Add(new("Level your Glyphs",
