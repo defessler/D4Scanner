@@ -34,6 +34,7 @@ public class GearParser
     static readonly Regex ReItemPower = new(@"([\d,]+)\s+Item Power", RegexOptions.IgnoreCase);
     static readonly Regex ReDps = new(@"([\d,]+(?:\.\d+)?)\s+Damage Per Second", RegexOptions.IgnoreCase);
     static readonly Regex ReMasterwork = new(@"Masterwork[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
+    // Season 8 Quality: "50 (+50/25) Quality" — current/bonus/max format
     static readonly Regex ReQuality = new(@"^(d+)s*(s*[+-]d+/d+)s+Quality", RegexOptions.IgnoreCase);
     static readonly Regex ReTemper = new(@"Tempers?[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReReqLevel = new(@"Requires Level\s+(\d+)", RegexOptions.IgnoreCase);
