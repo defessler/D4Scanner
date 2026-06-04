@@ -79,7 +79,8 @@ public sealed class LogWatcher : IDisposable
 
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
-                item.UiPanel = _currentPanel;   // attach the active panel to the item for richer context
+                item.UiPanel = _currentPanel;
+                item.LastScannedTicks = DateTime.UtcNow.Ticks;   // attach the active panel to the item for richer context
                 ClassifyContext(item, lines, i, lines.Length - 1);
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
                 if (item.Slot is "charm" or "seal" or "rune") { /* Season 8 items routed to dedicated collections in Build */ }
