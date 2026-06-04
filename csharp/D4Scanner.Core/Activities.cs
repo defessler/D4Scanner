@@ -42,7 +42,7 @@ public static class Activities
 
         if (wantSockets)
             acts.Add(new("Socket gems & runes (Jeweler)",
-                "Add sockets and craft / upgrade the gems and runes your build wants at the Jeweler; you can unsocket without losing them."));
+                "Add sockets and craft/upgrade the gems and runes your build wants at the Jeweler; you can unsocket without losing them."));
 
         if (under && (missAffix || needTemper || wantSockets))
             acts.Add(new("Run Helltides for crafting currency",
