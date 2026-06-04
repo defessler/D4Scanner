@@ -1487,7 +1487,7 @@ public partial class MainWindow : Window
     Brush VerbColor(string verb) => verb switch
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
-        "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "IMPROVE" => Amber, _ => Ink,
+        "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "RE-TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
 
     // shown before any build is imported, so opening the app immediately tells you what to do
@@ -1994,8 +1994,10 @@ public partial class MainWindow : Window
             if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
         }
         var tg = TargetGearOf(s);
+        // Aspect — the build wants a specific legendary power; use the template icon for art if available
         if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null, tg?.ItemId, tg?.Image);
-        return ("Any " + s.Label, Soft, null, tg?.ItemId, tg?.Image);
+        // "Any <slot>" — no specific item; pass null icon handles so the generic slot silhouette is shown
+        return ("Any " + s.Label, Soft, null, null, null);
     }
 
     // what's actually equipped in a slot (for the "My gear" doll view). Live (TTS) items carry no icon handle
@@ -2379,8 +2381,9 @@ public partial class MainWindow : Window
         foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
-        var wantIconId  = wantUnique?.ItemId  ?? tg?.ItemId;
-        var wantIconImg = wantUnique?.Image   ?? tg?.Image;
+        // Use the unique's real icon when a specific unique is targeted; silhouette when it's "Any <slot>".
+        var wantIconId  = wantUnique?.ItemId;
+        var wantIconImg = wantUnique?.Image;
         var right = TooltipPanel("BUILD WANTS",
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,

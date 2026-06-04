@@ -43,8 +43,13 @@ public static class BuildGuide
                         acts.Add(new GuideStep(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}", i.Tempered ? "at the Blacksmith" : i.Need,
                             i.Tempered ? $"Temper {i.Label} onto your {g.Name}" : $"Get {i.Label} on your {g.Name}" + (i.Need != null ? $" ({i.Need})" : ""), key));
                     else if (i.Status == "under")    // tier 3 — polish an under-rolled affix
-                        acts.Add(new GuideStep(3, "IMPROVE", $"{g.Name} — {i.Label}", (i.Val != null ? i.Val + " → " : "") + i.Need,
+                    {
+                        // Tempered affixes that rolled low need a re-temper at the Blacksmith, not an enchant
+                        string uVerb = i.Tempered ? "RE-TEMPER" : "IMPROVE";
+                        string uStation = i.Tempered ? "at the Blacksmith" : (i.Val != null ? i.Val + " → " : "") + i.Need;
+                        acts.Add(new GuideStep(3, uVerb, $"{g.Name} — {i.Label}", uStation,
                             $"Improve {i.Label} on your {g.Name} — at {i.Val} ({i.Need})", key));
+                    }
                 }
             }
 
