@@ -60,8 +60,20 @@ public sealed class LogWatcher : IDisposable
             {
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
+                // D4 Season 8 outputs "EQUIPPED" before bag items in comparison mode, not just for
+                // genuinely worn gear. The post-end-marker action is the only reliable signal:
+                //   "Unequip" → confirmed worn; "Store"/"Mark as Junk"/"Salvage" → bag item.
+                if (item.Equipped)
+                {
+                    for (int look = i + 1; look < Math.Min(i + 12, lines.Length - 1); look++)
+                    {
+                        var ctx = lines[look].Trim().ToLowerInvariant();
+                        if (ctx.Contains("unequip")) break;                        // confirmed worn
+                        if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
+                            { item.Equipped = false; break; }                      // bag item
+                    }
+                }
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
-                // equipped items are the live build; non-equipped (bags/stash) feed upgrade-finding
                 if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
                 else { _inv[key] = item; _invOrdered.Add(item); }
                 changed = true;
@@ -107,10 +119,22 @@ public sealed class LogWatcher : IDisposable
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
         // slot:rawname key was first inserted earliest in the log.
         var ordered = new List<Item>();
-        foreach (var raw in File.ReadLines(path))
+        var allLines = File.ReadAllLines(path);
+        for (int i = 0; i < allLines.Length; i++)
         {
-            var item = seg.Feed(raw);
+            var item = seg.Feed(allLines[i]);
             if (item == null) continue;
+            // Same post-end-marker lookahead as Poll(): confirm equipped vs bag item
+            if (item.Equipped)
+            {
+                for (int look = i + 1; look < Math.Min(i + 12, allLines.Length); look++)
+                {
+                    var ctx = allLines[look].Trim().ToLowerInvariant();
+                    if (ctx.Contains("unequip")) break;
+                    if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
+                        { item.Equipped = false; break; }
+                }
+            }
             if (equippedOnly && !item.Equipped) continue;
             ordered.Add(item);
         }
