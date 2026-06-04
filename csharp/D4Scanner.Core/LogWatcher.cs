@@ -137,11 +137,21 @@ public sealed class LogWatcher : IDisposable
             .SelectMany(g =>
             {
                 int max = overrideMax > 0 ? overrideMax : (g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1);
-                // Reverse (most-recently-scanned first) then deduplicate by item name before taking N.
-                // Without dedup: hovering the same ring twice fills both ring slots with the same item.
+                // Reverse (most-recently-scanned first) then deduplicate before taking N.
+                // Dedup key logic:
+                //   - Item scanned from the character panel (SlotPosition > 0): key = "Name:Position"
+                //     → two rings/weapons with the same name in different panel positions are DISTINCT
+                //       (player genuinely has two of that item equipped in different slots)
+                //   - Item scanned without a panel position (SlotPosition == 0, e.g. bag hover): key = "Name"
+                //     → re-hovering the same item collapses to one entry
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 return g.Reverse()
-                        .Where(it => seen.Add(it.RawName.Length > 0 ? it.RawName : it.Name))
+                        .Where(it =>
+                        {
+                            var name = it.RawName.Length > 0 ? it.RawName : it.Name;
+                            var key = it.SlotPosition > 0 ? $"{name}:{it.SlotPosition}" : name;
+                            return seen.Add(key);
+                        })
                         .Take(max);
             })
             .ToList();
