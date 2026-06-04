@@ -115,6 +115,9 @@ public static class BuildGuide
         "paragon" => "Paragon", "aspects" => "Aspects", "mercenary" => "Mercenary", _ => id,
     };
 
+    /// <summary>Total number of distinct tiers represented in a step plan.</summary>
+    public static int TierCount(List<GuideStep> steps) => steps.Select(s => s.Tier).Distinct().Count();
+
     static string AfxLabel(string stepText) =>
         stepText.Contains(" — ") ? stepText.Substring(stepText.IndexOf(" — ") + 3) : stepText;
 
@@ -127,3 +130,4 @@ public static class BuildGuide
                 yield return (g.Name, i);
     }
 }
+
