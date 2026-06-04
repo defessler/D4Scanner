@@ -5,6 +5,9 @@ Diablo-IV-style paper doll, plus a prioritized **"do this next"** plan — what 
 and improve to reach the build. PC only; it reads the game's own accessibility (screen-reader) text,
 so it touches no game memory and injects nothing.
 
+<img width="1429" height="1214" alt="image" src="https://github.com/user-attachments/assets/cbb2bca1-eea9-49c5-a081-d02e55d8637d" />
+
+
 ## Quick start
 
 1. **Download & run** the latest `D4Scanner.exe` from the
