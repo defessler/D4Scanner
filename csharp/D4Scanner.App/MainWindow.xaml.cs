@@ -445,9 +445,22 @@ public partial class MainWindow : Window
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
-        // Auto-upgrade the capture shim if the embedded version is newer than what's installed
-        if (CaptureSetup.Installed() && CaptureSetup.NeedsUpgrade())
-            Task.Run(() => { CaptureSetup.Install(); Dispatcher.Invoke(Render); });
+        // Auto-upgrade the capture shim if the installed version is older than the embedded one,
+        // including the legacy versionless DLL (SA_GetVersion absent → version 0 < 2).
+        if (CaptureSetup.NeedsUpgrade())
+        {
+            int oldVer = CaptureSetup.InstalledShimVersion();
+            string badge = oldVer <= 0 ? "versionless" : $"v{oldVer}";
+            Task.Run(() =>
+            {
+                var (ok, _) = CaptureSetup.Install();
+                Dispatcher.Invoke(() =>
+                {
+                    if (ok) Toast($"Capture DLL updated ({badge} → v{CaptureSetup.CurrentShimVersion})");
+                    Render();
+                });
+            });
+        }
         CheckForUpdatesAsync();        // check on every launch
         _updateTimer?.Dispose();
         _updateTimer = new System.Threading.Timer(

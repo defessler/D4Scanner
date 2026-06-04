@@ -28,6 +28,7 @@
 // DLL version — bump this whenever the shim changes so the app knows to reinstall it.
 // The app compares against this value at launch and reinstalls if the embedded version is newer.
 #define SHIM_VERSION L"2"
+#define SHIM_VERSION_INT 2
 
 static std::wstring ResolveLogPath()
 {
@@ -102,6 +103,7 @@ __declspec(dllexport) bool SA_SayW(const wchar_t* text)         { AppendLine(tex
 __declspec(dllexport) bool SA_BrlShowTextW(const wchar_t* text) { (void)text;       return true; }
 __declspec(dllexport) bool SA_StopAudio()                       { return true; }
 __declspec(dllexport) bool SA_IsRunning()                       { return true; } // MUST be true or D4 won't "speak"
+__declspec(dllexport) int  SA_GetVersion()                        { return SHIM_VERSION_INT; } // readable by the app via NativeLibrary without loading the DLL as a screen reader
 
 } // extern "C"
 

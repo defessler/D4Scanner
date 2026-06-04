@@ -134,25 +134,36 @@ public static class CaptureSetup
         return places.Any(File.Exists);
     }
 
-    /// <summary>True if an installed saapi64.dll is outdated (version is older than the embedded one).
-    /// Detected by checking the file description in the PE version info, which the release workflow stamps.</summary>
-    public static bool NeedsUpgrade()
+    /// <summary>Reads the shim version from an installed DLL by calling the exported SA_GetVersion() function.
+    /// Returns 0 if the DLL is versionless (pre-v2), missing, or the export is absent.</summary>
+    public static int InstalledShimVersion()
     {
         var places = new List<string> { Path.Combine(BinDir, "saapi64.dll") };
         var gd = GameDir(); if (gd != null) places.Add(Path.Combine(gd, "saapi64.dll"));
         foreach (var p in places)
         {
             if (!File.Exists(p)) continue;
+            IntPtr lib = IntPtr.Zero;
             try
             {
-                var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(p);
-                // The DLL file version is stamped as CurrentShimVersion.0.0.0 by release.yml
-                if (info.FileMajorPart < CurrentShimVersion) return true;
+                // Load as a data file — does NOT invoke DllMain or register it as a screen reader
+                lib = System.Runtime.InteropServices.NativeLibrary.Load(p);
+                if (System.Runtime.InteropServices.NativeLibrary.TryGetExport(lib, "SA_GetVersion", out var addr))
+                {
+                    var fn = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<Func<int>>(addr);
+                    return fn();
+                }
+                // No SA_GetVersion export → pre-v2 versionless DLL
+                return 0;
             }
             catch { }
+            finally { if (lib != IntPtr.Zero) System.Runtime.InteropServices.NativeLibrary.Free(lib); }
         }
-        return false;
+        return -1;   // not installed
     }
+
+    /// <summary>True if an installed saapi64.dll is older than the embedded one (includes the versionless legacy DLL).</summary>
+    public static bool NeedsUpgrade() => Installed() && InstalledShimVersion() < CurrentShimVersion;
 
     public static (bool ok, string message) Install()
     {
