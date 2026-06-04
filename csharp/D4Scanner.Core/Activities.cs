@@ -29,7 +29,7 @@ public static class Activities
                 "Purveyor of Curiosities with Obols, or run the Undercity in Nahantu for Unique drops."));
 
         if (MissingIn("aspects"))
-            acts.Add(new("Fill your Codex of Power",
+            acts.Add(new("Fill your Codex of Power (or enchant)",
                 "Salvage spare Legendaries at the Blacksmith to extract their Aspects into your Codex, then imprint them onto gear at the Occultist."));
 
         if (missAffix)
