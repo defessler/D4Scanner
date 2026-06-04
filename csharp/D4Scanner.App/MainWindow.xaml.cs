@@ -2249,15 +2249,16 @@ public partial class MainWindow : Window
         {
             backdropPortrait.Stretch = Stretch.UniformToFill;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Top;
             backdropPortrait.Opacity = 0.55;
+            // Gradient centre shifted to Y=0.28 so the character's head stays fully opaque at the top edge.
             var mask = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.40), Center = new Point(0.5, 0.40), RadiusX = 0.50, RadiusY = 0.62,
+                GradientOrigin = new Point(0.5, 0.28), Center = new Point(0.5, 0.28), RadiusX = 0.54, RadiusY = 0.74,
             };
             mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.38));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.68));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.44));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.72));
             mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
             backdropPortrait.OpacityMask = mask;
             Grid.SetRowSpan(backdropPortrait, 2);
@@ -2488,7 +2489,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Faint, 10.5, false);
-        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 38;
+        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 46;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;

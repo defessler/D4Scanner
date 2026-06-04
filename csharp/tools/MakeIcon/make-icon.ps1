@@ -10,8 +10,8 @@ function Make-Bitmap([int]$sz) {
     $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
 
-    # near-black D4 stone background
-    $g.Clear([System.Drawing.Color]::FromArgb(255, 0x16, 0x15, 0x1A))
+    # transparent background (alpha = 0)
+    $g.Clear([System.Drawing.Color]::FromArgb(0, 0, 0, 0))
 
     $m  = $sz * 0.08
     $cx = $sz / 2.0
