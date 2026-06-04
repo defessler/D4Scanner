@@ -40,6 +40,12 @@ public class Item
     public UiContext Context { get; set; }   // classified surface (WornGear / BagItem / etc.)
     public List<Affix> Affixes { get; set; } = new();
     public List<string> PowerText { get; set; } = new();
+    /// <summary>Rune codes found in sockets, e.g. ["Neo", "Vex"] from "NeoVex (200/100) - Graceful Heart".</summary>
+    public List<string> SocketedRunes { get; set; } = new();
+    /// <summary>Runeword name if a complete runeword is active, e.g. "Graceful Heart of the Oak".</summary>
+    public string? RunewordName { get; set; }
+    /// <summary>Positional slot within a multi-slot category (1-based), e.g. 1 or 2 for rings. 0 = unknown.</summary>
+    public int SlotPosition { get; set; }
 }
 
 /// <summary>The D4 UI surface an item was captured from. Derived from TTS context signals.</summary>

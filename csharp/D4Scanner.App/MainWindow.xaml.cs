@@ -1275,6 +1275,27 @@ public partial class MainWindow : Window
         thrRow.Children.Add(settingsThreshSlider); sp.Children.Add(thrRow);
         sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 14, 0, 16) });
 
+        // character portrait
+        sp.Children.Add(TBs("Character portrait", Faint, 10, true, new Thickness(0, 0, 0, 8)));
+        var portDesc = TB("Open your character panel in D4 (press C), then click Capture. The portrait will appear in the centre of the paper doll.", Soft, 12, false);
+        portDesc.TextWrapping = TextWrapping.Wrap; portDesc.Margin = new Thickness(0, 0, 0, 10); sp.Children.Add(portDesc);
+        var portRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var portStatus = TB("", Soft, 11.5, false); portStatus.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(portStatus, Dock.Left); portRow.Children.Add(portStatus);
+        var portBtn = new Button { Content = "Capture character", Style = (Style)FindResource("Primary"), Padding = new Thickness(16, 6, 16, 6), HorizontalAlignment = HorizontalAlignment.Right };
+        portBtn.Click += (_, _) =>
+        {
+            portBtn.IsEnabled = false; portBtn.Content = "Capturing…";
+            var err = CaptureCharacterPortrait();
+            portBtn.Content = err == null ? "✓ Captured" : "Capture character";
+            portStatus.Text = err ?? "Saved — paper doll will update on next render";
+            portStatus.Foreground = err == null ? Green : Miss;
+            portBtn.IsEnabled = true;
+            if (err == null) Render();   // refresh the doll with the new portrait
+        };
+        portRow.Children.Add(portBtn); sp.Children.Add(portRow);
+        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 14, 0, 16) });
+
         // cache clear
         sp.Children.Add(TBs("Cache", Faint, 10, true, new Thickness(0, 0, 0, 8)));
         var cacheDesc = TB("The app caches the build index, Maxroll data, and all item icons so they load instantly. Clear specific categories below.", Soft, 12, false);
@@ -1336,6 +1357,56 @@ public partial class MainWindow : Window
     }
 
     static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
+
+    // ---- character portrait capture (PrintWindow) ----
+    // Captures the D4 game window and saves a region as character.png.
+    // Uses PrintWindow with PW_RENDERFULLCONTENT which works for DX11/DX12 borderless games.
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool GetClientRect(IntPtr hwnd, out System.Drawing.Rectangle lpRect);
+    const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    /// <summary>Captures the D4 window and saves a square portrait crop to character.png.
+    /// Returns an error string on failure or null on success.</summary>
+    string? CaptureCharacterPortrait()
+    {
+        var d4 = System.Diagnostics.Process.GetProcessesByName("Diablo IV").FirstOrDefault();
+        if (d4 == null || d4.MainWindowHandle == IntPtr.Zero)
+            return "Diablo IV is not running. Launch the game and open the character panel (C key), then try again.";
+
+        var hwnd = d4.MainWindowHandle;
+        if (!GetClientRect(hwnd, out var rect)) return "Could not get the D4 window size.";
+        int w = rect.Width, h = rect.Height;
+        if (w < 100 || h < 100) return "D4 window is too small to capture.";
+
+        using var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = System.Drawing.Graphics.FromImage(bmp))
+        {
+            var hdc = g.GetHdc();
+            bool ok = PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+            g.ReleaseHdc(hdc);
+            if (!ok) return "PrintWindow failed. Make sure D4 is not minimized.";
+        }
+
+        // Sanity-check: if the capture is all-black the API didn't work (some DX12 configurations)
+        var sample = bmp.GetPixel(w / 2, h / 2);
+        if (sample.R < 5 && sample.G < 5 && sample.B < 5)
+            return "Capture returned a blank image. D4 may need to run in borderless window mode, or bring D4 to the foreground and try again.";
+
+        // Crop a portrait region from the center of the screen (where the character model sits)
+        // The character is roughly centered horizontally and occupies roughly the middle third vertically
+        int cropW = Math.Min(400, w / 3), cropH = Math.Min(520, h * 2 / 3);
+        int cropX = (w - cropW) / 2, cropY = (h - cropH) / 2 - h / 10;  // slightly above center
+        cropX = Math.Max(0, cropX); cropY = Math.Max(0, cropY);
+        cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
+        using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+        var dest = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "character.png");
+        crop.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
+        return null;   // success
+    }
 
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {

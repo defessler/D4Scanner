@@ -37,6 +37,9 @@ public class GearParser
     static readonly Regex ReAffix = new(@"^\s*([+x]?)\s*([\d,.]+)\s*(%?)\s+(.+?)\s*$");
     static readonly Regex ReNameMarker = new(@"^\s*(EQUIPPED|\[FAVORITED ITEM\]\.?|\[.*?\]\.?)\s*", RegexOptions.IgnoreCase);
     static readonly Regex ReImprinted = new(@"^Imprinted:\s*(.+)", RegexOptions.IgnoreCase);
+    // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
+    // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
+    static readonly Regex ReRuneword = new(@"^([A-Z][a-zA-Z]{1,8})\s*\(\d+/\d+\)\s*-\s*(.+)", RegexOptions.None);
 
     public static string Clean(string s)
     {
@@ -145,6 +148,19 @@ public class GearParser
             if (item.Rarity == null && DetectRarityType(ln, item)) continue;
             var mi = ReImprinted.Match(ln);
             if (mi.Success) { item.Aspect = mi.Groups[1].Value.Trim(); item.PowerText.Add(ln); continue; }
+            // Runeword notation in PowerText: "NeoVex (200/100) - Graceful Heart of the Oak"
+            var rw = ReRuneword.Match(ln);
+            if (rw.Success)
+            {
+                // Split the pair code into individual rune names by camel-case boundary
+                var pair = rw.Groups[1].Value;
+                // Simple split: find the first upper-case letter after position 0 that starts the second rune
+                for (int ri = 1; ri < pair.Length; ri++)
+                    if (char.IsUpper(pair[ri])) { item.SocketedRunes.Add(pair[..ri]); item.SocketedRunes.Add(pair[ri..]); break; }
+                if (item.SocketedRunes.Count == 0) item.SocketedRunes.Add(pair);
+                item.RunewordName = rw.Groups[2].Value.Trim();
+                item.PowerText.Add(ln); continue;
+            }
             var af = ParseAffix(ln);
             if (af != null) { item.Affixes.Add(af); continue; }
             if (ln.Any(char.IsLower) && ln.Length > 8) item.PowerText.Add(ln);
@@ -165,6 +181,8 @@ public class GearParser
     List<string> _body = new();
     bool _equip, _blockEquip;
     bool _seenSlotHeader, _blockFromCharPanel;
+    string? _currentSlotHeader;   // most recent character-panel slot header
+    int _blockSlotPosition;       // 1-based position within a multi-slot category (rings, weapons)
 
     // D4 character-panel slot headers — voiced when the player opens the character sheet.
     // If one of these immediately precedes an EQUIPPED block it confirms the item is definitively worn.
@@ -172,12 +190,20 @@ public class GearParser
         { "Head", "Torso", "Hands", "Legs", "Feet", "Ring", "Neck",
           "Main Hand", "Off-Hand", "Ranged", "Ranged Weapon" };
 
+    // Position counters: D4 repeats the same slot header for each position (e.g. "Ring" twice).
+    // Tracking counts let us distinguish Ring #1 from Ring #2, etc.
+    readonly Dictionary<string, int> _slotPositionCounts = new(StringComparer.OrdinalIgnoreCase);
+
     void Start(string nc)
     {
         _name = nc; _body = new();
         _blockEquip = _equip;
         _blockFromCharPanel = _seenSlotHeader;
+        _blockSlotPosition = _currentSlotHeader != null
+            ? _slotPositionCounts.GetValueOrDefault(_currentSlotHeader, 0)
+            : 0;
         _equip = false; _seenSlotHeader = false;
+        // Don't clear _currentSlotHeader or position counts — they persist across items in the same panel view
     }
 
     /// <summary>Feed one raw log line; returns a completed Item when a tooltip block ends (else null).</summary>
@@ -185,8 +211,30 @@ public class GearParser
     {
         var ln = Clean(raw);
         if (ln.Length == 0) return null;
-        // Slot headers confirm character panel; detect before the EQUIPPED check so they're not consumed by it
-        if (SlotHeaders.Contains(ln)) { _seenSlotHeader = true; return null; }
+        // Slot headers confirm character panel; track position for multi-slot categories (Ring, weapon)
+        if (SlotHeaders.Contains(ln))
+        {
+            // Reset position counter if this is a different slot type (e.g. moved from Ring to Feet)
+            if (!string.Equals(ln, _currentSlotHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                // Only reset the counter for the NEW slot; leave other slots intact
+                // (user can open char panel showing different slots in sequence)
+            }
+            _currentSlotHeader = ln;
+            _slotPositionCounts[ln] = _slotPositionCounts.GetValueOrDefault(ln, 0) + 1;
+            _seenSlotHeader = true;
+            return null;
+        }
+        // Non-slot-header lines outside a block reset the positional counters for ALL slots
+        // so a fresh panel view starts fresh (rough heuristic: reset on navigation noise)
+        if (!_seenSlotHeader && _name == null && SlotHeaders.Count > 0 && ln.Length > 2
+            && !ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase))
+        {
+            // Reset only if we see a clear "not a slot context" signal (e.g. player name or zone)
+            // Conservative: only reset on "=== " separator lines (session restart)
+            if (ln.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase))
+                _slotPositionCounts.Clear();
+        }
         if (ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) { _equip = true; return null; }
         var low = ln.ToLowerInvariant();
         var nc = NameCandidate(ln);
@@ -196,7 +244,8 @@ public class GearParser
             var item = ParseBlock(_name, _body);
             item.Equipped = _blockEquip;
             item.FromCharPanel = _blockFromCharPanel;
-            _name = null; _body = new(); _blockEquip = false; _blockFromCharPanel = false;
+            item.SlotPosition = _blockSlotPosition;   // 1-based: ring:1 / ring:2, weapon:1 / weapon:2 / weapon:3
+            _name = null; _body = new(); _blockEquip = false; _blockFromCharPanel = false; _blockSlotPosition = 0;
             return LooksLikeItem(item) ? item : null;   // drop menu/map noise
         }
         if (nc != null) { Start(nc); return null; }
