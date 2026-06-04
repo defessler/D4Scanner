@@ -132,6 +132,8 @@ public sealed class LogWatcher : IDisposable
                 if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
                     { item.Equipped = false; item.Context = UiContext.BagItem;  return; }
                 if (ctx.Contains("take"))      { item.Equipped = false; item.Context = UiContext.StashItem; return; }
+                if (item.Slot == "seal")  { item.Equipped = true;  item.Context = UiContext.HoradricSeal; return; }
+                if (item.Slot == "charm") { item.Equipped = true;  item.Context = UiContext.Charm; return; }
                 if (ctx.Contains("buy"))       { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
                 if (ctx.Contains("unlock") || ctx.Contains("refund"))
                     { item.Equipped = false; item.Context = UiContext.ParagonNode; return; }
