@@ -129,6 +129,13 @@ public static class DiffEngine
         return false;
     }
 
+    /// <summary>Human-readable weapon type from ItemId.</summary>
+    public static string? WeaponTypeFromItemId(string? itemId) {
+        if (string.IsNullOrEmpty(itemId)) return null;
+        var p = itemId.Split("_")[0]; var h = (p.StartsWith("1H")||p.StartsWith("2H")) ? p.Substring(2) : p;
+        return h.Length > 1 ? h : null;
+    }
+
     /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
     public static string SlotBaseName(string? slot) => SlotBase(slot);
 
