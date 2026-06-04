@@ -2007,10 +2007,13 @@ public partial class MainWindow : Window
     {
         var it = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
         if (it == null) return ("(empty)", Faint, null, null, null);
+        // For uniques: match by name and use that unique's own icon handle (correct).
         var u = _target?.Uniques.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name));
         if (u != null) return (it.Name, RarityBrush(it.Rarity), it.Name, u.ItemId, u.Image);
-        var tg = TargetGearOf(s);
-        return (it.Name, RarityBrush(it.Rarity), it.Name, tg?.ItemId, tg?.Image);
+        // For regular gear: use name-only lookup (no id/image handle) so IconResolver resolves
+        // by item name rather than the build's template icon. This prevents showing a Crossbow icon
+        // when the player has a different weapon type equipped — the name lookup finds the correct art.
+        return (it.Name, RarityBrush(it.Rarity), it.Name, null, null);
     }
 
     // the slot's display tuple for the current doll view (target = build wants, mine = equipped)
@@ -2357,9 +2360,11 @@ public partial class MainWindow : Window
             eq.Children.Add(Divider(RarityColor(it?.Rarity), 0x44));
             eq.Children.Add(TB("also: " + string.Join("   ·   ", g.Extras), Soft, 11, false));
         }
-        // Borrow the target slot's icon for live items (live scans have no image handle of their own)
-        var eqIconId  = it != null ? tg?.ItemId  : null;
-        var eqIconImg = it != null ? tg?.Image   : null;
+        // For compare-card EQUIPPED panel: use name-only resolution so we show the player's actual
+        // item art, not the build's template icon (which would be wrong for a different weapon type).
+        // Unique items already matched above via EquippedFor, so just pass the live item name here.
+        var eqIconId  = (string?)null;
+        var eqIconImg = (long?)null;
         var left = TooltipPanel("EQUIPPED",
             it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
             it != null ? RarityBrush(it.Rarity) : Miss,
