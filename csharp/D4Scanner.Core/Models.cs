@@ -93,6 +93,7 @@ public class LiveBuild
     public string? Mercenary { get; set; }
     public List<Item> Charms { get; set; } = new();
     public List<Item> Seals { get; set; } = new();
+    /// <summary>Rune items seen in stash/bags.</summary>
     public List<Item> Runes { get; set; } = new();
 }
 
