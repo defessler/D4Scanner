@@ -16,7 +16,7 @@ public static class Activities
         var gear = r.Categories.FirstOrDefault(c => c.Id == "gear");
         bool MissingIn(string id) => r.Categories.FirstOrDefault(c => c.Id == id)?.Groups.Any(g => g.Items.Any(i => !i.Done)) ?? false;
 
-        bool missAffix  = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && !i.Tempered)) ?? false;
+        bool missAffix = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && !i.Tempered)) ?? false;
         bool needTemper = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && i.Tempered)) ?? false;
         bool under      = gear?.Groups.Any(g => g.Under > 0) ?? false;
         bool wantSockets = gear?.Groups.Any(g => g.WantSockets.Count > 0) ?? false;
