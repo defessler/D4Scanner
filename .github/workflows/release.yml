@@ -74,33 +74,12 @@ jobs:
             /f "$env:RUNNER_TEMP\cs.pfx" /p $env:CODESIGN_PFX_PASSWORD /fd SHA256 `
             /tr http://timestamp.digicert.com /td SHA256 (Get-Item D4Scanner-*-win-x64.exe).FullName
 
-      # The exe is self-contained (the shim + cert are embedded and installed by the in-app button), so the
-      # only download a normal user needs is the .exe. Bundle the shim + cert into ONE clearly-optional zip
-      # (with a README) for the rare manual-install case, instead of leaving them as loose, confusing assets.
-      - name: Bundle the optional manual-install shim (dll + cert)
-        shell: pwsh
-        run: |
-          $stage = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\shim"
-          Copy-Item dll/saapi64.dll, dll/d4scanner-tts.cer $stage
-          $readme = @(
-            'OPTIONAL - you do NOT need these files for normal use.',
-            '',
-            'The capture shim (saapi64.dll) and its certificate are already embedded inside',
-            'D4Scanner.exe. Just download and run the .exe, then click "Install capture DLL"',
-            '(or follow the first-run setup checklist).',
-            '',
-            'These files are only for a manual install: copy saapi64.dll into your Diablo IV',
-            'folder (or any folder on your PATH), and import/trust d4scanner-tts.cer yourself',
-            '(Trusted Root / Trusted Publishers) so Windows lets the game load the DLL.'
-          )
-          $readme | Set-Content "$stage\README.txt"
-          Compress-Archive -Path "$stage\*" -DestinationPath "D4Scanner-capture-shim-manual.zip" -Force
-
+      # The exe is fully self-contained: the capture shim (saapi64.dll) + its certificate are embedded and
+      # installed by the in-app button, so the ONLY asset a user needs is the .exe — ship just that.
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             D4Scanner-*-win-x64.exe
-            D4Scanner-capture-shim-manual.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
