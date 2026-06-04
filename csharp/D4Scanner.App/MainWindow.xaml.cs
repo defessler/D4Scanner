@@ -1670,7 +1670,7 @@ public partial class MainWindow : Window
             var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
             var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
             details.Children.Add(TB(slotLbl + (eq ? "  ●" : "  ○"), Faint, 10, false));
-            var nameBlock = TB(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap; nameBlock.MaxWidth = 180;
+            var nameBlock = TB(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;
             details.Children.Add(nameBlock);
             if (item.ItemPower > 0)
                 details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
@@ -2046,7 +2046,7 @@ public partial class MainWindow : Window
         var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
         DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
         if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
-        var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextTrimming = TextTrimming.CharacterEllipsis;
+        var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap;
         row.Children.Add(tx);
         if (a.FocusKey is string fk)
         {
@@ -2514,7 +2514,7 @@ public partial class MainWindow : Window
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var lbl = TB(s.Label, Faint, 10.5, false);
-        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap; nm.MaxHeight = 46;
+        var nm = TB(name, ncol, 12.5, true); nm.TextWrapping = TextWrapping.Wrap;
         if (alignRight)
         {
             lbl.HorizontalAlignment = nm.HorizontalAlignment = HorizontalAlignment.Right;
