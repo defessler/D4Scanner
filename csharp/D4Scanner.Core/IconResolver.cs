@@ -24,10 +24,10 @@ public static class IconResolver
     const string RawBase = "https://raw.githubusercontent.com/Howard-Starfield/diablo4icons/main/";
     static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
 
-    static string CacheDir => Path.Combine(
+    public static string CacheDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache");
     static string IconDir => Path.Combine(CacheDir, "icons");
-    static string IndexPath => Path.Combine(CacheDir, "icon_index.json");
+    public static string IndexPath => Path.Combine(CacheDir, "icon_index.json");
 
     static Dictionary<string, List<string>> _byName = new();   // normalized item name -> repo paths
     static volatile bool _loaded;

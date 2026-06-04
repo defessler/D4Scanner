@@ -18,9 +18,9 @@ public partial class MainWindow : Window
         Amber = B("#E0A52E"), Miss = B("#D23B3B"), Card = B("#16171B"), CardHi = B("#1E2026"),
         Line = B("#2A2C33"), Edge = B("#3A3D45"), EdgeHi = B("#565A64"), Steel = B("#6E8CA8"),
         Crimson = B("#D23B3B"), Gold = B("#D23B3B"), GoldHi = B("#E85C5C"), TileSel = B("#262029");
-    // item-rarity colors (match D4's itemization)
-    static readonly Brush RMagic = B("#6E9BD6"), RRare = B("#E5C84A"), RLegend = B("#E08A3C"),
-        RUnique = B("#C9A45C"), RMythic = B("#D1492E");
+    // item-rarity colors (tuned to match D4's in-game slot coloring)
+    static readonly Brush RMagic  = B("#4A8FE0"), RRare   = B("#D4A730"), RLegend = B("#E8711A"),
+                          RUnique = B("#C4935A"), RMythic = B("#C92B2B"), RAncestral = B("#66D0F8");
     static readonly FontFamily Serif = new(new Uri("pack://application:,,,/"), "./Assets/Fonts/#Cinzel");
     const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
 
@@ -34,6 +34,9 @@ public partial class MainWindow : Window
         if (s.Contains("magic")) return RMagic;
         return Ink;
     }
+
+    static bool IsAncestral(string? rarity) =>
+        (rarity ?? "").Contains("ancestral", StringComparison.OrdinalIgnoreCase);
 
     static Color Col(string hex) => (Color)ColorConverter.ConvertFromString(hex);
     static Color RarityColor(string? rarity) => ((SolidColorBrush)RarityBrush(rarity)).Color;
@@ -98,9 +101,11 @@ public partial class MainWindow : Window
         catch { return null; }
     }
 
-    // real item art if available, else the tinted slot silhouette
+    // real item art if available, else the tinted slot silhouette (separate w/h for portrait slots)
+    FrameworkElement SlotOrItemIcon(string? itemName, string slotKey, Brush tint, double w, double h, string? id = null, long? image = null) =>
+        RealIcon(itemName, w, h, id, image) ?? SlotIcon(slotKey, tint, Math.Max(w, h)) ?? TB("", tint, 1, false);
     FrameworkElement SlotOrItemIcon(string? itemName, string slotKey, Brush tint, double size, string? id = null, long? image = null) =>
-        RealIcon(itemName, size, size, id, image) ?? SlotIcon(slotKey, tint, size) ?? TB("", tint, 1, false);
+        SlotOrItemIcon(itemName, slotKey, tint, size, size, id, image);
 
     LogWatcher? _watcher;
     System.Threading.Timer? _targetPoll;
@@ -132,6 +137,8 @@ public partial class MainWindow : Window
     bool _rawView;                         // body shows the raw build details instead of the grid
     bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
+    bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
+    bool _settingsOpen;                    // settings panel visible
     const double TwoColMin = 1080;         // below this width the overview reflows to a single column
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
@@ -160,6 +167,7 @@ public partial class MainWindow : Window
         OpenSrcBtn.Click += (_, _) => OpenSource();
         HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
+        SettingsBtn.Click += (_, _) => ShowSettings();
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -309,6 +317,7 @@ public partial class MainWindow : Window
                         _uiScale = Math.Clamp(zv, 0.7, 1.6);
                     if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
                         CaptureSetup.UserGameDir = gd;
+                    if (s.TryGetValue("debug", out var dbg)) _debugMode = dbg == "1";
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -340,7 +349,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0" }));
         }
         catch { }
     }
@@ -991,6 +1000,26 @@ public partial class MainWindow : Window
         timer.Start();
     }
 
+    // character portrait: look for character.png / character.jpg in the d4scanner dir so the user can
+    // place a screenshot there and have it appear in the doll center behind their class emblem.
+    Image? LoadCharacterImage()
+    {
+        var dir = Path.GetDirectoryName(TargetLoader.DefaultLogPath()) ?? "";
+        foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".webp" })
+        {
+            var p = Path.Combine(dir, "character" + ext);
+            if (!File.Exists(p)) continue;
+            try
+            {
+                var bi = new BitmapImage();
+                bi.BeginInit(); bi.UriSource = new Uri(p); bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit();
+                return new Image { Source = bi };
+            }
+            catch { }
+        }
+        return null;
+    }
+
     // a small clickable text link (caller wires MouseLeftButtonUp)
     TextBlock MakeLink(string text, Brush color)
     {
@@ -1054,6 +1083,99 @@ public partial class MainWindow : Window
         HelpHost.Visibility = Visibility.Visible;
     }
 
+    void ShowSettings()
+    {
+        if (SettingsHost.Visibility == Visibility.Visible) { SettingsHost.Visibility = Visibility.Collapsed; return; }
+        SettingsHost.Children.Clear();
+        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)) };
+        backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        SettingsHost.Children.Add(backdrop);
+
+        var sp = new StackPanel { MinWidth = 360 };
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
+        xb.MouseLeftButtonUp += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        hd.Children.Add(xb); hd.Children.Add(TBs("Settings", Gold, 17, true));
+        sp.Children.Add(hd);
+
+        // debug mode toggle
+        var dbgRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var dbgChk = new CheckBox { IsChecked = _debugMode, VerticalAlignment = VerticalAlignment.Center };
+        dbgChk.Checked   += (_, _) => { _debugMode = true;  SaveSettings(); Render(); };
+        dbgChk.Unchecked += (_, _) => { _debugMode = false; SaveSettings(); Render(); };
+        DockPanel.SetDock(dbgChk, Dock.Left); dbgChk.Margin = new Thickness(0, 0, 10, 0); dbgRow.Children.Add(dbgChk);
+        var dbgText = new StackPanel();
+        dbgText.Children.Add(TBs("Debug info", Ink, 13.5, true));
+        var dbgDesc = TB("Show last-scan time and slot diagnostics on each item.", Soft, 11.5, false);
+        dbgDesc.TextWrapping = TextWrapping.Wrap; dbgText.Children.Add(dbgDesc);
+        dbgRow.Children.Add(dbgText);
+        sp.Children.Add(dbgRow);
+
+        // separator
+        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 4, 0, 16) });
+
+        // cache clear
+        sp.Children.Add(TBs("Cache", Faint, 10, true, new Thickness(0, 0, 0, 8)));
+        var cacheDesc = TB("The app caches the build index, Maxroll data, and all item icons so they load instantly. Clear specific categories below.", Soft, 12, false);
+        cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); sp.Children.Add(cacheDesc);
+
+        var iconDir    = Path.Combine(IconResolver.CacheDir, "icons");
+        var gameIconDir = Path.Combine(iconDir, "game");
+        var cacheFiles = new (string label, string desc, Func<bool> exists, Action clear)[]
+        {
+            ("Game item icons",     $"Extracted from your D4 install ({CountFiles(gameIconDir)} files)",
+                () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0,
+                () => { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }),
+            ("Downloaded art",      $"Unique/class icons from GitHub ({CountFiles(iconDir, "*.webp")} files)",
+                () => CountFiles(iconDir, "*.webp") > 0,
+                () => { try { foreach (var f in Directory.GetFiles(iconDir, "*.webp", SearchOption.AllDirectories)) File.Delete(f); } catch { } }),
+            ("Build index",         "Maxroll build guide list (re-fetched on next launch)",
+                () => File.Exists(IconResolver.IndexPath),
+                () => { try { File.Delete(IconResolver.IndexPath); } catch { } }),
+            ("Maxroll data",        "Planner item/affix data (re-fetched on next import)",
+                () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
+                () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } }),
+        };
+
+        var checks = new CheckBox[cacheFiles.Length];
+        for (int i = 0; i < cacheFiles.Length; i++)
+        {
+            var (label, desc, exists, _) = cacheFiles[i];
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            var chk = checks[i] = new CheckBox { IsChecked = false, IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top };
+            chk.Margin = new Thickness(0, 2, 10, 0); DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
+            var col = new StackPanel();
+            col.Children.Add(TB(label, exists() ? Ink : Faint, 13, true));
+            col.Children.Add(TB(desc, Soft, 11.5, false));
+            row.Children.Add(col); sp.Children.Add(row);
+        }
+
+        var btnRow = new DockPanel { Margin = new Thickness(0, 14, 0, 0) };
+        var cancel = new Button { Content = "Cancel" }; DockPanel.SetDock(cancel, Dock.Right); cancel.Margin = new Thickness(8, 0, 0, 0);
+        cancel.Click += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        var clear = new Button { Content = "Clear selected", Style = (Style)FindResource("Primary") };
+        clear.Click += (_, _) =>
+        {
+            for (int i = 0; i < cacheFiles.Length; i++)
+                if (checks[i].IsChecked == true) cacheFiles[i].clear();
+            SettingsHost.Visibility = Visibility.Collapsed;
+            Toast("Cache cleared — changes take effect on next launch");
+        };
+        DockPanel.SetDock(cancel, Dock.Right); btnRow.Children.Add(cancel);
+        btnRow.Children.Add(clear); sp.Children.Add(btnRow);
+
+        var panel = new Border
+        {
+            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(28, 22, 28, 24), MaxWidth = 540,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+        };
+        SettingsHost.Children.Add(panel);
+        SettingsHost.Visibility = Visibility.Visible;
+    }
+
+    static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
+
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         var mods = System.Windows.Input.Keyboard.Modifiers;
@@ -1064,6 +1186,7 @@ public partial class MainWindow : Window
 
         if (k == System.Windows.Input.Key.F1 || (k == System.Windows.Input.Key.Oem2 && shift && !UrlBox.IsFocused)) { ToggleHelp(); e.Handled = true; return; }
         if (HelpHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape) { HelpHost.Visibility = Visibility.Collapsed; e.Handled = true; return; }
+        if (SettingsHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape) { SettingsHost.Visibility = Visibility.Collapsed; e.Handled = true; return; }
         if (ctrl && (k == System.Windows.Input.Key.OemPlus || k == System.Windows.Input.Key.Add)) { Zoom(0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.OemMinus || k == System.Windows.Input.Key.Subtract)) { Zoom(-0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }
@@ -1459,17 +1582,39 @@ public partial class MainWindow : Window
         foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
-        // center crest: class emblem + a progress bar + live indicator (the canonical % lives in the header band,
-        // so the crest shows progress visually rather than duplicating the number).
-        var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
-        if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 15, true, new Thickness(0, 0, 0, 8))));
-        crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
+
+        // center crest: character portrait (if the user has placed character.png in the d4scanner dir) OR
+        // class name + progress bar + live indicator. The canonical % lives in the header band.
+        var charImg = LoadCharacterImage();
         bool liveGear = _live.Gear.Count > 0;
-        crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ waiting for game", liveGear ? Green : Faint, 10, true, new Thickness(0, 9, 0, 0))));
+        UIElement crestContent;
+        if (charImg != null)
+        {
+            var imgGrid = new Grid();
+            charImg.Width = 140; charImg.Height = 180; charImg.Stretch = Stretch.UniformToFill;
+            charImg.HorizontalAlignment = HorizontalAlignment.Center; charImg.VerticalAlignment = VerticalAlignment.Center;
+            imgGrid.Children.Add(charImg);
+            // overlay: class name + live dot + progress at the bottom of the portrait
+            var imgOverlay = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 6) };
+            if (!string.IsNullOrEmpty(className)) imgOverlay.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 12, true)));
+            imgOverlay.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
+            imgOverlay.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ offline", liveGear ? Green : Faint, 9, true, new Thickness(0, 4, 0, 0))));
+            imgGrid.Children.Add(imgOverlay);
+            crestContent = imgGrid;
+        }
+        else
+        {
+            var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 15, true, new Thickness(0, 0, 0, 8))));
+            crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
+            crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ waiting for game", liveGear ? Green : Faint, 10, true, new Thickness(0, 9, 0, 0))));
+            crestContent = crest;
+        }
         center.Children.Add(new Border
         {
-            Child = crest, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14),
+            Child = crestContent, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = charImg != null ? new Thickness(0) : new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14),
+            ClipToBounds = true,
         });
 
         // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot
@@ -1584,35 +1729,52 @@ public partial class MainWindow : Window
     (string name, Brush col, string? iconName, string? id, long? image) SlotDisplay(Section s) =>
         _dollView == "mine" ? EquippedFor(s) : WantedFor(s);
 
-    // a large, in-game-style equipment frame: a dark metallic socket holding a recessed, rarity-lit fill
-    // with a rarity-colored border ring and the item art, plus priority + stash-upgrade badges
+    // a portrait equipment frame styled like the D4 in-game character screen: dark slot with a diagonal
+    // rarity-colored gradient overlay and a rarity-colored border ring. Ancestral items get a cyan glow.
     FrameworkElement IconBox(Section s, int num)
     {
-        var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);   // rcol = rarity color
+        var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);
         var rc = ((SolidColorBrush)rcol).Color;
-        const double box = 70, art = 54;                       // large, square — 1.5× the original 48px icon
-        var grid = new Grid { Width = box, Height = box };
 
-        // recessed slot: dark metallic outer frame over a rarity-lit radial fill (brighter toward the centre)
-        var fill = new RadialGradientBrush { GradientOrigin = new Point(0.5, 0.42), Center = new Point(0.5, 0.42), RadiusX = 0.85, RadiusY = 0.85 };
-        fill.GradientStops.Add(new GradientStop(Color.FromArgb(0x46, rc.R, rc.G, rc.B), 0));
-        fill.GradientStops.Add(new GradientStop(Color.FromArgb(0x14, rc.R, rc.G, rc.B), 0.6));
-        fill.GradientStops.Add(new GradientStop(Col("#090909"), 1));
-        grid.Children.Add(new Border { Background = fill, BorderBrush = B("#08080A"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7) });
+        // ancestral treatment: if viewing "my gear" and the item is ancestral, use the cyan shimmer
+        var liveIt = s.Gear?.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+        bool ancestral = _dollView == "mine" && IsAncestral(liveIt?.Rarity);
+        var frameBrush = ancestral ? RAncestral : rcol;
+        var frameRc = ((SolidColorBrush)frameBrush).Color;
 
-        // the rarity frame ring (the in-game colored border)
-        grid.Children.Add(new Border { BorderBrush = rcol, BorderThickness = new Thickness(1.8), CornerRadius = new CornerRadius(6), Margin = new Thickness(1.5) });
+        const double boxW = 54, boxH = 76;    // portrait — tall and skinny, like a D4 inventory slot
+        const double artW = 42, artH = 62;
+        var grid = new Grid { Width = boxW, Height = boxH };
 
-        var icon = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, art, wid, wimg);
+        // dark base + diagonal rarity-colored overlay (top-right → bottom-left, matching D4's slot shading)
+        grid.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
+        var overlay = new LinearGradientBrush { StartPoint = new Point(1, 0), EndPoint = new Point(0.1, 1) };
+        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, frameRc.R, frameRc.G, frameRc.B), 0));
+        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x28, frameRc.R, frameRc.G, frameRc.B), 0.35));
+        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, frameRc.R, frameRc.G, frameRc.B), 1));
+        grid.Children.Add(new Border { Background = overlay, CornerRadius = new CornerRadius(4) });
+
+        // rarity border ring (primary color)
+        grid.Children.Add(new Border { BorderBrush = frameBrush, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+
+        // ancestral inner shimmer ring
+        if (ancestral)
+            grid.Children.Add(new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x66, 0xD0, 0xF8)),
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3),
+            });
+
+        var icon = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, artW, artH, wid, wimg);
         icon.HorizontalAlignment = HorizontalAlignment.Center; icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
 
-        if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)   // an upgrade is sitting in your bags
+        if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)
             grid.Children.Add(new Border
             {
-                Background = Green, CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0, 6, 2),
+                Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(-6, -7, 0, 0), Child = TB("↑", B("#0C0C0F"), 13, true),
+                Margin = new Thickness(-5, -5, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
             });
         return grid;
     }
@@ -1636,11 +1798,10 @@ public partial class MainWindow : Window
             catch { /* not yet in the visual tree — keep default Right */ }
         }
         _hoverPopup.PlacementTarget = target;
-        _hoverPopup.Child = new Border
-        {
-            Background = B("#0E0E11"), BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14), MaxWidth = 780, Child = CompareCard(s.Gear, it, s.Label),
-        };
+        // no outer wrapper — the compare card's own panels provide all the visual background
+        var cc = CompareCard(s.Gear, it, s.Label);
+        ((FrameworkElement)cc).MaxWidth = 780;
+        _hoverPopup.Child = cc;
         _hoverPopup.IsOpen = true;
     }
 
@@ -1659,21 +1820,28 @@ public partial class MainWindow : Window
             lbl.TextAlignment = nm.TextAlignment = TextAlignment.Right;
         }
         text.Children.Add(lbl); text.Children.Add(nm);
+        if (_debugMode && s.Gear != null)
+        {
+            var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+            string dbgTxt = it != null
+                ? $"{it.Rarity ?? "?"} · {(it.ItemPower > 0 ? "IP " + it.ItemPower : "no IP")} · {s.Key}"
+                : $"empty · {s.Key}";
+            var dbg = TB(dbgTxt, Faint, 9.5, false); dbg.TextWrapping = TextWrapping.Wrap; text.Children.Add(dbg);
+        }
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 244 };
+        var dp = new DockPanel { Width = 236 };   // width = boxW(54) + margin(12) + text
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);
 
         var b = new Border
         {
-            Child = dp, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 7), CornerRadius = new CornerRadius(5),
+            Child = dp, Padding = new Thickness(7, 5, 7, 5), Margin = new Thickness(0, 0, 0, 6), CornerRadius = new CornerRadius(4),
             Background = pinned ? TileSel : System.Windows.Media.Brushes.Transparent,
             BorderBrush = pinned ? Gold : System.Windows.Media.Brushes.Transparent,
             BorderThickness = new Thickness(pinned ? 1.5 : 1),
             Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = pinned ? "pinned · click to unpin" : "hover to compare · click to pin",
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
         b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };

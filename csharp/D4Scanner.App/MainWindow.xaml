@@ -74,6 +74,7 @@
                 </Border>
               </Popup>
               <Button x:Name="LogBtn" Content="Log" FontSize="14" Margin="9,0,0,0"/>
+              <Button x:Name="SettingsBtn" Content="⚙" FontSize="14" Margin="9,0,0,0" ToolTip="Settings"/>
             </StackPanel>
           </Grid>
 
@@ -147,6 +148,9 @@
 
     <!-- keyboard-shortcut cheatsheet overlay (toggled by "?" / F1 / the title-bar button) -->
     <Grid x:Name="HelpHost" Visibility="Collapsed"/>
+
+    <!-- settings overlay (cache clear, debug mode, etc.) -->
+    <Grid x:Name="SettingsHost" Visibility="Collapsed"/>
     </Grid>
   </Border>
 </Window>

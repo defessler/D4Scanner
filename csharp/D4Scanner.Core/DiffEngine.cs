@@ -76,7 +76,14 @@ public static class DiffEngine
             if (match == null) continue;
             bool ok;
             if (aff.Min != null) ok = (match.Value ?? 0) >= aff.Min.Value;
-            else { var pct = RollPct(match); double thr = aff.MinPercent ?? gate; ok = pct == null || pct.Value >= thr; }
+            else
+            {
+                var pct = RollPct(match); double thr = aff.MinPercent ?? gate;
+                // when there is no range data (item scanned without Advanced Tooltip, or binary affix):
+                //   - if only the global gate applies (no explicit MinPercent), treat as presence-only match
+                //   - if there IS an explicit MinPercent threshold, we can't verify → don't count
+                ok = pct != null ? pct.Value >= thr : aff.MinPercent == null;
+            }
             if (ok) met++;
         }
         return met;

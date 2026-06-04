@@ -62,7 +62,9 @@ public sealed class LogWatcher : IDisposable
             }
             if (changed)
             {
-                Build = new LiveBuild { Gear = LatestPerSlot(_items.Values), Inventory = _inv.Values.ToList() };
+                // Inventory also gets deduped by slot (keep last 15 per slot — enough for a full bag row
+                // while dropping very old items from previous sessions that would otherwise cause false upgrades)
+                Build = new LiveBuild { Gear = LatestPerSlot(_items.Values), Inventory = LatestPerSlot(_inv.Values, 15) };
                 Updated?.Invoke(Build);
             }
         }
@@ -72,15 +74,16 @@ public sealed class LogWatcher : IDisposable
     /// <summary>For each slot base name keep only the N most recently logged items (last entries in the
     /// append-only log). This drops stale items when the player swaps gear mid-session — the old item
     /// stays in the log file but its entry is older, so it loses to the newer one here.
-    /// N = 2 for rings (two ring slots), up to 4 for weapons (Barbarian has 4), 1 for everything else.</summary>
-    static List<Item> LatestPerSlot(IEnumerable<Item> items)
+    /// For equipped gear: N = 2 for rings, up to 4 for weapons, 1 for everything else.
+    /// For inventory: caller passes a higher limit (default 15) so bag items aren't over-pruned.</summary>
+    static List<Item> LatestPerSlot(IEnumerable<Item> items, int overrideMax = 0)
     {
         return items
             .GroupBy(it => SlotBaseName(it.Slot ?? ""))
             .SelectMany(g =>
             {
-                int max = g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1;
-                return g.Reverse().Take(max);   // Reverse: last-in = most recently scanned = currently equipped
+                int max = overrideMax > 0 ? overrideMax : (g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1);
+                return g.Reverse().Take(max);   // Reverse: last-in = most recently scanned
             })
             .ToList();
     }
