@@ -64,7 +64,20 @@ public static class BuildGuide
         // AddVisionCategory(r, acts, "paragon",   "PARAGON","Work on",  "paragon boards & glyphs");
         // AddVisionCategory(r, acts, "mercenary", "MERC",   "Hire your","mercenary");
 
-        return acts.OrderBy(a => a.Tier).ToList();
+        // Deduplicate: if multiple slots require the exact same affix action (e.g. three weapons all
+        // need "Damage Over Time Multiplier"), merge them into one step with a combined slot label.
+        var deduped = acts
+            .GroupBy(a => (a.Tier, a.Verb, AfxLabel(a.Text)))
+            .SelectMany(g =>
+            {
+                if (g.Count() == 1) return g.AsEnumerable();
+                var merged = g.First();
+                var slots = string.Join(" / ", g.Select(s => s.Text.Split(" — ")[0]).Distinct());
+                return new[] { merged with { Text = $"{slots} — {AfxLabel(merged.Text)}", Detail = merged.Detail } };
+            })
+            .OrderBy(a => a.Tier)
+            .ToList();
+        return deduped;
     }
 
     // Vision-gated category (skills/paragon): if nothing is confirmed yet, we can't know what's actually
@@ -100,6 +113,9 @@ public static class BuildGuide
         "gear" => "Gear", "uniques" => "Uniques", "skills" => "Skills",
         "paragon" => "Paragon", "aspects" => "Aspects", "mercenary" => "Mercenary", _ => id,
     };
+
+    static string AfxLabel(string stepText) =>
+        stepText.Contains(" — ") ? stepText.Substring(stepText.IndexOf(" — ") + 3) : stepText;
 
     static IEnumerable<(string grp, ReqItem i)> CatItems(DiffReport r, string id)
     {
