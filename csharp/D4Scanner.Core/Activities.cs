@@ -52,7 +52,7 @@ public static class Activities
                 "Masterwork items at the Blacksmith to boost affixes and crit specific ones. Farm Masterwork materials in The Pit (all tiers) — Obducite/Ingolith/Neathiron drop from different Pit tiers."));
 
         if (missGlyph)
-            acts.Add(new("Level your Glyphs",
+            acts.Add(new("Level your Glyphs (The Pit / NMD)",
                 "Run The Pit (30+ tiers) or Nightmare Dungeons to earn Glyph XP — leveling Glyphs widens their bonus radius (Rare at 15, Legendary at 46). " +
                 "The Pit also drops Horadric Seals (Vessel of Hatred)."));
 
