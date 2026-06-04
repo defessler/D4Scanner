@@ -53,7 +53,7 @@ public static class Activities
 
         if (missGlyph)
             acts.Add(new("Level your Glyphs",
-                "Run The Pit or Nightmare Dungeons to earn Glyph XP — leveling Glyphs widens their bonus radius (Rare at 15, Legendary at 46). " +
+                "Run The Pit (30+ tiers) or Nightmare Dungeons to earn Glyph XP — leveling Glyphs widens their bonus radius (Rare at 15, Legendary at 46). " +
                 "The Pit also drops Horadric Seals (Vessel of Hatred)."));
 
         return acts;
