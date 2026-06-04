@@ -90,7 +90,7 @@ public class LiveBuild
     public string? Mercenary { get; set; }
     public List<Item> Charms { get; set; } = new();
     public List<Item> Seals { get; set; } = new();
-    public List<Item> Runes { get; set; } = new();               // hired mercenary, read by the vision channel
+    public List<Item> Runes { get; set; } = new();
 }
 
 // ---- target build (mirrors schema/target.schema.json) ----
