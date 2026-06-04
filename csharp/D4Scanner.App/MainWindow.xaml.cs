@@ -130,6 +130,7 @@ public partial class MainWindow : Window
         SlotOrItemIcon(itemName, slotKey, tint, size, size, id, image);
 
     LogWatcher? _watcher;
+    LogToJsonlConverter? _jsonl;   // mirrors the TTS log to a one-item-per-line .jsonl side-car
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
     LiveBuild _live = new();
@@ -160,7 +161,6 @@ public partial class MainWindow : Window
     bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
     bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
-    bool _settingsOpen;                    // settings panel visible
     bool _shimNeedsUpgrade;                // cached at StartWatching; cleared when user installs this session
     const double TwoColMin = 1080;         // below this width the overview reflows to a single column
     string? _classFilter;                  // active class chip in the search dropdown
@@ -238,7 +238,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
         UpdateBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
-        Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
+        Closed += (_, _) => { _watcher?.Dispose(); _jsonl?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
         {
@@ -488,6 +488,10 @@ public partial class MainWindow : Window
         _watcher = new LogWatcher(_log, equippedOnly: true);
         _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
         _watcher.Start();
+        // Also tail the log into a compact one-item-per-line .jsonl side-car for fast startup
+        _jsonl?.Dispose();
+        _jsonl = new LogToJsonlConverter(_log);
+        _jsonl.Start();
         // Merge the one-shot scan into the persisted state (rather than overwriting it wholesale)
         _live = new LiveBuild
         {

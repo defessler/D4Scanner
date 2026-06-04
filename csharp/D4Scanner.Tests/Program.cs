@@ -195,6 +195,23 @@ var temSteps = BuildGuide.Steps(rTemper);
 Check("BuildGuide RE-TEMPER verb for under-rolled tempered affix",
     temSteps.Any(s => s.Verb == "RE-TEMPER"));
 
+// ---- GearParser regex fixes ----
+// ReQuality was previously broken (literal 'd'/'s' not \d/\s); verify it now parses Season 8 quality lines.
+var qLines = new[] { "SOME UNIQUE ITEM", "850 Item Power", "Legendary", "50 (+30/25) Quality", "Left mouse button" };
+var qSeg = new GearParser();
+Item? qParsed = null;
+foreach (var ln in qLines) { var r = qSeg.Feed(ln); if (r != null) qParsed = r; }
+Check("GearParser Quality: score = 50 for '50 (+30/25) Quality' line", qParsed?.Quality == 50);
+
+// LogToJsonlConverter: compact serialization produces one line per item (no newlines in the JSON).
+var testItem = new Item { Name = "Doom", Slot = "helm", Rarity = "Legendary",
+    Affixes = { new Affix { Text = "Max Life", Value = 1000 } } };
+var compact = System.Text.Json.JsonSerializer.Serialize(testItem, new System.Text.Json.JsonSerializerOptions
+{
+    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+});
+Check("LogToJsonlConverter compact JSON fits on one line", !compact.Contains('\n'));
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

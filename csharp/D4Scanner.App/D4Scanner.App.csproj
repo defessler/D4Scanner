@@ -9,6 +9,7 @@
     <AssemblyName>D4Scanner</AssemblyName>
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Version>0.7.0</Version>
   </PropertyGroup>
   <ItemGroup>
@@ -21,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\Fonts\Cinzel.ttf" />
+    <Resource Include="Assets\app.ico" />
   </ItemGroup>
   <ItemGroup>
     <!-- prebuilt, signed capture shim + its public cert, for the in-app installer -->
