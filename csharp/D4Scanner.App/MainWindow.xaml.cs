@@ -628,6 +628,7 @@ public partial class MainWindow : Window
     }
     void SaveLive()
     {
+        if (_live.Gear.Count == 0) return;   // never overwrite good persisted data with empty
         try { File.WriteAllText(LivePath, JsonSerializer.Serialize(_live, D4Scanner.Core.Json.Opts)); }
         catch { }
     }
