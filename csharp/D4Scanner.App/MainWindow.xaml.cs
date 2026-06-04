@@ -2276,14 +2276,16 @@ public partial class MainWindow : Window
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
             backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
             backdropPortrait.Opacity = 0.55;
-            // Gradient centre shifted to Y=0.28 so the character's head stays fully opaque at the top edge.
+            // Centre at Y=0.55 (below the character's torso) so the top edge (Y=0) sits inside the
+            // fading band rather than in the fully-opaque core — produces a smooth gradient fade at the top.
             var mask = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.28), Center = new Point(0.5, 0.28), RadiusX = 0.54, RadiusY = 0.74,
+                GradientOrigin = new Point(0.5, 0.55), Center = new Point(0.5, 0.55), RadiusX = 0.65, RadiusY = 0.85,
             };
             mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.44));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.72));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.28));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, 0, 0, 0), 0.60));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x18, 0, 0, 0), 0.85));
             mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
             backdropPortrait.OpacityMask = mask;
             Grid.SetRowSpan(backdropPortrait, 2);
