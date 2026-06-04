@@ -35,7 +35,7 @@ public class GearParser
     static readonly Regex ReDps = new(@"([\d,]+(?:\.\d+)?)\s+Damage Per Second", RegexOptions.IgnoreCase);
     static readonly Regex ReMasterwork = new(@"Masterwork[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     // Season 8 Quality: "50 (+50/25) Quality" — current/bonus/max format
-    static readonly Regex ReQuality = new(@"^(d+)s*(s*[+-]d+/d+)s+Quality", RegexOptions.IgnoreCase);
+    static readonly Regex ReQuality = new(@"^(\d+)\s*(\s*[+-]\d+/\d+)\s+Quality", RegexOptions.IgnoreCase);
     static readonly Regex ReTemper = new(@"Tempers?[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReReqLevel = new(@"Requires Level\s+(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReBracket = new(@"\[\s*([\d,.]+)\s*%?\s*(?:-\s*([\d,.]+)\s*%?\s*)?\]");
@@ -44,7 +44,7 @@ public class GearParser
     static readonly Regex ReImprinted = new(@"^Imprinted:\s*(.+)", RegexOptions.IgnoreCase);
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
     // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
-    static readonly Regex ReInBags = new(@"^In bags:s*(d+)", RegexOptions.IgnoreCase);
+    static readonly Regex ReInBags = new(@"^In bags:\s*(\d+)", RegexOptions.IgnoreCase);
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
     // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
     static readonly Regex ReRuneword = new(@"^([A-Z][a-zA-Z]{1,8})\s*\(\d+/\d+\)\s*-\s*(.+)", RegexOptions.None);
@@ -185,6 +185,25 @@ public class GearParser
         if (it.ItemPower != null) return true;
         if (it.Slot is "seal" or "charm" or "rune") return it.Rarity != null;   // Season 8: no Item Power line
         return it.Rarity != null && it.Affixes.Count > 0;
+    }
+
+    /// <summary>Parse an already-extracted tooltip block (OCR path — no EQUIPPED/end-marker machinery).</summary>
+    public static Item? ParseTooltipLines(IReadOnlyList<string> lines)
+    {
+        if (lines.Count == 0) return null;
+        string? name = null;
+        var body = new List<string>();
+        foreach (var raw in lines)
+        {
+            var ln = Clean(raw);
+            if (ln.Length == 0) continue;
+            var nc = NameCandidate(ln);
+            if (name == null) { if (nc != null) name = nc; continue; }
+            body.Add(ln);
+        }
+        if (name == null) return null;
+        var item = ParseBlock(name, body);
+        return LooksLikeItem(item) ? item : null;
     }
 
     // ---- stateful segmenter ----

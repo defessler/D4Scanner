@@ -80,7 +80,6 @@
               <Button x:Name="OpenSrcBtn" Content="Open on Maxroll" FontSize="14" Visibility="Collapsed" Margin="9,0,0,0"/>
               <Button x:Name="NextBtn" Content="Next Steps" FontSize="14" Margin="9,0,0,0"/>
               <Button x:Name="RawBtn" Content="Build details" FontSize="14"/>
-              <Button x:Name="VisionBtn" Content="Paragon / Skills" FontSize="14" Margin="9,0,0,0"/>
               <Button x:Name="TargetBtn" Content="Builds" FontSize="14" Margin="9,0,0,0"/>
               <Popup x:Name="BuildsPopup" PlacementTarget="{Binding ElementName=TargetBtn}" Placement="Bottom"
                      StaysOpen="False" AllowsTransparency="True">

@@ -1,0 +1,145 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.Graphics.Capture;
+using Windows.Graphics.DirectX;
+using Windows.Graphics.DirectX.Direct3D11;
+using Windows.Graphics.Imaging;
+
+namespace D4Scanner.App.Capture;
+
+/// <summary>
+/// Grabs a single frame of the Diablo IV window via Windows.Graphics.Capture (WGC).
+/// Works in borderless and exclusive fullscreen. Falls back to PrintWindow if WGC is unavailable.
+/// </summary>
+public static class WindowsGraphicsCapture
+{
+    // ---- PrintWindow fallback ----
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint flags);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd, out RECT lpRect);
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT { public int Left, Top, Right, Bottom; }
+    const uint PW_RENDERFULLCONTENT = 2;
+
+    // ---- D3D11 ----
+    [DllImport("d3d11.dll")]
+    static extern int D3D11CreateDevice(IntPtr pAdapter, int driverType, IntPtr software, uint flags,
+        IntPtr pFeatureLevels, uint nFeatureLevels, uint sdkVersion,
+        out IntPtr ppDevice, IntPtr pFeatureLevel, out IntPtr ppContext);
+    const int D3D_DRIVER_TYPE_HARDWARE = 1;
+    const uint D3D11_SDK_VERSION = 7;
+    const uint D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20;
+
+    [DllImport("d3d11.dll", EntryPoint = "CreateDirect3D11DeviceFromDXGIDevice")]
+    static extern int CreateDirect3D11DeviceFromDXGIDevice(IntPtr dxgiDevice, out IntPtr d3dInteropDevice);
+
+    static readonly Guid IID_IDXGIDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
+
+    // ---- WGC factory interop ----
+    [ComImport, Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IGraphicsCaptureItemInterop
+    {
+        IntPtr CreateForWindow([In] IntPtr hwnd, [In] ref Guid iid);
+        IntPtr CreateForMonitor([In] IntPtr hmon, [In] ref Guid iid);
+    }
+
+    // ---- SoftwareBitmap pixel access ----
+    [ComImport, Guid("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal unsafe interface IMemoryBufferByteAccess
+    {
+        void GetBuffer(out byte* buffer, out uint capacity);
+    }
+
+    /// <summary>Grab a frame of Diablo IV. Returns null if D4 is not running or capture fails.</summary>
+    public static async Task<System.Drawing.Bitmap?> GrabAsync()
+    {
+        var proc = Process.GetProcessesByName("Diablo IV").FirstOrDefault();
+        if (proc == null || proc.MainWindowHandle == IntPtr.Zero) return null;
+        try { return await GrabViaWgcAsync(proc.MainWindowHandle).ConfigureAwait(false); }
+        catch { return GrabViaPrintWindow(proc.MainWindowHandle); }
+    }
+
+    static async Task<System.Drawing.Bitmap?> GrabViaWgcAsync(IntPtr hwnd)
+    {
+        // 1. Build capture item via the COM factory interop
+        var iid = typeof(GraphicsCaptureItem).GUID;
+        var factory = WinRT.ActivationFactory<GraphicsCaptureItem>.As<IGraphicsCaptureItemInterop>();
+        var itemPtr = factory.CreateForWindow(hwnd, ref iid);
+        var item = GraphicsCaptureItem.FromAbi(itemPtr);
+        Marshal.Release(itemPtr);
+
+        // 2. D3D11 device → IDirect3DDevice (WinRT)
+        var hr = D3D11CreateDevice(IntPtr.Zero, D3D_DRIVER_TYPE_HARDWARE, IntPtr.Zero,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, IntPtr.Zero, 0, D3D11_SDK_VERSION,
+            out var d3d11Ptr, IntPtr.Zero, out var ctxPtr);
+        if (hr < 0) throw new InvalidOperationException($"D3D11CreateDevice: 0x{hr:X8}");
+        Marshal.Release(ctxPtr);
+
+        var dxgiIid = IID_IDXGIDevice;
+        hr = Marshal.QueryInterface(d3d11Ptr, ref dxgiIid, out var dxgiPtr);
+        Marshal.Release(d3d11Ptr);
+        if (hr < 0) throw new InvalidOperationException($"QI IDXGIDevice: 0x{hr:X8}");
+
+        hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiPtr, out var d3dInteropPtr);
+        Marshal.Release(dxgiPtr);
+        if (hr < 0) throw new InvalidOperationException($"CreateDirect3D11DeviceFromDXGIDevice: 0x{hr:X8}");
+
+        var d3dDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(d3dInteropPtr);
+        Marshal.Release(d3dInteropPtr);
+
+        // 3. Frame pool + one capture session
+        using var pool = Direct3D11CaptureFramePool.Create(
+            d3dDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
+        using var session = pool.CreateCaptureSession(item);
+        try { session.IsBorderRequired = false; } catch { }  // Win11 only
+
+        var tcs = new TaskCompletionSource<Direct3D11CaptureFrame?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Windows.Foundation.TypedEventHandler<Direct3D11CaptureFramePool, object> handler = null!;
+        handler = (p, _) => { p.FrameArrived -= handler; tcs.TrySetResult(p.TryGetNextFrame()); };
+        pool.FrameArrived += handler;
+        session.StartCapture();
+
+        using var frame = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+        if (frame == null) return null;
+
+        // 4. Surface → SoftwareBitmap → System.Drawing.Bitmap
+        var sb = await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface).AsTask().ConfigureAwait(false);
+        if (sb == null) return null;
+        return await SoftwareBitmapToBitmapAsync(sb).ConfigureAwait(false);
+    }
+
+    internal static async Task<System.Drawing.Bitmap?> SoftwareBitmapToBitmapAsync(SoftwareBitmap sb)
+    {
+        // Encode to PNG in memory, then decode with System.Drawing — avoids manual pixel layout math.
+        using var ms = new System.IO.MemoryStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, ms.AsRandomAccessStream()).AsTask().ConfigureAwait(false);
+        encoder.SetSoftwareBitmap(sb);
+        await encoder.FlushAsync().AsTask().ConfigureAwait(false);
+        ms.Seek(0, System.IO.SeekOrigin.Begin);
+        using var tmp = new System.Drawing.Bitmap(ms);
+        // Black-frame sanity check
+        int w = tmp.Width, h = tmp.Height;
+        var mid = tmp.GetPixel(w / 2, h / 2);
+        if (mid.R < 5 && mid.G < 5 && mid.B < 5) return null;
+        // Clone detaches the bitmap from the MemoryStream (Bitmap keeps a reference to the stream it was loaded from)
+        return (System.Drawing.Bitmap)tmp.Clone(new System.Drawing.Rectangle(0, 0, w, h), tmp.PixelFormat);
+    }
+
+    static System.Drawing.Bitmap? GrabViaPrintWindow(IntPtr hwnd)
+    {
+        if (!GetClientRect(hwnd, out var rect)) return null;
+        int w = rect.Right - rect.Left, h = rect.Bottom - rect.Top;
+        if (w < 100 || h < 100) return null;
+        using var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = System.Drawing.Graphics.FromImage(bmp))
+        {
+            var hdc = g.GetHdc();
+            bool ok = PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+            g.ReleaseHdc(hdc);
+            if (!ok) return null;
+        }
+        var mid = bmp.GetPixel(w / 2, h / 2);
+        if (mid.R < 5 && mid.G < 5 && mid.B < 5) return null;
+        return (System.Drawing.Bitmap)bmp.Clone();
+    }
+}

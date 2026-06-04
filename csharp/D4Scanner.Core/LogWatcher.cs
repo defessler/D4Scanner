@@ -81,6 +81,7 @@ public sealed class LogWatcher : IDisposable
 
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
+                item.Source = ItemSource.Tts;
                 item.UiPanel = _currentPanel;
                 item.LastScannedTicks = DateTime.UtcNow.Ticks;   // attach the active panel to the item for richer context
                 ClassifyContext(item, lines, i, lines.Length - 1);

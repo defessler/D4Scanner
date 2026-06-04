@@ -195,6 +195,61 @@ var temSteps = BuildGuide.Steps(rTemper);
 Check("BuildGuide RE-TEMPER verb for under-rolled tempered affix",
     temSteps.Any(s => s.Verb == "RE-TEMPER"));
 
+// ---- GearParser.ParseTooltipLines: OCR path (no EQUIPPED / end-marker machinery) ----
+var ocrBlock = new[]
+{
+    "ARCHON SPELLBLADE",
+    "Legendary Helm",
+    "780 Item Power",
+    "+1,540 Maximum Life [1,300 - 1,600]",
+    "+10.5% Cooldown Reduction [10% - 15%]",
+    "+25 Intelligence [20 - 30]",
+    "Requires Level 60",
+};
+var ocrItem = GearParser.ParseTooltipLines(ocrBlock);
+Check("ParseTooltipLines: item parsed from OCR block", ocrItem != null);
+if (ocrItem != null)
+{
+    Eq("ParseTooltipLines: name", "Archon Spellblade", ocrItem.Name);
+    Eq("ParseTooltipLines: slot", "helm", ocrItem.Slot ?? "");
+    Eq("ParseTooltipLines: rarity", "Legendary", ocrItem.Rarity ?? "");
+    Eq("ParseTooltipLines: item power", 780, ocrItem.ItemPower ?? 0);
+    Eq("ParseTooltipLines: 3 affixes", 3, ocrItem.Affixes.Count);
+    var ocrLife = ocrItem.Affixes.FirstOrDefault(a => a.Text.Contains("Maximum Life"));
+    Check("ParseTooltipLines: Maximum Life present", ocrLife != null);
+    if (ocrLife != null)
+    {
+        Eq("ParseTooltipLines: Maximum Life value", 1540d, ocrLife.Value ?? 0);
+        Eq("ParseTooltipLines: Maximum Life min", 1300d, ocrLife.Min ?? 0);
+    }
+    var ocrCdr = ocrItem.Affixes.FirstOrDefault(a => a.Text.Contains("Cooldown"));
+    Check("ParseTooltipLines: Cooldown Reduction is percent", ocrCdr != null && ocrCdr.IsPercent);
+}
+Check("ParseTooltipLines: empty list returns null", GearParser.ParseTooltipLines(Array.Empty<string>()) == null);
+Check("ParseTooltipLines: no name returns null",
+    GearParser.ParseTooltipLines(new[] { "Legendary Helm", "780 Item Power" }) == null);
+
+// ReQuality regex fix: TTS emits "50 +50/25 Quality" (no parens) — verify the fixed \d+/\s/[+-] escapes match
+var qualityBlock = new[]
+{
+    "MYTHIC RING",
+    "Mythic Unique Ring",
+    "800 Item Power",
+    "50 +50/25 Quality",
+    "+500 Maximum Life",
+};
+var qualityItem = GearParser.ParseTooltipLines(qualityBlock);
+Check("ReQuality fix: Quality line parsed", qualityItem != null);
+Check("ReQuality fix: item.Quality == 50", qualityItem?.Quality == 50);
+
+// ItemSource: LogWatcher stamps Source=Tts on all parsed items
+if (File.Exists(sampleLog))
+{
+    var lbTts = LogWatcher.BuildFromFile(sampleLog, equippedOnly: false);
+    Check("ItemSource: all TTS-parsed items stamped Tts",
+        lbTts.Gear.Count > 0 && lbTts.Gear.All(g => g.Source == ItemSource.Tts));
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

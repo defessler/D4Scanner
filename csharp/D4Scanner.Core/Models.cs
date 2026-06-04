@@ -5,6 +5,8 @@ namespace D4Scanner.Core;
 
 // ---- captured live build (from the TTS log) ----
 
+public enum ItemSource { Tts, Ocr }
+
 public class Affix
 {
     public string Text { get; set; } = "";
@@ -50,6 +52,7 @@ public class Item
     public int SlotPosition { get; set; }
     /// <summary>UTC ticks when this item was last scanned from the TTS log.</summary>
     public long LastScannedTicks { get; set; }
+    public ItemSource Source { get; set; }   // Tts (default/zero) or Ocr
 }
 
 /// <summary>The D4 UI surface an item was captured from. Derived from TTS context signals.</summary>

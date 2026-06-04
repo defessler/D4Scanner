@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using D4Scanner.App.Capture;
 using D4Scanner.Core;
 using Microsoft.Win32;
 
@@ -130,6 +131,9 @@ public partial class MainWindow : Window
         SlotOrItemIcon(itemName, slotKey, tint, size, size, id, image);
 
     LogWatcher? _watcher;
+    OcrCaptureEngine? _captureEngine;
+    bool _useTts = true;
+    bool _useCapture = false;
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
     LiveBuild _live = new();
@@ -148,8 +152,6 @@ public partial class MainWindow : Window
     int _stepsPage;
     StackPanel? _stepsResultsPanel;
     TextBlock? _stepsPageLbl;
-    VisionResult? _vision;   // paragon/skills/aspects from the vision channel (merged with live gear)
-
     List<BuildEntry> _buildIndex = new();  // maxroll guide list for autocomplete
     string? _pickedSlug;                   // slug chosen from autocomplete (vs. free text in the box)
     bool _settingText;                     // guard: programmatic UrlBox edits shouldn't trigger autocomplete
@@ -186,7 +188,6 @@ public partial class MainWindow : Window
         LoadSettings();
         SetUrlText("");   // start empty with the placeholder; the loaded build shows in the header
         ImportBtn.Click += async (_, _) => await DoImport();
-        VisionBtn.Click += async (_, _) => await DoVision();
         TargetBtn.Click += (_, _) => ShowBuilds();
         LogBtn.Click += (_, _) => PickLog();
         RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); };
@@ -238,7 +239,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
         UpdateBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
-        Closed += (_, _) => { _watcher?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
+        Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
         {
@@ -381,6 +382,8 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
                         CaptureSetup.UserGameDir = gd;
                     if (s.TryGetValue("debug", out var dbg)) _debugMode = dbg == "1";
+                    if (s.TryGetValue("useTts", out var ut)) _useTts = ut != "0";
+                    if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
                     if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
@@ -413,7 +416,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion }));
         }
         catch { }
     }
@@ -439,18 +442,13 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => { _iconRefreshQueued = false; Render(); });
     }
 
-    // live gear changed on disk: swap it in, re-render, and surface what was newly equipped (debounced by
-    // content — re-scans with identical gear don't toast, and the initial empty→full load is silent).
+    // live gear changed: swap it in, re-render, and surface what was newly equipped.
     void OnLiveUpdate(LiveBuild b)
     {
         var merged = new LiveBuild
         {
             Gear      = MergeGear(_live.Gear, b.Gear),
             Inventory = b.Inventory,
-            Aspects   = b.Aspects.Count > 0 ? b.Aspects : _live.Aspects,
-            Skills    = b.Skills.Count  > 0 ? b.Skills  : _live.Skills,
-            Paragon   = b.Paragon.Count > 0 ? b.Paragon : _live.Paragon,
-            Mercenary = b.Mercenary ?? _live.Mercenary,
         };
         var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, merged);
         _live = merged;
@@ -482,22 +480,27 @@ public partial class MainWindow : Window
             TimeSpan.FromHours(4),     // first periodic check: 4 hours after launch
             TimeSpan.FromHours(4));    // then every 4 hours while running
         ReloadTarget();
-        LoadVision();
         LoadLive();   // seed paper doll immediately from last-known state
-        _watcher?.Dispose();
-        _watcher = new LogWatcher(_log, equippedOnly: true);
-        _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
-        _watcher.Start();
-        // Merge the one-shot scan into the persisted state (rather than overwriting it wholesale)
-        _live = new LiveBuild
+        _watcher?.Dispose(); _watcher = null;
+        if (_useTts)
         {
-            Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
-            Inventory = _watcher.Build.Inventory,
-            Aspects   = _watcher.Build.Aspects.Count > 0 ? _watcher.Build.Aspects : _live.Aspects,
-            Skills    = _watcher.Build.Skills.Count  > 0 ? _watcher.Build.Skills  : _live.Skills,
-            Paragon   = _watcher.Build.Paragon.Count > 0 ? _watcher.Build.Paragon : _live.Paragon,
-            Mercenary = _watcher.Build.Mercenary ?? _live.Mercenary,
-        };
+            _watcher = new LogWatcher(_log, equippedOnly: true);
+            _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
+            _watcher.Start();
+            // Merge the one-shot scan into the persisted state (rather than overwriting it wholesale)
+            _live = new LiveBuild
+            {
+                Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
+                Inventory = _watcher.Build.Inventory,
+            };
+        }
+        _captureEngine?.Dispose(); _captureEngine = null;
+        if (_useCapture)
+        {
+            _captureEngine = new OcrCaptureEngine();
+            _captureEngine.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
+            _captureEngine.Start();
+        }
 
         _targetPoll?.Dispose();
         _targetPoll = new System.Threading.Timer(_ =>
@@ -662,28 +665,7 @@ public partial class MainWindow : Window
         finally { ImportBtn.IsEnabled = true; ImportBtn.Content = prev; }
     }
 
-    // gear comes live from the TTS log; paragon/skills/aspects come from the vision channel
-    LiveBuild EffectiveLive() => new()
-    {
-        Gear = _live.Gear,
-        Inventory = _live.Inventory,
-        Skills = _vision?.Skills ?? new(),
-        Paragon = _vision?.Paragon ?? new(),
-        Aspects = _vision?.Aspects ?? new(),
-        Mercenary = _vision?.Mercenary,
-    };
-
-    string VisionPath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "vision.json");
-    void LoadVision()
-    {
-        try { if (File.Exists(VisionPath)) _vision = JsonSerializer.Deserialize<VisionResult>(File.ReadAllText(VisionPath), D4Scanner.Core.Json.Opts); }
-        catch { }
-    }
-    void SaveVision()
-    {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(VisionPath)!); File.WriteAllText(VisionPath, JsonSerializer.Serialize(_vision, D4Scanner.Core.Json.Opts)); }
-        catch { }
-    }
+    LiveBuild EffectiveLive() => _live;
 
     // Persist the last-known gear state so the paper doll shows immediately on next launch
     // without requiring the user to re-hover all their equipped items.  Mirrors vision.json.
@@ -707,49 +689,29 @@ public partial class MainWindow : Window
         catch { }
     }
 
-    // Merge fresh scan results into the persisted live state: update slots that were re-hovered,
-    // keep persisted slots that haven't been re-hovered yet this session.
+    // Merge fresh scan results into the persisted live state. Tts items win over Ocr items per slot:
+    // if the incoming batch has only Ocr for a slot where persisted has a Tts item, keep the Tts item.
     static List<Item> MergeGear(List<Item> persisted, List<Item> fresh)
     {
         if (fresh.Count == 0) return persisted;
-        var freshSlots = new HashSet<string>(
-            fresh.Select(it => DiffEngine.SlotBaseName(it.Slot ?? "")), StringComparer.OrdinalIgnoreCase);
-        var kept = persisted.Where(it => !freshSlots.Contains(DiffEngine.SlotBaseName(it.Slot ?? ""))).ToList();
-        kept.AddRange(fresh);
-        return kept;
-    }
-
-    async Task DoVision()
-    {
-        var key = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (string.IsNullOrWhiteSpace(key))
+        var freshBySlot = fresh
+            .GroupBy(it => DiffEngine.SlotBaseName(it.Slot ?? ""), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var result = new List<Item>();
+        var handledSlots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in freshBySlot)
         {
-            MessageBox.Show("Set the ANTHROPIC_API_KEY environment variable, then restart the app.\n\n" +
-                "This reads paragon boards, glyph levels, skills and aspects from screenshots via Claude vision.",
-                "API key needed", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            bool hasTtsFresh = kv.Value.Any(it => it.Source == ItemSource.Tts);
+            var persistedForSlot = persisted.Where(it => DiffEngine.SlotBaseName(it.Slot ?? "") == kv.Key).ToList();
+            bool hasTtsPersisted = persistedForSlot.Any(it => it.Source == ItemSource.Tts);
+            if (!hasTtsFresh && hasTtsPersisted)
+                result.AddRange(persistedForSlot);  // keep existing Tts, ignore incoming Ocr
+            else
+                result.AddRange(kv.Value);          // fresh wins (Tts fresh, or no Tts conflict)
+            handledSlots.Add(kv.Key);
         }
-        var d = new OpenFileDialog
-        {
-            Title = "Pick screenshots — paragon boards, glyph tooltips, skill tree",
-            Filter = "Images|*.png;*.jpg;*.jpeg;*.webp|All files|*.*",
-            Multiselect = true,
-        };
-        if (d.ShowDialog() != true || d.FileNames.Length == 0) return;
-        var prev = VisionBtn.Content; VisionBtn.IsEnabled = false; VisionBtn.Content = "…"; Status.Text = "reading screenshots…";
-        try
-        {
-            var res = await VisionCapture.CaptureAsync(d.FileNames, key!, null, s => Dispatcher.Invoke(() => Status.Text = s));
-            _vision = res; SaveVision(); Render();
-            Status.Text = $"vision: {res.Skills.Count} skills, {res.Paragon.Count} boards, {res.Aspects.Count} aspects";
-            Toast($"Captured  {res.Skills.Count} skills · {res.Paragon.Count} boards · {res.Aspects.Count} aspects");
-        }
-        catch (Exception ex)
-        {
-            Status.Text = "vision failed — " + ex.Message;
-            MessageBox.Show(ex.Message, "Vision capture failed", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally { VisionBtn.IsEnabled = true; VisionBtn.Content = prev; }
+        result.AddRange(persisted.Where(it => !handledSlots.Contains(DiffEngine.SlotBaseName(it.Slot ?? ""))));
+        return result;
     }
 
     void PickLog()
@@ -849,11 +811,7 @@ public partial class MainWindow : Window
         UpdateBuildNamePlaceholder();
         OverallPct.Text = r.Pct + "%";
 
-        // skills/paragon hidden from UI for now — vision button only for aspects
-        bool hasVisionTargets = _target.Aspects.Count > 0;
-        VisionBtn.Visibility = hasVisionTargets ? Visibility.Visible : Visibility.Collapsed;
         OverallCount.Text = $"{r.Matched} / {r.Total} met  ·  {_live.Gear.Count} equipped items"
-            + (_vision != null ? "  ·  + vision" : "")
             + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
         OverallBar.Value = r.Pct;
 
@@ -1113,7 +1071,7 @@ public partial class MainWindow : Window
     }
 
     // shared install action for the banner button and the footer button
-    void RunInstall(Button btn)
+    void RunInstall(System.Windows.Controls.Control? btn = null)
     {
         // if the game can't be auto-detected, ask the user to locate Diablo IV.exe before installing
         if (CaptureSetup.GameDir() == null)
@@ -1137,12 +1095,19 @@ public partial class MainWindow : Window
             SaveSettings();   // persist so the next launch remembers it
         }
 
-        btn.IsEnabled = false; var prev = btn.Content; btn.Content = "installing…";
+        object? prevContent = null;
+        if (btn is System.Windows.Controls.ContentControl cc)
+            { btn.IsEnabled = false; prevContent = cc.Content; cc.Content = "installing…"; }
+        else if (btn != null)
+            btn.IsEnabled = false;
         var (ok, msg) = CaptureSetup.Install();
         MessageBox.Show(msg, ok ? "Capture set up" : "Couldn't set up capture",
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        btn.IsEnabled = true; btn.Content = prev;
-        if (ok) _shimNeedsUpgrade = false;   // banner gone — don't re-show until next launch
+        if (btn is System.Windows.Controls.ContentControl cc2)
+            { btn.IsEnabled = true; cc2.Content = prevContent; }
+        else if (btn != null)
+            btn.IsEnabled = true;
+        if (ok) { _useTts = true; _shimNeedsUpgrade = false; SaveSettings(); }
         Render();
     }
 
@@ -1412,6 +1377,52 @@ public partial class MainWindow : Window
         dbgDesc.TextWrapping = TextWrapping.Wrap; dbgText.Children.Add(dbgDesc);
         dbgRow.Children.Add(dbgText);
         sp.Children.Add(dbgRow);
+
+        // TTS capture toggle
+        var ttsRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var ttsChk = new CheckBox { IsChecked = _useTts, VerticalAlignment = VerticalAlignment.Center };
+        ttsChk.Checked += (_, _) =>
+        {
+            _useTts = true; SaveSettings();
+            if (!CaptureSetup.Installed()) RunInstall(ttsChk);
+            else StartWatching();
+        };
+        ttsChk.Unchecked += async (_, _) =>
+        {
+            var confirm = MessageBox.Show(
+                "Turning off TTS capture will delete the DLL shim from your system, remove its certificate from the Root store, and clean it from PATH.\n\nContinue?",
+                "Remove TTS capture", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes) { ttsChk.IsChecked = true; return; }
+            var (ok, msg) = CaptureSetup.Uninstall();
+            _useTts = false; SaveSettings(); StartWatching();
+            MessageBox.Show(msg, ok ? "TTS capture removed" : "TTS capture removal", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        };
+        DockPanel.SetDock(ttsChk, Dock.Left); ttsChk.Margin = new Thickness(0, 0, 10, 0); ttsRow.Children.Add(ttsChk);
+        var ttsText = new StackPanel();
+        ttsText.Children.Add(TBs("Screen-reader (TTS) capture", Ink, 13.5, true));
+        var ttsDesc = TB("Reads gear from the D4 TTS log (most accurate). Requires the DLL shim and D4 Accessibility → Screen Reader settings.", Soft, 11.5, false);
+        ttsDesc.TextWrapping = TextWrapping.Wrap; ttsText.Children.Add(ttsDesc);
+        ttsRow.Children.Add(ttsText);
+        sp.Children.Add(ttsRow);
+
+        // OCR screen capture toggle
+        var ocrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var ocrChk = new CheckBox { IsChecked = _useCapture, VerticalAlignment = VerticalAlignment.Center };
+        ocrChk.Checked   += (_, _) => { _useCapture = true;  SaveSettings(); StartWatching(); };
+        ocrChk.Unchecked += (_, _) => { _useCapture = false; SaveSettings(); StartWatching(); };
+        DockPanel.SetDock(ocrChk, Dock.Left); ocrChk.Margin = new Thickness(0, 0, 10, 0); ocrRow.Children.Add(ocrChk);
+        var ocrText = new StackPanel();
+        var ocrHdr = new DockPanel();
+        var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, IsEnabled = _useCapture };
+        scanNowBtn.Click += async (_, _) => { if (_captureEngine != null) await _captureEngine.ScanNowAsync(); };
+        DockPanel.SetDock(scanNowBtn, Dock.Right); ocrHdr.Children.Add(scanNowBtn);
+        ocrHdr.Children.Add(TBs("Screen capture (OCR)", Ink, 13.5, true));
+        ocrText.Children.Add(ocrHdr);
+        var ocrDesc = TB("Reads gear by capturing the game window — free, no API key, no DLL. Works in borderless and exclusive fullscreen.", Soft, 11.5, false);
+        ocrDesc.TextWrapping = TextWrapping.Wrap; ocrText.Children.Add(ocrDesc);
+        ocrRow.Children.Add(ocrText);
+        sp.Children.Add(ocrRow);
 
         // separator
         sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 4, 0, 16) });
@@ -1729,54 +1740,39 @@ public partial class MainWindow : Window
         RootLayer.Children.Add(overlay);
     }
 
-    // ---- character portrait capture (PrintWindow) ----
-    // Captures the D4 game window and saves a region as character.png.
-    // Uses PrintWindow with PW_RENDERFULLCONTENT which works for DX11/DX12 borderless games.
+    // ---- character portrait capture ----
+    // Uses WGC (works in exclusive fullscreen) with PrintWindow as the internal fallback.
+    // CaptureCharacterPortrait() is synchronous (called from a button click), so it runs
+    // GrabAsync() synchronously via GetAwaiter().GetResult() — this is safe because the
+    // button handler is on the UI thread and the async path only blocks briefly.
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool GetClientRect(IntPtr hwnd, out System.Drawing.Rectangle lpRect);
-    const uint PW_RENDERFULLCONTENT = 0x00000002;
-
-    /// <summary>Captures the D4 window and saves a square portrait crop to character.png.
-    /// Returns an error string on failure or null on success.</summary>
     string? CaptureCharacterPortrait()
     {
         var d4 = System.Diagnostics.Process.GetProcessesByName("Diablo IV").FirstOrDefault();
         if (d4 == null || d4.MainWindowHandle == IntPtr.Zero)
             return "Diablo IV is not running. Launch the game and open the character panel (C key), then try again.";
 
-        var hwnd = d4.MainWindowHandle;
-        if (!GetClientRect(hwnd, out var rect)) return "Could not get the D4 window size.";
-        int w = rect.Width, h = rect.Height;
-        if (w < 100 || h < 100) return "D4 window is too small to capture.";
+        System.Drawing.Bitmap? bmp;
+        try { bmp = D4Scanner.App.Capture.WindowsGraphicsCapture.GrabAsync().GetAwaiter().GetResult(); }
+        catch { bmp = null; }
 
-        using var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var g = System.Drawing.Graphics.FromImage(bmp))
+        if (bmp == null)
+            return "Capture failed. Make sure D4 is not minimized and try again.";
+
+        using (bmp)
         {
-            var hdc = g.GetHdc();
-            bool ok = PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
-            g.ReleaseHdc(hdc);
-            if (!ok) return "PrintWindow failed. Make sure D4 is not minimized.";
+            int w = bmp.Width, h = bmp.Height;
+            if (w < 100 || h < 100) return "D4 window is too small to capture.";
+            int cropW = Math.Min(400, w / 3), cropH = Math.Min(520, h * 2 / 3);
+            int cropX = Math.Max(0, (w - cropW) / 2);
+            int cropY = Math.Max(0, (h - cropH) / 2 - h / 10);
+            cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
+            using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var dest = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "character.png");
+            crop.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
         }
-
-        // Sanity-check: if the capture is all-black the API didn't work (some DX12 configurations)
-        var sample = bmp.GetPixel(w / 2, h / 2);
-        if (sample.R < 5 && sample.G < 5 && sample.B < 5)
-            return "Capture returned a blank image. D4 may need to run in borderless window mode, or bring D4 to the foreground and try again.";
-
-        // Crop a portrait region from the center of the screen (where the character model sits)
-        // The character is roughly centered horizontally and occupies roughly the middle third vertically
-        int cropW = Math.Min(400, w / 3), cropH = Math.Min(520, h * 2 / 3);
-        int cropX = (w - cropW) / 2, cropY = (h - cropH) / 2 - h / 10;  // slightly above center
-        cropX = Math.Max(0, cropX); cropY = Math.Max(0, cropY);
-        cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
-        using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-        var dest = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "character.png");
-        crop.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
-        return null;   // success
+        return null;
     }
 
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -1816,22 +1812,20 @@ public partial class MainWindow : Window
     };
 
     // shown before any build is imported, so opening the app immediately tells you what to do
-    // first-run setup checklist: three steps with live checkmarks that fill in as each is completed,
-    // and an inline action button on whatever's still outstanding.
+    // first-run setup checklist: two steps with live checkmarks that fill in as each is completed.
     UIElement WelcomeCard()
     {
         bool s1 = _target != null;
-        bool s2 = CaptureSetup.Installed();
-        bool s3 = _vision != null;
-        int doneCount = (s1 ? 1 : 0) + (s2 ? 1 : 0) + (s3 ? 1 : 0);
+        bool s2 = CaptureSetup.Installed() || _useCapture;
+        int doneCount = (s1 ? 1 : 0) + (s2 ? 1 : 0);
 
         var sp = new StackPanel();
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var prog = TB($"{doneCount} / 3", Soft, 12, false); prog.VerticalAlignment = VerticalAlignment.Center;
+        var prog = TB($"{doneCount} / 2", Soft, 12, false); prog.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(prog, Dock.Right); hdr.Children.Add(prog);
         hdr.Children.Add(TBs("Set up your live guide", Gold, 15, true));
         sp.Children.Add(hdr);
-        sp.Children.Add(TB("Three quick steps — the checks fill in as you complete them.", Soft, 12, false, new Thickness(0, 0, 0, 12)));
+        sp.Children.Add(TB("Two quick steps — the checks fill in as you complete them.", Soft, 12, false, new Thickness(0, 0, 0, 12)));
 
         void Step(bool done, string head, string body, string? actionLabel, Action<Button>? action)
         {
@@ -1853,8 +1847,7 @@ public partial class MainWindow : Window
         }
 
         Step(s1, "Import a build", "Paste a Maxroll build-guide or planner URL above (or just type the build name) and hit Import.", null, null);
-        Step(s2, "Enable in-game capture", "Install the capture shim, then turn on Diablo IV → Accessibility → Screen Reader + 3rd-Party Screen Reader so the app can read your equipped gear.", "Install capture DLL", b => RunInstall(b));
-        Step(s3, "Capture skills & paragon", "Gear comes from the live log; screenshot your skills / paragon / aspects to fill in the rest.", "Add screenshots", async b => { await DoVision(); });
+        Step(s2, "Enable gear capture", "Install the TTS capture shim (Settings → Screen-reader capture) or enable Screen capture (OCR) — both read your equipped gear automatically.", "Install capture DLL", b => RunInstall(b));
 
         return new Border
         {
@@ -3061,15 +3054,6 @@ public partial class MainWindow : Window
         }
         if (t.Aspects.Count > 0) { RawHeader(sp, "ASPECTS"); foreach (var a in t.Aspects) sp.Children.Add(RawLine("◆  " + a)); }
         // skills/paragon intentionally omitted from the raw view for now
-
-        if (_vision != null && (!string.IsNullOrEmpty(_vision.Mercenary) || _vision.Talismans.Count > 0 || _vision.Gems.Count > 0 || _vision.Runes.Count > 0))
-        {
-            RawHeader(sp, "FROM YOUR SCREENSHOTS  (vision)");
-            if (!string.IsNullOrEmpty(_vision.Mercenary)) sp.Children.Add(RawLine("Mercenary:  " + _vision.Mercenary));
-            foreach (var tl in _vision.Talismans) sp.Children.Add(RawLine("◆  talisman: " + tl));
-            foreach (var gm in _vision.Gems) sp.Children.Add(RawLine("◆  gem: " + gm));
-            foreach (var rn in _vision.Runes) sp.Children.Add(RawLine("◆  rune: " + rn));
-        }
 
         RawHeader(sp, "RAW JSON");
         string json; try { json = JsonSerializer.Serialize(t, new JsonSerializerOptions { WriteIndented = true }); } catch { json = "(unavailable)"; }
