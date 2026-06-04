@@ -171,6 +171,28 @@ Check("LootFilter preset: affix id present", preset.Contains("Maximum Life"));
 Check("LootFilter preset: unique id present", preset.Contains("Cowl of the Homeless"));
 Check("LootFilter preset: affix typed by slot", preset.Contains("\"Type\":\"Helm\""));
 
+// ---- BuildGuide dedup + RE-TEMPER verb ----
+var guideTarget = new TargetBuild { Gear = {
+    new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } },
+    new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } } } };
+var liveMissAll = new LiveBuild();
+var rMissAll = DiffEngine.Diff(guideTarget, liveMissAll, 50);
+var stepsAll = BuildGuide.Steps(rMissAll);
+// Same affix on two weapon slots should be merged into one step
+var dotSteps = stepsAll.Where(s => s.Text.Contains("Damage Over Time")).ToList();
+Check("BuildGuide dedup: duplicate affix steps merged", dotSteps.Count == 1);
+Check("BuildGuide dedup: merged step has both slots", dotSteps.Count > 0 && dotSteps[0].Text.Contains("/"));
+
+var retemperTarget = new TargetBuild { Gear = {
+    new TargetGear { Slot = "helm", Affixes = {
+        new TargetAffix { Name = "Max Stacks", Min = 3, Tempered = true } } } } };
+var liveLowRoll = new LiveBuild { Gear = { new Item { Name = "A Helm", Slot = "helm", Affixes = {
+    new Affix { Text = "Max Stacks", Value = 2, Min = 1, Max = 5 } } } } };
+var rTemper = DiffEngine.Diff(retemperTarget, liveLowRoll, 50);
+var temSteps = BuildGuide.Steps(rTemper);
+Check("BuildGuide RE-TEMPER verb for under-rolled tempered affix",
+    temSteps.Any(s => s.Verb == "RE-TEMPER"));
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
