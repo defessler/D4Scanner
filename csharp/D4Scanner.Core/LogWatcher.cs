@@ -166,7 +166,7 @@ public sealed class LogWatcher : IDisposable
     /// stays in the log file but its entry is older, so it loses to the newer one here.
     /// For equipped gear: N = 2 for rings, up to 4 for weapons, 1 for everything else.
     /// For inventory: caller passes a higher limit (default 15) so bag items aren't over-pruned.</summary>
-    static List<Item> LatestPerSlot(IEnumerable<Item> items, int overrideMax = 0)
+    public static List<Item> LatestPerSlot(IEnumerable<Item> items, int overrideMax = 0)
     {
         return items
             .GroupBy(it => SlotBaseName(it.Slot ?? ""))
