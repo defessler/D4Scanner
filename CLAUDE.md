@@ -4,6 +4,20 @@ D4Scanner is a live Diablo IV build tracker: a WPF desktop app (.NET 8, C#) that
 the game's screen-reader (TTS) output and optionally OCRs the game window, comparing the
 player's equipped gear against a target build imported from Maxroll.
 
+## Project-specific slash commands
+
+These live in `.claude/commands/` and are available in any Claude Code session in this repo:
+
+| Command | What it does |
+|---|---|
+| `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
+| `/test` | Run the 92-assertion Core test suite; report pass/fail and any failing names |
+| `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
+| `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
+| `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
+| `/add-setting` | Step-by-step guide to adding a new persisted setting (field + load + save + UI toggle) |
+| `/add-activity` | Step-by-step guide to adding a new recommended activity to the guidance system |
+
 ## Build & test — run these after every change
 
 ```powershell
