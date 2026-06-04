@@ -87,7 +87,10 @@ public class LiveBuild
     public List<string> Aspects { get; set; } = new();
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
-    public string? Mercenary { get; set; }               // hired mercenary, read by the vision channel
+    public string? Mercenary { get; set; }
+    public List<Item> Charms { get; set; } = new();
+    public List<Item> Seals { get; set; } = new();
+    public List<Item> Runes { get; set; } = new();               // hired mercenary, read by the vision channel
 }
 
 // ---- target build (mirrors schema/target.schema.json) ----
