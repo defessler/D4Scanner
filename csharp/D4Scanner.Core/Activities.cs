@@ -44,6 +44,9 @@ public static class Activities
             acts.Add(new("Socket gems & runes (Jeweler)",
                 "Add sockets and craft / upgrade the gems and runes your build wants at the Jeweler; you can unsocket without losing them."));
 
+        if (under && (missAffix || needTemper || wantSockets))
+            acts.Add(new("Run Helltides for crafting currency",
+                "Helltides drop Forgotten Souls (for enchanting), Sigil Powder, and raw materials. Open Tortured Gifts for targeted gear drops."));
         if (under)
             acts.Add(new("Masterwork to push rolls higher",
                 "Masterwork items at the Blacksmith to boost affixes and crit specific ones. Farm Masterwork materials in The Pit (all tiers) — Obducite/Ingolith/Neathiron drop from different Pit tiers."));
