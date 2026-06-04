@@ -57,9 +57,12 @@ public static class Activities
                 "Run The Pit (30+ tiers) or Nightmare Dungeons to earn Glyph XP — leveling Glyphs widens their bonus radius (Rare at 15, Legendary at 46). " +
                 "The Pit also drops Horadric Seals (Vessel of Hatred)."));
 
-        // Infernal Hordes offering recommendation based on current build gaps
-        var (offering, offeringReason) = InfernalHordesAdvisor.RecommendOffering(r, r.TargetClass);
-        acts.Add(new($"Infernal Hordes — take {offering}", offeringReason));
+        // Infernal Hordes offering recommendation — only shown when the build still has gaps
+        if (r.Pct < 100)
+        {
+            var (offering, offeringReason) = InfernalHordesAdvisor.RecommendOffering(r, r.TargetClass);
+            acts.Add(new($"Infernal Hordes — take {offering}", offeringReason));
+        }
 
         return acts;
     }
