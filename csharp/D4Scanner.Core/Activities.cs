@@ -20,7 +20,7 @@ public static class Activities
         bool needTemper = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && i.Tempered)) ?? false;
         bool under      = gear?.Groups.Any(g => g.Under > 0) ?? false;
         bool wantSockets = gear?.Groups.Any(g => g.WantSockets.Count > 0) ?? false;
-        bool missGlyph  = r.Categories.FirstOrDefault(c => c.Id == "paragon")?.Groups
+        bool missGlyph = r.Categories.FirstOrDefault(c => c.Id == "paragon")?.Groups
             .Any(g => g.Name == "Glyphs" && g.Items.Any(i => !i.Done)) ?? false;
 
         if (MissingIn("uniques"))
