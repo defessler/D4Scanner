@@ -185,6 +185,9 @@ public static class CaptureSetup
         return -1;   // no installed DLL found
     }
 
+    /// <summary>Cached installed shim version for display (populated by NeedsUpgrade()).</summary>
+    public static int? CachedInstalledVersion { get; private set; }
+
     /// <summary>True if an installed saapi64.dll is confirmed outdated. Returns false when the version
     /// cannot be determined (avoids a spurious banner when D4 locks the DLL or other load failures).</summary>
     public static bool NeedsUpgrade()
