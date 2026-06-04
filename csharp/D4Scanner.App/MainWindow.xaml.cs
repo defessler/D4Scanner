@@ -12,12 +12,24 @@ namespace D4Scanner.App;
 public partial class MainWindow : Window
 {
     static Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-    // Diablo IV palette — warm stone + antique gold + rarity colors
-    // cool grey/black + red accent (the "Gold"/"GoldHi" names are kept but now hold the red accent)
-    static readonly Brush Ink = B("#E7E8EC"), Soft = B("#9DA1AB"), Faint = B("#6B6E78"), Green = B("#4FB05A"),
-        Amber = B("#E0A52E"), Miss = B("#D23B3B"), Card = B("#16171B"), CardHi = B("#1E2026"),
-        Line = B("#2A2C33"), Edge = B("#3A3D45"), EdgeHi = B("#565A64"), Steel = B("#6E8CA8"),
-        Crimson = B("#D23B3B"), Gold = B("#D23B3B"), GoldHi = B("#E85C5C"), TileSel = B("#262029");
+    // Diablo IV palette — predominantly dark/cool with selective amber for accents only
+    // Backgrounds and panels stay dark neutral; amber/gold used only for values, headers, highlights
+    static readonly Brush Ink = B("#E8E4DC"),      // warm-tinted near-white for primary text
+                          Soft = B("#9C9890"),      // grey with slight warmth for secondary text
+                          Faint = B("#64615A"),     // dim grey for placeholder/disabled
+                          Green = B("#4FB05A"),
+                          Amber = B("#D4A730"),     // D4 amber — stat values and highlights ONLY
+                          Miss = B("#CC3030"),      // red for missing/error
+                          Card = B("#16151A"),      // near-black with very slight purple-grey (D4 panels)
+                          CardHi = B("#1E1D24"),    // slightly lighter panel hover
+                          Line = B("#252430"),      // dark separator
+                          Edge = B("#383540"),      // dark border
+                          EdgeHi = B("#524F5E"),    // lighter border for focus
+                          Steel = B("#6E8CA8"),     // cool info blue
+                          Crimson = B("#CC3030"),
+                          Gold = B("#D4A730"),      // amber gold — used sparingly for section headers / CTAs
+                          GoldHi = B("#F0C04A"),    // bright gold for active state
+                          TileSel = B("#22202C");   // subtle purple-dark selected tile
     // item-rarity colors (tuned to match D4's in-game slot coloring)
     static readonly Brush RMagic  = B("#4A8FE0"), RRare   = B("#D4A730"), RLegend = B("#E8711A"),
                           RUnique = B("#C4935A"), RMythic = B("#C92B2B"), RAncestral = B("#66D0F8");
@@ -185,6 +197,21 @@ public partial class MainWindow : Window
         HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         SettingsBtn.Click += (_, _) => ShowSettings();
+        CheckUpdatesBtn.Click += async (_, _) =>
+        {
+            CheckUpdatesBtn.IsEnabled = false; CheckUpdatesBtn.Content = "Checking…";
+            var latest = await Updater.GetLatestTagAsync();
+            CheckUpdatesBtn.IsEnabled = true;
+            if (latest == null) { CheckUpdatesBtn.Content = "Check failed"; return; }
+            if (Updater.IsNewer(latest, Updater.RunningVersion()))
+            {
+                CheckUpdatesBtn.Content = $"{latest} available!";
+                Toast($"{latest} is available — downloading…");
+                bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));
+                if (ok) ShowUpdateReady(latest);
+            }
+            else { CheckUpdatesBtn.Content = "Up to date ✓"; Toast("D4Scanner is up to date"); }
+        };
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -2062,17 +2089,13 @@ public partial class MainWindow : Window
         UIElement crestContent;
         if (charImg != null)
         {
-            var imgGrid = new Grid();
-            charImg.Width = 140; charImg.Height = 180; charImg.Stretch = Stretch.UniformToFill;
-            charImg.HorizontalAlignment = HorizontalAlignment.Center; charImg.VerticalAlignment = VerticalAlignment.Center;
-            imgGrid.Children.Add(charImg);
-            // overlay: class name + live dot + progress at the bottom of the portrait
-            var imgOverlay = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 6) };
-            if (!string.IsNullOrEmpty(className)) imgOverlay.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 12, true)));
-            imgOverlay.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
-            imgOverlay.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ offline", liveGear ? Green : Faint, 9, true, new Thickness(0, 4, 0, 0))));
-            imgGrid.Children.Add(imgOverlay);
-            crestContent = imgGrid;
+            // Portrait is shown as full-bleed backdrop behind the doll.
+            // The crest shows just the minimal class badge + live indicator.
+            var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 14, true, new Thickness(0, 0, 0, 6))));
+            crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
+            crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ offline", liveGear ? Green : Faint, 9, true, new Thickness(0, 6, 0, 0))));
+            crestContent = crest;
         }
         else
         {
@@ -2101,14 +2124,41 @@ public partial class MainWindow : Window
         Grid.SetColumn(center, 1); grid.Children.Add(center);
         Grid.SetColumn(right, 2); grid.Children.Add(right);
 
-        // class-tinted backdrop glow behind the doll (stand-in for class splash art until a source is wired)
+        // backdrop: character portrait (if loaded) with radial fade OR class-colour glow
         var bc = ((SolidColorBrush)ClassColor(className)).Color;
         var outer = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-        outer.Background = new RadialGradientBrush
+
+        var backdropPortrait = LoadCharacterImage();
+        if (backdropPortrait != null)
         {
-            GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
-            GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
-        };
+            // Full-bleed character image behind the doll, radially faded so edges dissolve
+            // before reaching the slot icons — cinematic D4 character-screen feel.
+            backdropPortrait.Stretch = Stretch.UniformToFill;
+            backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
+            backdropPortrait.Opacity = 0.55;
+            // Radial opacity mask: fully visible in the very centre, fades to transparent at ~50% radius
+            var mask = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.5, 0.38), Center = new Point(0.5, 0.38), RadiusX = 0.46, RadiusY = 0.58,
+            };
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));       // opaque at centre
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.42));    // fully visible to 42%
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x60, 0, 0, 0), 0.72));  // 40% at edge
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1)); // fully transparent
+            backdropPortrait.OpacityMask = mask;
+            outer.Children.Add(backdropPortrait);
+        }
+        else
+        {
+            // No portrait — fall back to class-colour glow
+            outer.Background = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
+                GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+            };
+        }
+
         var dollStack = new StackPanel();
         dollStack.Children.Add(grid);
         if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
@@ -2123,21 +2173,44 @@ public partial class MainWindow : Window
     // tab toggle above the doll: preview the build's wanted gear ("Target") vs your equipped gear ("My gear")
     UIElement DollToggle()
     {
-        var sp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 12) };
-        void Tab(string key, string label)
+        // D4-style tab row: active tab has a golden bottom underline bar and warm highlight background
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 10) };
+        void Tab(string key, string label, string? icon = null)
         {
             bool on = _dollView == key;
-            var b = new Border
+            var lbl = new StackPanel { Orientation = Orientation.Horizontal };
+            if (icon != null) lbl.Children.Add(TB(icon + " ", on ? Amber : Soft, 11, false));
+            lbl.Children.Add(TB(label, on ? Amber : Soft, 12, on));
+            // Active: warm amber text + gold bottom border + slightly raised bg
+            // Inactive: dimmed, flat
+            var inner = new Border
             {
-                Child = TB(label, on ? Ink : Soft, 12.5, on), Padding = new Thickness(15, 5, 15, 5), Margin = new Thickness(0, 0, 7, 0),
-                CornerRadius = new CornerRadius(4), Background = on ? TileSel : Card, BorderBrush = on ? Gold : Edge, BorderThickness = new Thickness(1),
+                Child = lbl,
+                Padding = new Thickness(16, 6, 16, 6),
+                Background = on ? B("#2A2318") : System.Windows.Media.Brushes.Transparent,
+            };
+            var outer = new Border
+            {
+                Child = inner,
+                Margin = new Thickness(0, 0, 4, 0),
+                CornerRadius = new CornerRadius(3, 3, 0, 0),
+                BorderBrush = on ? Gold : Edge,
+                // Active tab: gold bottom bar + side borders; inactive: subtle bottom only
+                BorderThickness = on ? new Thickness(1, 1, 1, 2) : new Thickness(0, 0, 0, 1),
                 Cursor = System.Windows.Input.Cursors.Hand,
             };
-            b.MouseLeftButtonUp += (_, _) => { _dollView = key; Render(); };
-            sp.Children.Add(b);
+            outer.MouseLeftButtonUp += (_, e) =>
+            {
+                if (key == "all") { ShowInventoryModal(); e.Handled = true; return; }
+                _dollView = key; Render();
+            };
+            outer.MouseEnter += (_, _) => { if (!on) inner.Background = B("#221D14"); };
+            outer.MouseLeave += (_, _) => { if (!on) inner.Background = System.Windows.Media.Brushes.Transparent; };
+            sp.Children.Add(outer);
         }
-        Tab("mine", "My gear");
-        Tab("target", "Target");
+        Tab("mine",   "My Gear",  "◆");
+        Tab("target", "Target",   "◎");
+        Tab("all",    "All Items", "⊞");
         return sp;
     }
 
@@ -2211,7 +2284,7 @@ public partial class MainWindow : Window
 
     // the slot's display tuple for the current doll view (target = build wants, mine = equipped)
     (string name, Brush col, string? iconName, string? id, long? image) SlotDisplay(Section s) =>
-        _dollView == "mine" ? EquippedFor(s) : WantedFor(s);
+        _dollView is "mine" or "all" ? EquippedFor(s) : WantedFor(s);
 
     // a portrait equipment frame styled like the D4 in-game character screen: dark slot with a diagonal
     // rarity-colored gradient overlay and a rarity-colored border ring. Ancestral items get a cyan glow.
@@ -2222,7 +2295,7 @@ public partial class MainWindow : Window
 
         // ancestral treatment: if viewing "my gear" and the item is ancestral, use the cyan shimmer
         var liveIt = s.Gear?.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
-        bool ancestral = _dollView == "mine" && IsAncestral(liveIt?.Rarity);
+        bool ancestral = _dollView is "mine" or "all" && IsAncestral(liveIt?.Rarity);
         var frameBrush = ancestral ? RAncestral : rcol;
         var frameRc = ((SolidColorBrush)frameBrush).Color;
 
