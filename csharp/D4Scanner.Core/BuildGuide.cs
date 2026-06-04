@@ -58,6 +58,7 @@ public static class BuildGuide
             acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have " + i.Have : "boss / Obol gamble", $"Track down {i.Label}", "cat:uniques"));
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
             acts.Add(new GuideStep(1, "IMPRINT", i.Label, "at the Occultist", $"Imprint the {i.Label}", "cat:aspects"));
+        // Note: seals/charms have no target in the build schema yet — when added, route here
         // skills/paragon/mercenary are intentionally hidden from the UI for now (vision-gated, not yet robust
         // enough for a good user experience). Keep this call-site intact so they can be re-enabled cleanly.
         // AddVisionCategory(r, acts, "skills",    "SKILL",  "Set up",   "skills & passives");
