@@ -394,6 +394,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("useTts", out var ut)) _useTts = ut != "0";
                     if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
                     if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
+                    if (s.TryGetValue("logSkipPos", out var lsp) && long.TryParse(lsp, out var lspv) && lspv > 0) _logSkipToPos = lspv;
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -425,7 +426,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null }));
         }
         catch { }
     }
@@ -465,6 +466,9 @@ public partial class MainWindow : Window
         Render();
         if (added.Count == 1) { Toast($"Equipped  {added[0]}"); AppLog($"equipped: {added[0]}"); }
         else if (added.Count > 1) { Toast($"Gear updated — {added.Count} new items"); AppLog($"gear update: {added.Count} new items — {string.Join(", ", added)}"); }
+        // First successful update after a cache clear: retire the skip position so future launches
+        // don't stay pinned at the old log offset after the user has refreshed their gear.
+        if (_logSkipToPos > 0 && merged.Gear.Count > 0) { _logSkipToPos = 0; SaveSettings(); }
         // Show last scanned item in status bar
         var newest = merged.Gear.OrderByDescending(g => g.LastScannedTicks).FirstOrDefault();
         if (newest != null) StatusDetail.Text = $"last: {newest.Name}  ·  {System.IO.Path.GetFileName(_log)}";
@@ -1740,10 +1744,12 @@ public partial class MainWindow : Window
                 () => File.Exists(liveJsonPath) || _live.Gear.Count > 0,
                 () =>
                 {
-                    // Skip to end of current log so only NEW hovers rebuild the gear list
+                    // Persist the skip position so restarts also skip the old log data
                     try { if (File.Exists(_log)) _logSkipToPos = new FileInfo(_log).Length; } catch { }
                     try { File.Delete(liveJsonPath); } catch { }
-                    _live = new(); Dispatcher.Invoke(StartWatching);
+                    _live = new();
+                    SaveSettings();   // persist _logSkipToPos to app.json
+                    Dispatcher.Invoke(StartWatching);
                 }),
         };
 
