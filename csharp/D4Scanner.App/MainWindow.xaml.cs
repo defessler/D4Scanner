@@ -501,12 +501,13 @@ public partial class MainWindow : Window
             _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
-            _watcher.CharacterPanelDetected += () => Dispatcher.Invoke(() =>
-            {
-                // Auto-capture portrait when the user opens the character panel in D4
-                var err = CaptureCharacterPortrait();
-                if (err == null) { Render(); AppLog("portrait auto-captured from character panel"); }
-            });
+            _watcher.CharacterPanelDetected += () =>
+                Task.Delay(800).ContinueWith(_ => Dispatcher.Invoke(() =>
+                {
+                    // Auto-capture portrait after a short delay so the panel finishes animating
+                    var err = CaptureCharacterPortrait();
+                    if (err == null) { Render(); AppLog("portrait auto-captured from character panel"); }
+                }));
             _watcher.Start();
             _jsonl?.Dispose();
             _jsonl = new LogToJsonlConverter(_log);
@@ -2037,9 +2038,13 @@ public partial class MainWindow : Window
         {
             int w = bmp.Width, h = bmp.Height;
             if (w < 100 || h < 100) return "D4 window is too small to capture.";
-            int cropW = Math.Min(400, w / 3), cropH = Math.Min(520, h * 2 / 3);
-            int cropX = Math.Max(0, (w - cropW) / 2);
-            int cropY = Math.Max(0, (h - cropH) / 2 - h / 10);
+            // D4 character panel: the model stands in the centre-left third of the screen.
+            // Relative coords tested against 1080p and 1440p: model occupies roughly
+            // x = 13-40% of width, y = 5-91% of height.
+            int cropW = Math.Max(200, w * 28 / 100);
+            int cropH = Math.Max(400, h * 87 / 100);
+            int cropX = Math.Max(0, w * 13 / 100);
+            int cropY = Math.Max(0, h *  5 / 100);
             cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
             using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
                 System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -2501,20 +2506,39 @@ public partial class MainWindow : Window
         var charImg = LoadCharacterImage();
         if (charImg != null)
         {
-            // Framed portrait — contained in the center column, not bleed-through
             charImg.Stretch = Stretch.UniformToFill;
             charImg.VerticalAlignment = VerticalAlignment.Top;
             charImg.HorizontalAlignment = HorizontalAlignment.Center;
-            center.Children.Add(new Border
+
+            const double pw = 172, ph = 290;
+
+            // Layer 0: dark stone background
+            // Layer 1: portrait image (clipped via the containing grid's Clip)
+            // Layer 2: bottom-fade gradient — image dissolves into card background colour
+            // Layer 3: subtle amber rim (matches rarity-frame aesthetic)
+            var bgCol = Color.FromRgb(0x16, 0x15, 0x1A);
+            var fadeGrad = new LinearGradientBrush { StartPoint = new Point(0.5, 0.52), EndPoint = new Point(0.5, 1.0) };
+            fadeGrad.GradientStops.Add(new GradientStop(Color.FromArgb(0,    bgCol.R, bgCol.G, bgCol.B), 0));
+            fadeGrad.GradientStops.Add(new GradientStop(Color.FromArgb(0xCC, bgCol.R, bgCol.G, bgCol.B), 0.78));
+            fadeGrad.GradientStops.Add(new GradientStop(bgCol,                                           1));
+
+            var pg = new Grid
             {
-                Width = 148, Height = 200,
-                CornerRadius = new CornerRadius(6),
-                BorderBrush = Edge, BorderThickness = new Thickness(1.5),
+                Width = pw, Height = ph,
                 Background = B("#0A090D"),
-                ClipToBounds = true,
-                Margin = new Thickness(0, 0, 0, 14),
-                Child = charImg,
+                Clip = new System.Windows.Media.RectangleGeometry(new Rect(0, 0, pw, ph), 6, 6),
+                Margin = new Thickness(0, 0, 0, 12),
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            pg.Children.Add(charImg);
+            pg.Children.Add(new Border { Background = fadeGrad });
+            pg.Children.Add(new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xD4, 0xA7, 0x30)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
             });
+            center.Children.Add(pg);
         }
 
         // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot

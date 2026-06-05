@@ -181,9 +181,10 @@ public sealed class OcrCaptureEngine : IDisposable
             using var bmp = await WindowsGraphicsCapture.GrabAsync().ConfigureAwait(false);
             if (bmp == null) return;
             int w = bmp.Width, h = bmp.Height;
-            int cropW = Math.Min(400, w / 3), cropH = Math.Min(520, h * 2 / 3);
-            int cropX = Math.Max(0, (w - cropW) / 2);
-            int cropY = Math.Max(0, (h - cropH) / 2 - h / 10);
+            int cropW = Math.Max(200, w * 28 / 100);
+            int cropH = Math.Max(400, h * 87 / 100);
+            int cropX = Math.Max(0, w * 13 / 100);
+            int cropY = Math.Max(0, h *  5 / 100);
             cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
             using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
                 System.Drawing.Imaging.PixelFormat.Format32bppArgb);
