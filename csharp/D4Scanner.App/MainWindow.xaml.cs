@@ -2276,7 +2276,7 @@ public partial class MainWindow : Window
             // VerticalAlignment.Top keeps the character's head anchored at the top of the space.
             backdropPortrait.Stretch = Stretch.UniformToFill;
             backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Top;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
             backdropPortrait.Opacity = 0.55;
             // Gradient centre at Y=0.55 (character torso) so the top edge is inside the fading band
             // and all four edges dissolve smoothly rather than cutting off hard.
