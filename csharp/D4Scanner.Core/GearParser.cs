@@ -255,20 +255,23 @@ public class GearParser
             _seenSlotHeader = true;
             return null;
         }
-        // Non-slot-header lines outside a block reset the positional counters for ALL slots
-        // so a fresh panel view starts fresh (rough heuristic: reset on navigation noise)
-        if (!_seenSlotHeader && _name == null && SlotHeaders.Count > 0 && ln.Length > 2
-            && !ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase))
+        // Session restart marker — fully reset all parser state so stale blocks from a previous
+        // session don't corrupt the first item parsed in the new session.
+        if (ln.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase))
         {
-            // Reset only if we see a clear "not a slot context" signal (e.g. player name or zone)
-            // Conservative: only reset on "=== " separator lines (session restart)
-            if (ln.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase))
-                _slotPositionCounts.Clear();
+            _name = null; _body = new(); _equip = false; _blockEquip = false;
+            _seenSlotHeader = false; _blockFromCharPanel = false; _currentSlotHeader = null;
+            _blockSlotPosition = 0; _slotPositionCounts.Clear();
+            return null;
         }
         if (ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) { _equip = true; return null; }
         var low = ln.ToLowerInvariant();
         var nc = NameCandidate(ln);
         if (_name == null) { if (nc != null) Start(nc); return null; }
+        // New ALL-CAPS name while already in a block: previous block had no end-marker (e.g. interrupted
+        // hover). Discard the stale block and start fresh — avoids mixing two items' body lines.
+        if (nc != null && !string.Equals(nc, _name, StringComparison.OrdinalIgnoreCase))
+            { Start(nc); return null; }
         if (EndMarkers.Any(low.Contains))
         {
             var item = ParseBlock(_name, _body);

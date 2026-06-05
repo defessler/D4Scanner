@@ -43,9 +43,10 @@ public sealed class LogWatcher : IDisposable
     public LiveBuild Build { get; private set; } = new();
     public event Action<LiveBuild>? Updated;
 
-    public LogWatcher(string path, bool equippedOnly = true)
+    public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
     {
         _path = path; _equippedOnly = equippedOnly;
+        _pos = startPos;   // non-zero to skip old log data (e.g. after a live-cache clear)
     }
 
     public void Start(int pollMs = 500)

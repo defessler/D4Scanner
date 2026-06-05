@@ -173,6 +173,8 @@ public partial class MainWindow : Window
     readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
 
+    long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
+
     // auto-updater state
     System.Threading.Timer? _updateTimer;
     string? _pendingUpdateTag;          // tag of a downloaded update ready to apply
@@ -492,7 +494,10 @@ public partial class MainWindow : Window
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
-            _watcher = new LogWatcher(_log, equippedOnly: true);
+            // equippedOnly:false — show ALL hovered items; ClassifyContext sets Context for UI filtering.
+            // Pass _logSkipToPos so a live-cache clear starts reading from the end of the old data.
+            _watcher = new LogWatcher(_log, equippedOnly: false, startPos: _logSkipToPos);
+            _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.Start();
             _jsonl?.Dispose();
@@ -1278,42 +1283,108 @@ public partial class MainWindow : Window
         if (_updateModalOpen) return;
         _updateModalOpen = true;
 
-        var host = new Grid { Background = new SolidColorBrush(Color.FromArgb(0xB4, 0, 0, 0)) };
+        var host = new Grid { Background = new SolidColorBrush(Color.FromArgb(0xC0, 0, 0, 0)) };
         void CloseModal() { _updateModalOpen = false; RootLayer.Children.Remove(host); }
         host.MouseLeftButtonDown += (_, e) => { if (e.Source == host) CloseModal(); };
         RootLayer.Children.Add(host);
 
-        var sp = new StackPanel { Width = 560 };
+        // Outer container — no fixed Width, just min/max so it breathes
+        var wa = SystemParameters.WorkArea;
+        double panelW = Math.Min(780, wa.Width * 0.58);
 
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
-        var xBtn = MakeLink("✕", Soft); xBtn.FontSize = 15;
+        var sp = new StackPanel();
+
+        // Title bar with close button
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
+        var xBtn = new Border
+        {
+            Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4),
+            CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand,
+        };
         xBtn.MouseLeftButtonUp += (_, _) => CloseModal();
+        xBtn.MouseEnter += (_, _) => xBtn.Background = B("#2A2430");
+        xBtn.MouseLeave += (_, _) => xBtn.Background = System.Windows.Media.Brushes.Transparent;
         DockPanel.SetDock(xBtn, Dock.Right); hd.Children.Add(xBtn);
-        hd.Children.Add(TBs("D4Scanner Update", Gold, 17, true));
+        var titleSp = new StackPanel { Orientation = Orientation.Horizontal };
+        titleSp.Children.Add(TB("◆ ", Gold, 16, true));
+        titleSp.Children.Add(TBs("D4Scanner Update", Ink, 17, true));
+        hd.Children.Add(titleSp);
         sp.Children.Add(hd);
 
         var body = new StackPanel();  // swapped between states
         sp.Children.Add(body);
 
+        var scroll = new ScrollViewer
+        {
+            Content = sp,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = wa.Height * 0.85,
+        };
         host.Children.Add(new Border
         {
-            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(26, 22, 26, 24), Width = 612,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+            Background = B("#1A1921"),
+            BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(32, 28, 32, 30),
+            Width = panelW,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = scroll,
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7,
+            },
         });
 
         // ── helpers ──
         void SetBody(UIElement el) { body.Children.Clear(); body.Children.Add(el); }
 
-        UIElement NotesBlock(string mdText) => new ScrollViewer
+        // Version pill: "v0.9.0  →  v0.9.1"
+        UIElement VersionRow(string from, string to) =>
+            new Border
+            {
+                Background = B("#0E0D12"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 10, 18, 10),
+                Margin = new Thickness(0, 0, 0, 20),
+                Child = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
+                    Children = {
+                        TB(from, Soft, 14, false),
+                        TB("   →   ", Faint, 14, false),
+                        TB(to, Gold, 14, true),
+                    }
+                },
+            };
+
+        // Styled notes area
+        UIElement NotesBlock(string mdText) => new Border
         {
-            Content = RenderMarkdown(mdText), MaxHeight = 220,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 0, 0, 18),
+            Background = B("#0E0D12"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(16, 12, 16, 12),
+            Margin = new Thickness(0, 0, 0, 22),
+            Child = new ScrollViewer
+            {
+                Content = RenderMarkdown(mdText),
+                MaxHeight = 240, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
         };
 
+        // Button row helper
+        (Button primary, Button secondary) BtnRow(string primaryLabel, string secondaryLabel)
+        {
+            var p = new Button { Content = primaryLabel, Style = (Style)FindResource("Primary"), Padding = new Thickness(24, 10, 24, 10), FontSize = 14 };
+            var s = new Button { Content = secondaryLabel, Padding = new Thickness(18, 10, 18, 10), FontSize = 14 };
+            return (p, s);
+        }
+
         // ── Checking ──
-        body.Children.Add(TB("Checking for updates…", Soft, 13, false));
+        body.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 8),
+            Children = { TB("Checking for updates", Soft, 13.5, false) }
+        });
 
         var running = Updater.RunningVersion();
         var info = await Updater.GetLatestReleaseInfoAsync();
@@ -1324,9 +1395,15 @@ public partial class MainWindow : Window
         if (tag == null || !Updater.IsNewer(tag, running))
         {
             var upSp = new StackPanel();
-            upSp.Children.Add(TB($"✓  You're on the latest version  ({running})", Green, 13, false, new Thickness(0, 0, 0, 10)));
+            upSp.Children.Add(new Border
+            {
+                Background = B("#0E1A10"), BorderBrush = B("#2E4F33"), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 20),
+                Child = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
+                    Children = { TB("✓  ", Green, 15, true), TB($"You're on the latest version  ({running})", Green, 14, false) } },
+            });
             if (!string.IsNullOrEmpty(notes)) upSp.Children.Add(NotesBlock(notes));
-            var ok = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), HorizontalAlignment = HorizontalAlignment.Right };
+            var ok = new Button { Content = "Close", Padding = new Thickness(20, 10, 20, 10), HorizontalAlignment = HorizontalAlignment.Right, FontSize = 14 };
             ok.Click += (_, _) => CloseModal();
             upSp.Children.Add(ok);
             SetBody(upSp);
@@ -1339,69 +1416,78 @@ public partial class MainWindow : Window
         void ShowReadyState()
         {
             var rdSp = new StackPanel();
-            rdSp.Children.Add(TB($"Current:  {running}   →   New:  {tag}", Soft, 12, false, new Thickness(0, 0, 0, 14)));
+            rdSp.Children.Add(VersionRow(running, tag!));
             if (!string.IsNullOrEmpty(notes)) rdSp.Children.Add(NotesBlock(notes));
-            rdSp.Children.Add(TB("✓  Downloaded and ready to install.", Green, 12.5, false, new Thickness(0, 0, 0, 16)));
-            var rdRow = new DockPanel();
-            var laterBtn = new Button { Content = "Later", Padding = new Thickness(14, 7, 14, 7) };
+            rdSp.Children.Add(new Border
+            {
+                Background = B("#0E1A10"), BorderBrush = B("#2E4F33"), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 0, 0, 20),
+                Child = TB("✓  Downloaded and ready to install", Green, 13, false),
+            });
+            var (instBtn, laterBtn) = BtnRow("Install & Restart", "Later");
             laterBtn.Click += (_, _) => CloseModal();
-            var instBtn = new Button { Content = "Install & Restart", Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary") };
             instBtn.Click += (_, _) =>
             {
-                var rSp = new StackPanel();
                 var spinners = new[] { "⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏" };
-                var spinLbl = TBs("⠋  Restarting…", Ink, 13, false);
-                rSp.Children.Add(spinLbl);
-                SetBody(rSp);
+                var spinLbl = TBs("⠋  Applying update and restarting…", Ink, 14, false, new Thickness(0, 12, 0, 12));
+                spinLbl.HorizontalAlignment = HorizontalAlignment.Center;
+                SetBody(spinLbl);
                 int frame = 0;
                 var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
-                t.Tick += (_, _) => { frame = (frame + 1) % spinners.Length; spinLbl.Text = $"{spinners[frame]}  Restarting…"; };
+                t.Tick += (_, _) => { frame = (frame + 1) % spinners.Length; spinLbl.Text = $"{spinners[frame]}  Applying update and restarting…"; };
                 t.Start();
                 Task.Delay(1400).ContinueWith(_ => Dispatcher.Invoke(() => { t.Stop(); RestartToApplyUpdate(); }));
             };
-            DockPanel.SetDock(laterBtn, Dock.Left); rdRow.Children.Add(laterBtn);
-            DockPanel.SetDock(instBtn, Dock.Right); rdRow.Children.Add(instBtn);
-            rdSp.Children.Add(rdRow);
+            var rdBtns = new DockPanel();
+            DockPanel.SetDock(laterBtn, Dock.Left); rdBtns.Children.Add(laterBtn);
+            DockPanel.SetDock(instBtn, Dock.Right); rdBtns.Children.Add(instBtn);
+            rdSp.Children.Add(rdBtns);
             SetBody(rdSp);
         }
 
         if (alreadyStaged) { ShowReadyState(); return; }
 
-        // ── Download button ──
+        // ── Available: show notes + Download button ──
         var avSp = new StackPanel();
-        avSp.Children.Add(TB($"Current:  {running}   →   New:  {tag}", Soft, 12, false, new Thickness(0, 0, 0, 14)));
+        avSp.Children.Add(VersionRow(running, tag!));
         if (!string.IsNullOrEmpty(notes)) avSp.Children.Add(NotesBlock(notes));
-        var avRow = new DockPanel();
-        var notNowBtn = new Button { Content = "Not now", Padding = new Thickness(14, 7, 14, 7) };
+        var (dlBtn, notNowBtn) = BtnRow("Download ↓", "Not now");
         notNowBtn.Click += (_, _) => CloseModal();
-        var dlBtn = new Button { Content = "Download ↓", Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary") };
-        DockPanel.SetDock(notNowBtn, Dock.Left); avRow.Children.Add(notNowBtn);
-        DockPanel.SetDock(dlBtn, Dock.Right); avRow.Children.Add(dlBtn);
-        avSp.Children.Add(avRow);
+        var avBtns = new DockPanel();
+        DockPanel.SetDock(notNowBtn, Dock.Left); avBtns.Children.Add(notNowBtn);
+        DockPanel.SetDock(dlBtn, Dock.Right); avBtns.Children.Add(dlBtn);
+        avSp.Children.Add(avBtns);
         SetBody(avSp);
 
-        // wait for user to click Download
         var dlTcs = new TaskCompletionSource();
         dlBtn.Click += (_, _) => dlTcs.TrySetResult();
         await dlTcs.Task;
 
         // ── Downloading ──
         var dlSp = new StackPanel();
-        dlSp.Children.Add(TB("Downloading…", Soft, 12.5, false, new Thickness(0, 0, 0, 8)));
-        var bar = new ProgressBar { Height = 10, Minimum = 0, Maximum = 100, Value = 0, Margin = new Thickness(0, 0, 0, 5) };
-        var pctLbl = TB("0 %", Faint, 11, false); pctLbl.HorizontalAlignment = HorizontalAlignment.Right;
-        dlSp.Children.Add(bar); dlSp.Children.Add(pctLbl);
+        dlSp.Children.Add(TB("Downloading…", Soft, 13, false, new Thickness(0, 0, 0, 14)));
+        var bar = new ProgressBar { Height = 12, Minimum = 0, Maximum = 100, Value = 0, Margin = new Thickness(0, 0, 0, 8) };
+        var pctRow = new DockPanel();
+        var pctLbl = TB("0 %", Faint, 12, false); pctLbl.HorizontalAlignment = HorizontalAlignment.Right;
+        DockPanel.SetDock(pctLbl, Dock.Right); pctRow.Children.Add(pctLbl);
+        pctRow.Children.Add(TB("", Faint, 12, false));
+        dlSp.Children.Add(bar); dlSp.Children.Add(pctRow);
         SetBody(dlSp);
 
         var prog = new Progress<double>(p => Dispatcher.Invoke(() => { bar.Value = p; pctLbl.Text = $"{(int)p} %"; }));
         bool ok2 = await Task.Run(() => Updater.DownloadUpdateAsync(tag, prog));
 
-        if (ok2) { ShowUpdateReady(tag); ShowReadyState(); }
+        if (ok2) { ShowUpdateReady(tag!); ShowReadyState(); }
         else
         {
             var errSp = new StackPanel();
-            errSp.Children.Add(TB("Download failed — check your connection and try again.", B("#CC3030"), 12.5, false, new Thickness(0, 0, 0, 14)));
-            var closeBtn = new Button { Content = "Close", HorizontalAlignment = HorizontalAlignment.Right, Padding = new Thickness(14, 7, 14, 7) };
+            errSp.Children.Add(new Border
+            {
+                Background = B("#1A0D0D"), BorderBrush = B("#5C2020"), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 0, 0, 20),
+                Child = TB("Download failed — check your connection and try again.", B("#E07070"), 13, false),
+            });
+            var closeBtn = new Button { Content = "Close", HorizontalAlignment = HorizontalAlignment.Right, Padding = new Thickness(20, 10, 20, 10), FontSize = 14 };
             closeBtn.Click += (_, _) => CloseModal();
             errSp.Children.Add(closeBtn);
             SetBody(errSp);
@@ -1471,14 +1557,23 @@ public partial class MainWindow : Window
 
         void Close() => SettingsHost.Visibility = Visibility.Collapsed;
 
-        // ── content StackPanel (scrollable) ───────────────────────────────────
-        var sp = new StackPanel { Width = 580 };
+        // ── content StackPanel — no fixed Width; the outer Border controls sizing ─
+        var sp = new StackPanel();
 
-        // header row (stays outside the scroll)
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
-        var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 24) };
+        var xb = new Border
+        {
+            Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4),
+            CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand,
+        };
         xb.MouseLeftButtonUp += (_, _) => Close();
-        hd.Children.Add(xb); hd.Children.Add(TBs("Settings", Gold, 17, true));
+        xb.MouseEnter += (_, _) => xb.Background = B("#2A2430");
+        xb.MouseLeave += (_, _) => xb.Background = System.Windows.Media.Brushes.Transparent;
+        DockPanel.SetDock(xb, Dock.Right); hd.Children.Add(xb);
+        var titleSp2 = new StackPanel { Orientation = Orientation.Horizontal };
+        titleSp2.Children.Add(TB("⚙ ", Gold, 16, true));
+        titleSp2.Children.Add(TBs("Settings", Ink, 17, true));
+        hd.Children.Add(titleSp2);
         sp.Children.Add(hd);
 
         // ── helpers ──────────────────────────────────────────────────────────
@@ -1628,9 +1723,15 @@ public partial class MainWindow : Window
             ("Maxroll data",     "Planner item/affix data — re-fetched on next import",
                 () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
                 () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } }),
-            ("Live gear cache",  "Last-known equipped items — cleared to re-read from the current log",
-                () => File.Exists(liveJsonPath),
-                () => { try { File.Delete(liveJsonPath); _live = new(); } catch { } }),
+            ("Live gear cache",  "Last-known equipped items — hover new items to rebuild from scratch",
+                () => File.Exists(liveJsonPath) || _live.Gear.Count > 0,
+                () =>
+                {
+                    // Skip to end of current log so only NEW hovers rebuild the gear list
+                    try { if (File.Exists(_log)) _logSkipToPos = new FileInfo(_log).Length; } catch { }
+                    try { File.Delete(liveJsonPath); } catch { }
+                    _live = new(); Dispatcher.Invoke(StartWatching);
+                }),
         };
 
         var checks = new CheckBox[cacheFiles.Length];
@@ -1661,13 +1762,22 @@ public partial class MainWindow : Window
         sp.Children.Add(cacheRow);
 
         // ── panel + scrollviewer ──────────────────────────────────────────────
-        var maxH = SystemParameters.WorkArea.Height * 0.82;
+        var waS = SystemParameters.WorkArea;
+        double settingsW = Math.Min(780, waS.Width * 0.62);
+        var maxH = waS.Height * 0.84;
         var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = maxH };
         var panel = new Border
         {
-            Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(28, 22, 28, 24), Width = 636,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = scroll,
+            Background = B("#1A1921"),
+            BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(32, 28, 32, 30),
+            Width = settingsW,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Child = scroll,
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7,
+            },
         };
         SettingsHost.Children.Add(panel);
         SettingsHost.Visibility = Visibility.Visible;
