@@ -48,6 +48,9 @@ public sealed class LogWatcher : IDisposable
 
     public LiveBuild Build { get; private set; } = new();
     public event Action<LiveBuild>? Updated;
+    /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
+    /// Subscribe to auto-capture the portrait without requiring a manual button click.</summary>
+    public event Action? CharacterPanelDetected;
 
     public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
     {
@@ -84,7 +87,13 @@ public sealed class LogWatcher : IDisposable
             {
                 // Panel state machine: update current panel from navigation lines
                 var rawLine = GearParser.Clean(lines[i]);
-                if (PanelMarkers.TryGetValue(rawLine, out var panel)) _currentPanel = panel;
+                if (PanelMarkers.TryGetValue(rawLine, out var panel))
+                {
+                    var prev = _currentPanel;
+                    _currentPanel = panel;
+                    if (panel == "Character" && prev != "Character")
+                        CharacterPanelDetected?.Invoke();
+                }
 
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;

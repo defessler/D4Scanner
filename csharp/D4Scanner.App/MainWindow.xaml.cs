@@ -501,6 +501,12 @@ public partial class MainWindow : Window
             _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
+            _watcher.CharacterPanelDetected += () => Dispatcher.Invoke(() =>
+            {
+                // Auto-capture portrait when the user opens the character panel in D4
+                var err = CaptureCharacterPortrait();
+                if (err == null) { Render(); AppLog("portrait auto-captured from character panel"); }
+            });
             _watcher.Start();
             _jsonl?.Dispose();
             _jsonl = new LogToJsonlConverter(_log);
@@ -689,12 +695,28 @@ public partial class MainWindow : Window
     string LivePath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "live.json");
     void LoadLive()
     {
+        // Try live.json first (persisted gear state from last session)
         try
         {
             if (File.Exists(LivePath))
             {
                 var lb = JsonSerializer.Deserialize<LiveBuild>(File.ReadAllText(LivePath), D4Scanner.Core.Json.Opts);
                 if (lb != null) _live = lb;
+            }
+        }
+        catch { }
+
+        // Fast-startup supplement: merge .jsonl side-car items if they're newer than live.json
+        // (the side-car has every hovered item from the current session; avoids re-parsing the whole log)
+        try
+        {
+            var jsonlBuild = LogToJsonlConverter.BuildFromJsonl(_log);
+            if (jsonlBuild != null && jsonlBuild.Gear.Count > 0)
+            {
+                _live = new LiveBuild { Gear = MergeGear(_live.Gear, jsonlBuild.Gear), Inventory = _live.Inventory };
+                // Start the LogWatcher at the end of the log — the .jsonl already has older items
+                if (_logSkipToPos == 0)
+                    try { _logSkipToPos = new FileInfo(_log).Length; } catch { }
             }
         }
         catch { }
@@ -810,7 +832,7 @@ public partial class MainWindow : Window
 
     void Render()
     {
-        InstallCaptureBtn.Visibility = CaptureSetup.Installed() ? Visibility.Collapsed : Visibility.Visible;
+        InstallCaptureBtn.Visibility = Visibility.Collapsed;   // setup via Settings only
         OpenSrcBtn.Visibility = SourceUrl() != null ? Visibility.Visible : Visibility.Collapsed;
         if (_target == null)
         {
@@ -909,8 +931,7 @@ public partial class MainWindow : Window
             _selectedKey = (sections.FirstOrDefault(s => s.Status != "met") ?? sections.FirstOrDefault())?.Key;
 
         Body.Children.Clear();
-        if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
-        else if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
+        if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
@@ -2064,8 +2085,8 @@ public partial class MainWindow : Window
         "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "RE-TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
 
-    // shown before any build is imported, so opening the app immediately tells you what to do
-    // first-run setup checklist: two steps with live checkmarks that fill in as each is completed.
+    // First-run setup card: two steps with live checkmarks.
+    // Step 2 presents OCR and TTS as distinct choices with clear trade-offs.
     UIElement WelcomeCard()
     {
         bool s1 = _target != null;
@@ -2078,29 +2099,73 @@ public partial class MainWindow : Window
         DockPanel.SetDock(prog, Dock.Right); hdr.Children.Add(prog);
         hdr.Children.Add(TBs("Set up your live guide", Gold, 15, true));
         sp.Children.Add(hdr);
-        sp.Children.Add(TB("Two quick steps — the checks fill in as you complete them.", Soft, 12, false, new Thickness(0, 0, 0, 12)));
+        sp.Children.Add(TB("Two quick steps — checkmarks fill in as you complete each one.", Soft, 12, false, new Thickness(0, 0, 0, 12)));
 
-        void Step(bool done, string head, string body, string? actionLabel, Action<Button>? action)
+        // Step helper
+        void Step(bool done, UIElement content)
         {
-            var row = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
+            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
             var mark = TB(done ? "✓" : "○", done ? Green : Faint, 15, true);
             mark.TextAlignment = TextAlignment.Center; mark.Width = 24; mark.Margin = new Thickness(0, 1, 12, 0); mark.VerticalAlignment = VerticalAlignment.Top;
             DockPanel.SetDock(mark, Dock.Left); row.Children.Add(mark);
-            if (!done && actionLabel != null && action != null)
-            {
-                var btn = new Button { Content = actionLabel, Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 5, 14, 5), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
-                var a = action; btn.Click += (_, _) => a(btn);
-                DockPanel.SetDock(btn, Dock.Right); row.Children.Add(btn);
-            }
-            var t = new StackPanel();
-            t.Children.Add(TBs(head, done ? Soft : Ink, 13.5, true));
-            var bt = TB(body, Soft, 12, false, new Thickness(0, 1, 0, 0)); bt.TextWrapping = TextWrapping.Wrap; t.Children.Add(bt);
-            row.Children.Add(t);
+            row.Children.Add(content);
             sp.Children.Add(row);
         }
 
-        Step(s1, "Import a build", "Paste a Maxroll build-guide or planner URL above (or just type the build name) and hit Import.", null, null);
-        Step(s2, "Enable gear capture", "Install the TTS capture shim (Settings → Screen-reader capture) or enable Screen capture (OCR) — both read your equipped gear automatically.", "Install capture DLL", b => RunInstall(b));
+        // Step 1: Import
+        var s1Content = new StackPanel();
+        s1Content.Children.Add(TBs("Import a build", s1 ? Soft : Ink, 13.5, true));
+        var s1Desc = TB("Paste a Maxroll build-guide URL above, or just type the build name and hit Import.", Soft, 12, false, new Thickness(0, 1, 0, 0));
+        s1Desc.TextWrapping = TextWrapping.Wrap; s1Content.Children.Add(s1Desc);
+        Step(s1, s1Content);
+
+        // Step 2: Gear capture — explain the two options clearly
+        var s2Content = new StackPanel();
+        s2Content.Children.Add(TBs("Enable gear capture", s2 ? Soft : Ink, 13.5, true));
+        var s2Intro = TB("D4Scanner needs to read your equipped items. Pick one method — or use both for best coverage:", Soft, 12, false, new Thickness(0, 3, 0, 8));
+        s2Intro.TextWrapping = TextWrapping.Wrap; s2Content.Children.Add(s2Intro);
+
+        if (!s2)
+        {
+            // Option cards
+            void OptionCard(string icon, string title, string desc, string btnLabel, Action<Button> onClick)
+            {
+                var card = new Border
+                {
+                    Background = B("#111014"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(5), Padding = new Thickness(12, 10, 12, 10), Margin = new Thickness(0, 0, 0, 6),
+                };
+                var inner = new DockPanel();
+                var btn = new Button { Content = btnLabel, Padding = new Thickness(12, 4, 12, 4), VerticalAlignment = VerticalAlignment.Top };
+                btn.Click += (_, _) => onClick(btn);
+                DockPanel.SetDock(btn, Dock.Right); btn.Margin = new Thickness(10, 0, 0, 0); inner.Children.Add(btn);
+                var txt = new StackPanel();
+                var hd2 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 2) };
+                hd2.Children.Add(TB(icon + "  ", Faint, 13, false));
+                hd2.Children.Add(TBs(title, Ink, 13, true));
+                txt.Children.Add(hd2);
+                var d = TB(desc, Soft, 11.5, false); d.TextWrapping = TextWrapping.Wrap; txt.Children.Add(d);
+                inner.Children.Add(txt);
+                card.Child = inner;
+                s2Content.Children.Add(card);
+            }
+
+            OptionCard("⌨", "Screen-reader (TTS)",
+                "Most accurate. D4 voices item text which is logged and parsed. Requires a one-click DLL install and D4 accessibility settings.",
+                "Install DLL", b => RunInstall(b));
+
+            OptionCard("👁", "Screen capture (OCR)",
+                "No install needed — grabs the game window every 20 s and reads tooltip text via Windows OCR. Works in borderless and exclusive fullscreen.",
+                "Enable OCR", _ => { _useCapture = true; SaveSettings(); StartWatching(); Render(); });
+        }
+        else
+        {
+            var active = new StackPanel { Orientation = Orientation.Horizontal };
+            if (CaptureSetup.Installed()) active.Children.Add(TB("✓ TTS", Green, 12, false, new Thickness(0, 0, 12, 0)));
+            if (_useCapture) active.Children.Add(TB("✓ OCR", Green, 12, false));
+            s2Content.Children.Add(active);
+        }
+        Step(s2, s2Content);
 
         return new Border
         {
@@ -2598,20 +2663,22 @@ public partial class MainWindow : Window
         return ("Any " + s.Label, Soft, null, null, null);
     }
 
-    // what's actually equipped in a slot (for the "My gear" doll view). Live (TTS) items carry no icon handle
-    // of their own, so borrow one so the local game-data extraction can render a real icon here too (not just a
-    // silhouette): an exact unique match is the right item; otherwise the slot's build item shares the base art.
+    // Borrow an image handle for a live item so GameDataIcons can render the real game art.
+    // Priority: exact unique name match → exact target gear ItemId match → name-only fallback.
     (string name, Brush col, string? iconName, string? id, long? image) EquippedFor(Section s)
     {
         var it = s.Gear != null && s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
         if (it == null) return ("(empty)", Faint, null, null, null);
-        // For uniques: match by name and use that unique's own icon handle (correct).
+        var rcol = RarityBrush(it.Rarity);
+        // 1. Exact unique name match — safest, icon is always correct for this specific item
         var u = _target?.Uniques.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name));
-        if (u != null) return (it.Name, RarityBrush(it.Rarity), it.Name, u.ItemId, u.Image);
-        // For regular gear: use name-only lookup (no id/image handle) so IconResolver resolves
-        // by item name rather than the build's template icon. This prevents showing a Crossbow icon
-        // when the player has a different weapon type equipped — the name lookup finds the correct art.
-        return (it.Name, RarityBrush(it.Rarity), it.Name, null, null);
+        if (u != null) return (it.Name, rcol, it.Name, u.ItemId, u.Image);
+        // 2. Target gear ItemId name match — the target specifies this exact item, so its art is correct
+        var tg = _target?.Gear.FirstOrDefault(x =>
+            !string.IsNullOrEmpty(x.ItemId) && DiffEngine.PhraseMatch(x.ItemId, it.Name) && x.Image.HasValue);
+        if (tg != null) return (it.Name, rcol, it.Name, tg.ItemId, tg.Image);
+        // 3. Name-only lookup (IconResolver will try game-data by name via any configured templates)
+        return (it.Name, rcol, it.Name, null, null);
     }
 
     // the slot's display tuple for the current doll view (target = build wants, mine = equipped)
