@@ -11,7 +11,7 @@
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.9.6</Version>
+    <Version>0.9.7</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />

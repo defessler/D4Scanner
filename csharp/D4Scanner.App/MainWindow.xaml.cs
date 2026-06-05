@@ -707,20 +707,9 @@ public partial class MainWindow : Window
         }
         catch { }
 
-        // Fast-startup supplement: merge .jsonl side-car items if they're newer than live.json
-        // (the side-car has every hovered item from the current session; avoids re-parsing the whole log)
-        try
-        {
-            var jsonlBuild = LogToJsonlConverter.BuildFromJsonl(_log);
-            if (jsonlBuild != null && jsonlBuild.Gear.Count > 0)
-            {
-                _live = new LiveBuild { Gear = MergeGear(_live.Gear, jsonlBuild.Gear), Inventory = _live.Inventory };
-                // Start the LogWatcher at the end of the log — the .jsonl already has older items
-                if (_logSkipToPos == 0)
-                    try { _logSkipToPos = new FileInfo(_log).Length; } catch { }
-            }
-        }
-        catch { }
+        // Note: .jsonl fast-startup removed. The .jsonl is append-only across ALL sessions
+        // and seeded stale gear from previous sessions while skipping current log entries.
+        // LogWatcher re-reads from the beginning and is authoritative.
     }
     void SaveLive()
     {

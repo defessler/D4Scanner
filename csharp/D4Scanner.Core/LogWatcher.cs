@@ -92,7 +92,12 @@ public sealed class LogWatcher : IDisposable
                     var prev = _currentPanel;
                     _currentPanel = panel;
                     if (panel == "Character" && prev != "Character")
+                    {
+                        // Fresh panel session: reset position counters so hovering the same
+                        // weapon again doesn't increment to position 2 and create a phantom duplicate.
+                        _seg.ResetSlotPositions();
                         CharacterPanelDetected?.Invoke();
+                    }
                 }
 
                 var item = _seg.Feed(lines[i]);
@@ -146,23 +151,30 @@ public sealed class LogWatcher : IDisposable
             item.Context = UiContext.WornGear;
             return;
         }
-        // Fast path 3: item was hovered while the Character panel is the active TTS context.
-        // D4 Season 8 does not always emit a standalone "EQUIPPED" line before the item; use the
-        // panel context as a strong signal. Still scan a short window for definitive counter-signals
-        // (bag/vendor/stash actions) before committing.
+        // Fast path 3: item was hovered while the Character panel is active.
+        // Accept as equipped only if the EQUIPPED marker was seen (item.Equipped already true)
+        // OR a positive "unequip" action appears in the lookahead.
+        // Bag items visible on the inventory tab also have UiPanel=="Character" — they're caught by
+        // the "store/salvage/mark as junk" counter-signals or by IsComparison (already handled above).
         if (item.UiPanel == "Character" && !item.IsComparison)
         {
-            for (int look = i + 1; look < Math.Min(i + 8, lineCount); look++)
+            bool positiveSignal = item.Equipped;   // EQUIPPED marker was already seen
+            for (int look = i + 1; look < Math.Min(i + 12, lineCount); look++)
             {
                 var ctx = lines[look].Trim().ToLowerInvariant();
+                if (ctx.Contains("unequip"))   { positiveSignal = true; break; }
                 if (ctx.Contains("store") || ctx.Contains("salvage") || ctx.Contains("mark as junk"))
                     { item.Equipped = false; item.Context = UiContext.BagItem; return; }
                 if (ctx.Contains("buy"))  { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
                 if (ctx.Contains("take")) { item.Equipped = false; item.Context = UiContext.StashItem; return; }
             }
-            item.Equipped = true;
-            item.Context = UiContext.WornGear;
-            return;
+            if (positiveSignal)
+            {
+                item.Equipped = true;
+                item.Context = UiContext.WornGear;
+                return;
+            }
+            // No positive signal and no counter-signal — fall through to the generic lookahead below
         }
         // Fallback: scan up to 12 post-end-marker lines for the action verb.
         if (item.Equipped)
@@ -215,13 +227,18 @@ public sealed class LogWatcher : IDisposable
                 //       (player genuinely has two of that item equipped in different slots)
                 //   - Item scanned without a panel position (SlotPosition == 0, e.g. bag hover): key = "Name"
                 //     → re-hovering the same item collapses to one entry
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var seen      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var namesSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 return g.Reverse()
                         .Where(it =>
                         {
                             var name = it.RawName.Length > 0 ? it.RawName : it.Name;
-                            var key = it.SlotPosition > 0 ? $"{name}:{it.SlotPosition}" : name;
-                            return seen.Add(key);
+                            var key  = it.SlotPosition > 0 ? $"{name}:{it.SlotPosition}" : name;
+                            if (!seen.Add(key)) return false;
+                            // Secondary name-level dedup: if the same item was re-hovered at a
+                            // different panel position (e.g. weapon at pos 1 then pos 2 after
+                            // re-opening the char panel), collapse to the most-recent scan only.
+                            return namesSeen.Add(name);
                         })
                         // Stable ordering so ring/weapon assignment doesn't flip with scan order:
                         // items scanned from the character panel (SlotPosition > 0) sort by their

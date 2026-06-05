@@ -224,6 +224,10 @@ public class GearParser
     // Tracking counts let us distinguish Ring #1 from Ring #2, etc.
     readonly Dictionary<string, int> _slotPositionCounts = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Reset slot-position counters so re-opening the character panel starts fresh.
+    /// Without this, the same weapon can accumulate position 1, 2, 3 … across panel opens.</summary>
+    public void ResetSlotPositions() => _slotPositionCounts.Clear();
+
     void Start(string nc)
     {
         _name = nc; _body = new();
