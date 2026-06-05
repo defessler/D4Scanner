@@ -199,7 +199,6 @@ public partial class MainWindow : Window
         HelpBtn.Click += (_, _) => ToggleHelp();
         NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
         SettingsBtn.Click += (_, _) => ShowSettings();
-        // CheckUpdatesBtn.Click is wired later (after UpdateBtn.Click override) — no-op here
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
         ThreshSlider.ValueChanged += (_, _) =>
@@ -236,7 +235,15 @@ public partial class MainWindow : Window
         AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
 
-        Loaded += (_, _) => { StartWatching(); UrlBox.Focus(); Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background); };
+        Loaded += (_, _) =>
+        {
+            // Clamp window to screen work area so it never starts off-screen on 1080p displays
+            var wa = SystemParameters.WorkArea;
+            if (Height > wa.Height) Height = wa.Height;
+            if (Width  > wa.Width)  Width  = wa.Width;
+            StartWatching(); UrlBox.Focus();
+            Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background);
+        };
         CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
         Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _jsonl?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
@@ -1233,6 +1240,39 @@ public partial class MainWindow : Window
         Toast($"{tag} ready — click Update in the status bar to install");
     }
 
+    // ── Markdown renderer ──────────────────────────────────────────────────────
+    UIElement RenderMarkdown(string md)
+    {
+        var sp = new StackPanel();
+        foreach (var raw in md.Split('\n'))
+        {
+            var line = raw.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line)) { sp.Children.Add(new Border { Height = 5 }); continue; }
+            // skip auto-generated "Full Changelog" link lines
+            if (line.StartsWith("**Full Changelog")) continue;
+
+            string text = line;
+            double size = 12.5; bool bold = false; Brush col = Ink;
+            var margin = new Thickness(0, 2, 0, 2);
+
+            if (line.StartsWith("### ")) { text = line[4..]; size = 13;   bold = true; col = Ink;  margin = new Thickness(0, 8, 0, 2); }
+            else if (line.StartsWith("## "))  { text = line[3..]; size = 14;   bold = true; col = Gold; margin = new Thickness(0, 10, 0, 3); }
+            else if (line.StartsWith("# "))   { text = line[2..]; size = 14.5; bold = true; col = Gold; margin = new Thickness(0, 10, 0, 4); }
+            else if (line.StartsWith("- ") || line.StartsWith("* ")) { text = "•  " + line[2..]; col = Ink; margin = new Thickness(10, 1, 0, 1); }
+            else if (line.StartsWith("> "))   { text = line[2..]; col = Soft; margin = new Thickness(14, 1, 0, 1); }
+
+            // strip inline **bold** and `code` markers for plain rendering
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\*\*(.+?)\*\*", "$1");
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"`(.+?)`",       "$1");
+
+            var tb = new TextBlock { Text = text, Foreground = col, FontSize = size, TextWrapping = TextWrapping.Wrap, Margin = margin };
+            if (bold) tb.FontWeight = FontWeights.SemiBold;
+            sp.Children.Add(tb);
+        }
+        return sp;
+    }
+
+    // ── Update modal (state-machine) ───────────────────────────────────────────
     async void ShowUpdateModal(string? knownTag = null)
     {
         if (_updateModalOpen) return;
@@ -1243,88 +1283,128 @@ public partial class MainWindow : Window
         host.MouseLeftButtonDown += (_, e) => { if (e.Source == host) CloseModal(); };
         RootLayer.Children.Add(host);
 
-        var sp = new StackPanel { MinWidth = 400, MaxWidth = 560 };
+        var sp = new StackPanel { Width = 480 };
 
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var x = MakeLink("✕", Soft); x.FontSize = 15;
-        x.MouseLeftButtonUp += (_, _) => CloseModal();
-        DockPanel.SetDock(x, Dock.Right); hd.Children.Add(x);
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
+        var xBtn = MakeLink("✕", Soft); xBtn.FontSize = 15;
+        xBtn.MouseLeftButtonUp += (_, _) => CloseModal();
+        DockPanel.SetDock(xBtn, Dock.Right); hd.Children.Add(xBtn);
         hd.Children.Add(TBs("D4Scanner Update", Gold, 17, true));
         sp.Children.Add(hd);
 
-        var running = Updater.RunningVersion();
-        var verLbl = TB($"Current: {running}", Soft, 12.5, false); verLbl.Margin = new Thickness(0, 0, 0, 14);
-        sp.Children.Add(verLbl);
+        var body = new StackPanel();  // swapped between states
+        sp.Children.Add(body);
 
-        sp.Children.Add(TB("Release Notes", Faint, 11, true));
-        var notesTB = new TextBlock { FontSize = 12.5, Foreground = Ink, TextWrapping = TextWrapping.Wrap, Text = "Loading…" };
-        var notesScroll = new ScrollViewer
-        {
-            Content = notesTB, MaxHeight = 200,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 6, 0, 16),
-        };
-        sp.Children.Add(notesScroll);
-
-        var progressRow = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 14) };
-        var progressLbl = TB("Downloading…", Soft, 12, false); progressLbl.Margin = new Thickness(0, 0, 0, 5);
-        var progressBar = new ProgressBar { Height = 8, IsIndeterminate = true };
-        progressRow.Children.Add(progressLbl); progressRow.Children.Add(progressBar);
-        sp.Children.Add(progressRow);
-
-        var btnRow = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
-        var skipBtn = new Button { Content = "Not now", FontSize = 13.5, Padding = new Thickness(14, 7, 14, 7) };
-        var installBtn = new Button { Content = "Install & Restart", FontSize = 13.5, Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary"), IsEnabled = false };
-        skipBtn.Click += (_, _) => CloseModal();
-        installBtn.Click += (_, _) => { CloseModal(); RestartToApplyUpdate(); };
-        DockPanel.SetDock(skipBtn, Dock.Left); btnRow.Children.Add(skipBtn);
-        DockPanel.SetDock(installBtn, Dock.Right); btnRow.Children.Add(installBtn);
-        sp.Children.Add(btnRow);
-
-        var panel = new Border
+        host.Children.Add(new Border
         {
             Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(24, 20, 24, 22), MaxWidth = 560,
+            Padding = new Thickness(26, 22, 26, 24), Width = 480,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
-        };
-        host.Children.Add(panel);
+        });
 
-        // fetch release info async
+        // ── helpers ──
+        void SetBody(UIElement el) { body.Children.Clear(); body.Children.Add(el); }
+
+        UIElement NotesBlock(string mdText) => new ScrollViewer
+        {
+            Content = RenderMarkdown(mdText), MaxHeight = 220,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Margin = new Thickness(0, 0, 0, 18),
+        };
+
+        // ── Checking ──
+        body.Children.Add(TB("Checking for updates…", Soft, 13, false));
+
+        var running = Updater.RunningVersion();
         var info = await Updater.GetLatestReleaseInfoAsync();
         string? tag = knownTag ?? info?.tag;
-        string body = info?.body ?? "";
-        notesTB.Text = string.IsNullOrWhiteSpace(body) ? "(no release notes)" : body;
+        string notes = string.IsNullOrWhiteSpace(info?.body) ? "" : info!.Value.body;
 
+        // ── Up to date ──
         if (tag == null || !Updater.IsNewer(tag, running))
         {
-            verLbl.Text = $"You are on the latest version ({running}).";
-            notesTB.Text = string.IsNullOrWhiteSpace(body) ? "(no release notes)" : body;
-            installBtn.IsEnabled = false; installBtn.Content = "Up to date";
+            var upSp = new StackPanel();
+            upSp.Children.Add(TB($"✓  You're on the latest version  ({running})", Green, 13, false, new Thickness(0, 0, 0, 10)));
+            if (!string.IsNullOrEmpty(notes)) upSp.Children.Add(NotesBlock(notes));
+            var ok = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), HorizontalAlignment = HorizontalAlignment.Right };
+            ok.Click += (_, _) => CloseModal();
+            upSp.Children.Add(ok);
+            SetBody(upSp);
             return;
         }
 
-        verLbl.Text = $"Current: {running}  →  New: {tag}";
+        // ── Available / Ready-to-install ──
+        bool alreadyStaged = Updater.FindStagedUpdate().HasValue;
 
-        if (Updater.FindStagedUpdate().HasValue)
+        void ShowReadyState()
         {
-            installBtn.IsEnabled = true;
+            var rdSp = new StackPanel();
+            rdSp.Children.Add(TB($"Current:  {running}   →   New:  {tag}", Soft, 12, false, new Thickness(0, 0, 0, 14)));
+            if (!string.IsNullOrEmpty(notes)) rdSp.Children.Add(NotesBlock(notes));
+            rdSp.Children.Add(TB("✓  Downloaded and ready to install.", Green, 12.5, false, new Thickness(0, 0, 0, 16)));
+            var rdRow = new DockPanel();
+            var laterBtn = new Button { Content = "Later", Padding = new Thickness(14, 7, 14, 7) };
+            laterBtn.Click += (_, _) => CloseModal();
+            var instBtn = new Button { Content = "Install & Restart", Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary") };
+            instBtn.Click += (_, _) =>
+            {
+                var rSp = new StackPanel();
+                var spinners = new[] { "⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏" };
+                var spinLbl = TBs("⠋  Restarting…", Ink, 13, false);
+                rSp.Children.Add(spinLbl);
+                SetBody(rSp);
+                int frame = 0;
+                var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+                t.Tick += (_, _) => { frame = (frame + 1) % spinners.Length; spinLbl.Text = $"{spinners[frame]}  Restarting…"; };
+                t.Start();
+                Task.Delay(1400).ContinueWith(_ => Dispatcher.Invoke(() => { t.Stop(); RestartToApplyUpdate(); }));
+            };
+            DockPanel.SetDock(laterBtn, Dock.Left); rdRow.Children.Add(laterBtn);
+            DockPanel.SetDock(instBtn, Dock.Right); rdRow.Children.Add(instBtn);
+            rdSp.Children.Add(rdRow);
+            SetBody(rdSp);
         }
+
+        if (alreadyStaged) { ShowReadyState(); return; }
+
+        // ── Download button ──
+        var avSp = new StackPanel();
+        avSp.Children.Add(TB($"Current:  {running}   →   New:  {tag}", Soft, 12, false, new Thickness(0, 0, 0, 14)));
+        if (!string.IsNullOrEmpty(notes)) avSp.Children.Add(NotesBlock(notes));
+        var avRow = new DockPanel();
+        var notNowBtn = new Button { Content = "Not now", Padding = new Thickness(14, 7, 14, 7) };
+        notNowBtn.Click += (_, _) => CloseModal();
+        var dlBtn = new Button { Content = "Download ↓", Padding = new Thickness(16, 7, 16, 7), Style = (Style)FindResource("Primary") };
+        DockPanel.SetDock(notNowBtn, Dock.Left); avRow.Children.Add(notNowBtn);
+        DockPanel.SetDock(dlBtn, Dock.Right); avRow.Children.Add(dlBtn);
+        avSp.Children.Add(avRow);
+        SetBody(avSp);
+
+        // wait for user to click Download
+        var dlTcs = new TaskCompletionSource();
+        dlBtn.Click += (_, _) => dlTcs.TrySetResult();
+        await dlTcs.Task;
+
+        // ── Downloading ──
+        var dlSp = new StackPanel();
+        dlSp.Children.Add(TB("Downloading…", Soft, 12.5, false, new Thickness(0, 0, 0, 8)));
+        var bar = new ProgressBar { Height = 10, Minimum = 0, Maximum = 100, Value = 0, Margin = new Thickness(0, 0, 0, 5) };
+        var pctLbl = TB("0 %", Faint, 11, false); pctLbl.HorizontalAlignment = HorizontalAlignment.Right;
+        dlSp.Children.Add(bar); dlSp.Children.Add(pctLbl);
+        SetBody(dlSp);
+
+        var prog = new Progress<double>(p => Dispatcher.Invoke(() => { bar.Value = p; pctLbl.Text = $"{(int)p} %"; }));
+        bool ok2 = await Task.Run(() => Updater.DownloadUpdateAsync(tag, prog));
+
+        if (ok2) { ShowUpdateReady(tag); ShowReadyState(); }
         else
         {
-            progressRow.Visibility = Visibility.Visible;
-            bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(tag));
-            progressRow.Visibility = Visibility.Collapsed;
-            if (ok)
-            {
-                ShowUpdateReady(tag);
-                installBtn.IsEnabled = true;
-            }
-            else
-            {
-                progressLbl.Text = "Download failed — check your connection and try again.";
-                progressLbl.Foreground = B("#CC3030");
-                progressRow.Visibility = Visibility.Visible;
-            }
+            var errSp = new StackPanel();
+            errSp.Children.Add(TB("Download failed — check your connection and try again.", B("#CC3030"), 12.5, false, new Thickness(0, 0, 0, 14)));
+            var closeBtn = new Button { Content = "Close", HorizontalAlignment = HorizontalAlignment.Right, Padding = new Thickness(14, 7, 14, 7) };
+            closeBtn.Click += (_, _) => CloseModal();
+            errSp.Children.Add(closeBtn);
+            SetBody(errSp);
         }
     }
 
@@ -1389,144 +1469,127 @@ public partial class MainWindow : Window
         backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
         SettingsHost.Children.Add(backdrop);
 
-        var sp = new StackPanel { MinWidth = 360 };
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
+
+        // ── content StackPanel (scrollable) ───────────────────────────────────
+        var sp = new StackPanel { Width = 500 };
+
+        // header row (stays outside the scroll)
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
         var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
-        xb.MouseLeftButtonUp += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        xb.MouseLeftButtonUp += (_, _) => Close();
         hd.Children.Add(xb); hd.Children.Add(TBs("Settings", Gold, 17, true));
         sp.Children.Add(hd);
 
-        // inventory modal button
-        var invBtn = new Button { Content = "View all scanned items…", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 0, 14) };
-        invBtn.Click += (_, _) => { SettingsHost.Visibility = Visibility.Collapsed; ShowInventoryModal(); };
-        sp.Children.Add(invBtn);
+        // ── helpers ──────────────────────────────────────────────────────────
+        void Section(string title) =>
+            sp.Children.Add(new Border
+            {
+                BorderBrush = Edge, BorderThickness = new Thickness(0, 0, 0, 1),
+                Margin = new Thickness(0, 6, 0, 14), Padding = new Thickness(0, 0, 0, 4),
+                Child = TB(title, Faint, 10, true),
+            });
 
-        // debug mode toggle
-        var dbgRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var dbgChk = new CheckBox { IsChecked = _debugMode, VerticalAlignment = VerticalAlignment.Center };
-        dbgChk.Checked   += (_, _) => { _debugMode = true;  SaveSettings(); Render(); };
-        dbgChk.Unchecked += (_, _) => { _debugMode = false; SaveSettings(); Render(); };
-        DockPanel.SetDock(dbgChk, Dock.Left); dbgChk.Margin = new Thickness(0, 0, 10, 0); dbgRow.Children.Add(dbgChk);
-        var dbgText = new StackPanel();
-        dbgText.Children.Add(TBs("Debug info", Ink, 13.5, true));
-        var dbgDesc = TB("Show last-scan time and slot diagnostics on each item.", Soft, 11.5, false);
-        dbgDesc.TextWrapping = TextWrapping.Wrap; dbgText.Children.Add(dbgDesc);
-        dbgRow.Children.Add(dbgText);
-        sp.Children.Add(dbgRow);
-
-        // TTS capture toggle
-        var ttsRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var ttsChk = new CheckBox { IsChecked = _useTts, VerticalAlignment = VerticalAlignment.Center };
-        ttsChk.Checked += (_, _) =>
+        void ToggleRow(string label, string desc, bool isChecked, Action<bool> onChange, UIElement? extra = null)
         {
-            _useTts = true; SaveSettings();
-            if (!CaptureSetup.Installed()) RunInstall(ttsChk);
-            else StartWatching();
-        };
-        ttsChk.Unchecked += (_, _) =>
-        {
-            var confirm = MessageBox.Show(
-                "Turning off TTS capture will delete the DLL shim from your system, remove its certificate from the Root store, and clean it from PATH.\n\nContinue?",
-                "Remove TTS capture", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (confirm != MessageBoxResult.Yes) { ttsChk.IsChecked = true; return; }
-            var (ok, msg) = CaptureSetup.Uninstall();
-            _useTts = false; SaveSettings(); StartWatching();
-            MessageBox.Show(msg, ok ? "TTS capture removed" : "TTS capture removal", MessageBoxButton.OK,
-                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        };
-        DockPanel.SetDock(ttsChk, Dock.Left); ttsChk.Margin = new Thickness(0, 0, 10, 0); ttsRow.Children.Add(ttsChk);
-        var ttsText = new StackPanel();
-        ttsText.Children.Add(TBs("Screen-reader (TTS) capture", Ink, 13.5, true));
-        var ttsDesc = TB("Reads gear from the D4 TTS log (most accurate). Requires the DLL shim and D4 Accessibility → Screen Reader settings.", Soft, 11.5, false);
-        ttsDesc.TextWrapping = TextWrapping.Wrap; ttsText.Children.Add(ttsDesc);
-        ttsRow.Children.Add(ttsText);
-        sp.Children.Add(ttsRow);
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+            var chk = new CheckBox { IsChecked = isChecked, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 12, 0) };
+            chk.Checked   += (_, _) => onChange(true);
+            chk.Unchecked += (_, _) => onChange(false);
+            DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
+            var col = new StackPanel();
+            if (extra != null) { var h = new DockPanel(); DockPanel.SetDock(extra, Dock.Right); h.Children.Add(extra); h.Children.Add(TBs(label, Ink, 13, true)); col.Children.Add(h); }
+            else col.Children.Add(TBs(label, Ink, 13, true));
+            var d = TB(desc, Soft, 11.5, false); d.TextWrapping = TextWrapping.Wrap; col.Children.Add(d);
+            row.Children.Add(col); sp.Children.Add(row);
+        }
 
-        // OCR screen capture toggle
-        var ocrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var ocrChk = new CheckBox { IsChecked = _useCapture, VerticalAlignment = VerticalAlignment.Center };
-        ocrChk.Checked   += (_, _) => { _useCapture = true;  SaveSettings(); StartWatching(); };
-        ocrChk.Unchecked += (_, _) => { _useCapture = false; SaveSettings(); StartWatching(); };
-        DockPanel.SetDock(ocrChk, Dock.Left); ocrChk.Margin = new Thickness(0, 0, 10, 0); ocrRow.Children.Add(ocrChk);
-        var ocrText = new StackPanel();
-        var ocrHdr = new DockPanel();
-        var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, IsEnabled = _useCapture };
+        // ── CAPTURE section ───────────────────────────────────────────────────
+        Section("CAPTURE");
+
+        ToggleRow("Screen-reader (TTS)", "Reads gear tooltips via D4's accessibility output (most accurate). Requires the capture DLL and D4 Accessibility settings.",
+            _useTts, on =>
+            {
+                if (on) { _useTts = true; SaveSettings(); if (!CaptureSetup.Installed()) RunInstall(null); else StartWatching(); }
+                else
+                {
+                    var confirm = MessageBox.Show("Turning off TTS capture removes the DLL shim, its certificate, and PATH entry.\n\nContinue?",
+                        "Remove TTS capture", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (confirm != MessageBoxResult.Yes) { /* re-check won't fire since we're in lambda */ return; }
+                    var (ok, msg) = CaptureSetup.Uninstall();
+                    _useTts = false; SaveSettings(); StartWatching();
+                    MessageBox.Show(msg, ok ? "TTS capture removed" : "TTS capture removal", MessageBoxButton.OK,
+                        ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                }
+            });
+
+        var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), IsEnabled = _useCapture, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
         scanNowBtn.Click += async (_, _) => { if (_captureEngine != null) await _captureEngine.ScanNowAsync(); };
-        DockPanel.SetDock(scanNowBtn, Dock.Right); ocrHdr.Children.Add(scanNowBtn);
-        ocrHdr.Children.Add(TBs("Screen capture (OCR)", Ink, 13.5, true));
-        ocrText.Children.Add(ocrHdr);
-        var ocrDesc = TB("Reads gear by capturing the game window — free, no API key, no DLL. Works in borderless and exclusive fullscreen.", Soft, 11.5, false);
-        ocrDesc.TextWrapping = TextWrapping.Wrap; ocrText.Children.Add(ocrDesc);
-        ocrRow.Children.Add(ocrText);
-        sp.Children.Add(ocrRow);
+        ToggleRow("Screen capture (OCR)", "Captures the game window via Windows OCR — free, no API key, no DLL. Works in borderless and exclusive fullscreen.",
+            _useCapture, on => { _useCapture = on; scanNowBtn.IsEnabled = on; SaveSettings(); StartWatching(); }, scanNowBtn);
 
-        // separator
-        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 4, 0, 16) });
-
-        // affix roll-quality threshold
-        sp.Children.Add(TBs("Affix roll quality", Faint, 10, true, new Thickness(0, 0, 0, 8)));
-        var thrDesc = TB("Flag affixes whose roll is below this threshold. Flagged affixes show ⚠ in the diff and count as under-rolled.", Soft, 12, false);
-        thrDesc.TextWrapping = TextWrapping.Wrap; thrDesc.Margin = new Thickness(0, 0, 0, 10); sp.Children.Add(thrDesc);
-        var thrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var thrLblRight = TBs(((int)_minRollPct) + "%", Crimson, 13.5, true);
-        thrLblRight.VerticalAlignment = VerticalAlignment.Center;
-        DockPanel.SetDock(thrLblRight, Dock.Right); thrRow.Children.Add(thrLblRight);
-        var settingsThreshSlider = new System.Windows.Controls.Slider
-        {
-            Minimum = 0, Maximum = 100, Value = _minRollPct,
-            TickFrequency = 5, IsSnapToTickEnabled = true, VerticalAlignment = VerticalAlignment.Center,
-        };
-        settingsThreshSlider.ValueChanged += (_, _) =>
-        {
-            _minRollPct = settingsThreshSlider.Value;
-            ThreshSlider.Value = _minRollPct;
-            ThreshLbl.Text = ((int)_minRollPct) + "%";
-            thrLblRight.Text = ((int)_minRollPct) + "%";
-            SaveSettings(); Render();
-        };
-        thrRow.Children.Add(settingsThreshSlider); sp.Children.Add(thrRow);
-        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 14, 0, 16) });
-
-        // character portrait
-        sp.Children.Add(TBs("Character portrait", Faint, 10, true, new Thickness(0, 0, 0, 8)));
-        var portDesc = TB("Open your character panel in D4 (press C), then click Capture. The portrait will appear in the centre of the paper doll.", Soft, 12, false);
-        portDesc.TextWrapping = TextWrapping.Wrap; portDesc.Margin = new Thickness(0, 0, 0, 10); sp.Children.Add(portDesc);
-        var portRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+        // character portrait capture
+        sp.Children.Add(TBs("Character portrait", Ink, 13, true, new Thickness(0, 0, 0, 4)));
+        var portDesc = TB("Open your character panel in D4 (press C) then click Capture. The portrait appears behind the paper doll.", Soft, 11.5, false);
+        portDesc.TextWrapping = TextWrapping.Wrap; portDesc.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(portDesc);
+        var portRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
         var portStatus = TB("", Soft, 11.5, false); portStatus.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(portStatus, Dock.Left); portRow.Children.Add(portStatus);
-        var portBtn = new Button { Content = "Capture character", Style = (Style)FindResource("Primary"), Padding = new Thickness(16, 6, 16, 6), HorizontalAlignment = HorizontalAlignment.Right };
+        var portBtn = new Button { Content = "Capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 5, 14, 5), HorizontalAlignment = HorizontalAlignment.Right };
         portBtn.Click += (_, _) =>
         {
-            portBtn.IsEnabled = false; portBtn.Content = "Capturing…";
+            portBtn.IsEnabled = false; portBtn.Content = "…";
             var err = CaptureCharacterPortrait();
-            portBtn.Content = err == null ? "✓ Captured" : "Capture character";
-            portStatus.Text = err ?? "Saved — paper doll will update on next render";
+            portBtn.Content = err == null ? "✓" : "Capture";
+            portStatus.Text = err ?? "Saved";
             portStatus.Foreground = err == null ? Green : Miss;
             portBtn.IsEnabled = true;
-            if (err == null) Render();   // refresh the doll with the new portrait
+            if (err == null) Render();
         };
         portRow.Children.Add(portBtn); sp.Children.Add(portRow);
-        sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 14, 0, 16) });
 
-        // cache clear
-        sp.Children.Add(TBs("Cache", Faint, 10, true, new Thickness(0, 0, 0, 8)));
-        var cacheDesc = TB("The app caches the build index, Maxroll data, and all item icons so they load instantly. Clear specific categories below.", Soft, 12, false);
+        // ── DISPLAY section ───────────────────────────────────────────────────
+        Section("DISPLAY");
+
+        // affix roll quality slider
+        sp.Children.Add(TBs("Affix roll quality threshold", Ink, 13, true, new Thickness(0, 0, 0, 4)));
+        var thrDesc = TB("Affixes whose roll falls below this % of their range are flagged ⚠ under-rolled.", Soft, 11.5, false);
+        thrDesc.TextWrapping = TextWrapping.Wrap; thrDesc.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(thrDesc);
+        var thrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var thrLbl = TBs(((int)_minRollPct) + "%", Crimson, 13.5, true);
+        thrLbl.VerticalAlignment = VerticalAlignment.Center; thrLbl.MinWidth = 38; thrLbl.TextAlignment = TextAlignment.Right;
+        DockPanel.SetDock(thrLbl, Dock.Right); thrRow.Children.Add(thrLbl);
+        var thrSlider = new System.Windows.Controls.Slider { Minimum = 0, Maximum = 100, Value = _minRollPct, TickFrequency = 5, IsSnapToTickEnabled = true, VerticalAlignment = VerticalAlignment.Center };
+        thrSlider.ValueChanged += (_, _) => { _minRollPct = thrSlider.Value; ThreshSlider.Value = _minRollPct; ThreshLbl.Text = thrLbl.Text = ((int)_minRollPct) + "%"; SaveSettings(); Render(); };
+        thrRow.Children.Add(thrSlider); sp.Children.Add(thrRow);
+
+        ToggleRow("Debug info", "Show last-scan time and slot key diagnostics on each paper-doll cell.", _debugMode, on => { _debugMode = on; SaveSettings(); Render(); });
+
+        // ── ITEMS section ─────────────────────────────────────────────────────
+        Section("ITEMS");
+        var invBtn = new Button { Content = "View all scanned items…", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 0, 16) };
+        invBtn.Click += (_, _) => { Close(); ShowInventoryModal(); };
+        sp.Children.Add(invBtn);
+
+        // ── CACHE section ─────────────────────────────────────────────────────
+        Section("CACHE");
+        var cacheDesc = TB("Clear cached data. Icons and build data re-download automatically on next use.", Soft, 11.5, false);
         cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); sp.Children.Add(cacheDesc);
 
-        var iconDir    = Path.Combine(IconResolver.CacheDir, "icons");
+        var iconDir     = Path.Combine(IconResolver.CacheDir, "icons");
         var gameIconDir = Path.Combine(iconDir, "game");
-        var cacheFiles = new (string label, string desc, Func<bool> exists, Action clear)[]
+        var cacheFiles = new (string label, string detail, Func<bool> exists, Action clear)[]
         {
-            ("Game item icons",     $"Extracted from your D4 install ({CountFiles(gameIconDir)} files)",
+            ("Game item icons",  $"{CountFiles(gameIconDir)} files — extracted from your D4 install",
                 () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0,
                 () => { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }),
-            ("Downloaded art",      $"Unique/class icons from GitHub ({CountFiles(iconDir, "*.webp")} files)",
+            ("Downloaded icons", $"{CountFiles(iconDir, "*.webp")} files — unique/class art from GitHub",
                 () => CountFiles(iconDir, "*.webp") > 0,
                 () => { try { foreach (var f in Directory.GetFiles(iconDir, "*.webp", SearchOption.AllDirectories)) File.Delete(f); } catch { } }),
-            ("Build index",         "Maxroll build guide list (re-fetched on next launch)",
+            ("Build index",      "Maxroll guide list — re-fetched on next launch",
                 () => File.Exists(IconResolver.IndexPath),
                 () => { try { File.Delete(IconResolver.IndexPath); } catch { } }),
-            ("Maxroll data",        "Planner item/affix data (re-fetched on next import)",
+            ("Maxroll data",     "Planner item/affix data — re-fetched on next import",
                 () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
                 () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } }),
         };
@@ -1534,35 +1597,37 @@ public partial class MainWindow : Window
         var checks = new CheckBox[cacheFiles.Length];
         for (int i = 0; i < cacheFiles.Length; i++)
         {
-            var (label, desc, exists, _) = cacheFiles[i];
-            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
-            var chk = checks[i] = new CheckBox { IsChecked = false, IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top };
-            chk.Margin = new Thickness(0, 2, 10, 0); DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
+            var (label, detail, exists, _) = cacheFiles[i];
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var chk = checks[i] = new CheckBox { IsChecked = false, IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 10, 0) };
+            DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
             var col = new StackPanel();
             col.Children.Add(TB(label, exists() ? Ink : Faint, 13, true));
-            col.Children.Add(TB(desc, Soft, 11.5, false));
+            col.Children.Add(TB(detail, Soft, 11, false));
             row.Children.Add(col); sp.Children.Add(row);
         }
 
-        var btnRow = new DockPanel { Margin = new Thickness(0, 14, 0, 0) };
-        var cancel = new Button { Content = "Cancel" }; DockPanel.SetDock(cancel, Dock.Right); cancel.Margin = new Thickness(8, 0, 0, 0);
-        cancel.Click += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
-        var clear = new Button { Content = "Clear selected", Style = (Style)FindResource("Primary") };
-        clear.Click += (_, _) =>
+        var cacheRow = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var cancelBtn = new Button { Content = "Cancel", Padding = new Thickness(14, 6, 14, 6) };
+        cancelBtn.Click += (_, _) => Close();
+        var clearBtn = new Button { Content = "Clear selected", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
+        clearBtn.Click += (_, _) =>
         {
-            for (int i = 0; i < cacheFiles.Length; i++)
-                if (checks[i].IsChecked == true) cacheFiles[i].clear();
-            SettingsHost.Visibility = Visibility.Collapsed;
-            Toast("Cache cleared — changes take effect on next launch");
+            for (int i = 0; i < cacheFiles.Length; i++) if (checks[i].IsChecked == true) cacheFiles[i].clear();
+            Close(); Toast("Cache cleared — takes effect on next launch");
         };
-        DockPanel.SetDock(cancel, Dock.Right); btnRow.Children.Add(cancel);
-        btnRow.Children.Add(clear); sp.Children.Add(btnRow);
+        DockPanel.SetDock(cancelBtn, Dock.Right); cancelBtn.Margin = new Thickness(8, 0, 0, 0); cacheRow.Children.Add(cancelBtn);
+        DockPanel.SetDock(clearBtn,  Dock.Right); cacheRow.Children.Add(clearBtn);
+        sp.Children.Add(cacheRow);
 
+        // ── panel + scrollviewer ──────────────────────────────────────────────
+        var maxH = SystemParameters.WorkArea.Height * 0.82;
+        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = maxH };
         var panel = new Border
         {
             Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(28, 22, 28, 24), MaxWidth = 540,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
+            Padding = new Thickness(28, 22, 28, 24), Width = 556,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = scroll,
         };
         SettingsHost.Children.Add(panel);
         SettingsHost.Visibility = Visibility.Visible;

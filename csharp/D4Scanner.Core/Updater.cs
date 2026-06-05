@@ -86,10 +86,10 @@ public static class Updater
     }
 
     /// <summary>Download the release asset for <paramref name="tag"/> to the staging directory.
-    /// Uses a .tmp file during transfer so a partial download is never treated as complete.</summary>
-    public static async Task<bool> DownloadUpdateAsync(string tag)
+    /// Reports 0–100 progress via <paramref name="progress"/> if provided.</summary>
+    public static async Task<bool> DownloadUpdateAsync(string tag, IProgress<double>? progress = null)
     {
-        var url = $"https://github.com/{Repo}/releases/download/{tag}/D4Scanner-{tag}-win-x64.exe";
+        var url  = $"https://github.com/{Repo}/releases/download/{tag}/D4Scanner-{tag}-win-x64.exe";
         var dest = StagedPath(tag);
         var tmp  = dest + ".tmp";
         try
@@ -97,10 +97,22 @@ public static class Updater
             Directory.CreateDirectory(UpdateDir);
             using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             resp.EnsureSuccessStatusCode();
+            long total = resp.Content.Headers.ContentLength ?? -1;
+            long downloaded = 0;
+            var buf = new byte[81920];
             using var stream = await resp.Content.ReadAsStreamAsync();
             using (var fs = File.Create(tmp))
-                await stream.CopyToAsync(fs);
+            {
+                int read;
+                while ((read = await stream.ReadAsync(buf)) > 0)
+                {
+                    await fs.WriteAsync(buf.AsMemory(0, read));
+                    downloaded += read;
+                    if (total > 0) progress?.Report(downloaded * 100.0 / total);
+                }
+            }
             File.Move(tmp, dest, overwrite: true);
+            progress?.Report(100);
             return true;
         }
         catch
