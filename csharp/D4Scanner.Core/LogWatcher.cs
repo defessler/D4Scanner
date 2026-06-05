@@ -28,16 +28,22 @@ public sealed class LogWatcher : IDisposable
     string? _currentPanel;
     static readonly Dictionary<string, string> PanelMarkers = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Equipment"] = "Character",   ["Head"] = "Character",   ["Torso"] = "Character",
-        ["Stash"]     = "Stash",       ["Inventory"] = "Inventory",
-        ["Vendor"]    = "Vendor",      ["Purveyor of Curiosities"] = "Vendor",
-        ["BUYBACK"]   = "Vendor",      ["Paragon"] = "Paragon",
+        // Character panel headers — any of these set the context so Fast Path 3 fires
+        ["Equipment"]  = "Character",  ["Head"]    = "Character",  ["Torso"]   = "Character",
+        ["Hands"]      = "Character",  ["Legs"]    = "Character",  ["Feet"]    = "Character",
+        ["Neck"]       = "Character",  ["Ring"]    = "Character",  ["Main Hand"] = "Character",
+        ["Off-Hand"]   = "Character",  ["Ranged"]  = "Character",  ["Ranged Weapon"] = "Character",
+        ["Helm"]       = "Character",  ["Chest"]   = "Character",  ["Gloves"]  = "Character",
+        ["Pants"]      = "Character",  ["Boots"]   = "Character",  ["Amulet"]  = "Character",
+        // Other panels
+        ["Stash"]      = "Stash",      ["Inventory"] = "Inventory",
+        ["Vendor"]     = "Vendor",     ["Purveyor of Curiosities"] = "Vendor",
+        ["BUYBACK"]    = "Vendor",     ["Paragon"] = "Paragon",
         ["Available Points"] = "Paragon", ["Refund All"] = "Paragon",
         ["Skill Tree"] = "Skills",     ["MODIFIERS"] = "Skills",
-        ["Talisman"] = "Talisman",     ["Seals"] = "Seals",
-        ["Charms"] = "Charms",       ["Runes"] = "Runes",
-        ["Gems"] = "Gems",           ["Uniques"] = "Stash",
-        ["Charms"] = "Charms",
+        ["Talisman"]   = "Talisman",   ["Seals"]   = "Seals",
+        ["Charms"]     = "Charms",     ["Runes"]   = "Runes",
+        ["Gems"]       = "Gems",       ["Uniques"] = "Stash",
     };
 
     public LiveBuild Build { get; private set; } = new();
@@ -123,10 +129,28 @@ public sealed class LogWatcher : IDisposable
             item.Context = UiContext.BagItem;
             return;
         }
-        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) appeared immediately before the EQUIPPED
-        // block — definitively the character panel; override any subsequent misleading Store/Take signal.
+        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) appeared immediately before the block —
+        // definitively the character panel; override any subsequent misleading Store/Take signal.
         if (item.FromCharPanel)
         {
+            item.Equipped = true;
+            item.Context = UiContext.WornGear;
+            return;
+        }
+        // Fast path 3: item was hovered while the Character panel is the active TTS context.
+        // D4 Season 8 does not always emit a standalone "EQUIPPED" line before the item; use the
+        // panel context as a strong signal. Still scan a short window for definitive counter-signals
+        // (bag/vendor/stash actions) before committing.
+        if (item.UiPanel == "Character" && !item.IsComparison)
+        {
+            for (int look = i + 1; look < Math.Min(i + 8, lineCount); look++)
+            {
+                var ctx = lines[look].Trim().ToLowerInvariant();
+                if (ctx.Contains("store") || ctx.Contains("salvage") || ctx.Contains("mark as junk"))
+                    { item.Equipped = false; item.Context = UiContext.BagItem; return; }
+                if (ctx.Contains("buy"))  { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
+                if (ctx.Contains("take")) { item.Equipped = false; item.Context = UiContext.StashItem; return; }
+            }
             item.Equipped = true;
             item.Context = UiContext.WornGear;
             return;

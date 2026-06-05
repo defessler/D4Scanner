@@ -494,9 +494,8 @@ public partial class MainWindow : Window
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
-            // equippedOnly:false — show ALL hovered items; ClassifyContext sets Context for UI filtering.
             // Pass _logSkipToPos so a live-cache clear starts reading from the end of the old data.
-            _watcher = new LogWatcher(_log, equippedOnly: false, startPos: _logSkipToPos);
+            _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.Start();
