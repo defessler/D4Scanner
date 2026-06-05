@@ -54,6 +54,10 @@ public partial class App : System.Windows.Application
             var newPath  = System.IO.Path.Combine(dir, newName);
             if (Updater.TryApplyStaged(staged.Value.path, exe, newPath))
             {
+                // Delete the previous versioned exe (renamed to .old by TryApplyStaged)
+                try { System.IO.File.Delete(exe + ".old"); } catch { }
+                // Also try to delete the original exe path if the name changed (old version filename)
+                try { if (exe != newPath && System.IO.File.Exists(exe)) System.IO.File.Delete(exe); } catch { }
                 Process.Start(new ProcessStartInfo(newPath) { UseShellExecute = true });
                 Shutdown(0);
                 return;

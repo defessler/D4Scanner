@@ -1514,6 +1514,8 @@ public partial class MainWindow : Window
 
     void RestartToApplyUpdate()
     {
+        // The staged update will be applied on the next launch by App.xaml.cs.
+        // Restart immediately; the startup code handles the swap and old-file cleanup.
         var exe = System.Environment.ProcessPath
                ?? System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
