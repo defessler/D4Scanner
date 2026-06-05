@@ -258,6 +258,56 @@ var compact = System.Text.Json.JsonSerializer.Serialize(testItem, new System.Tex
 });
 Check("LogToJsonlConverter compact JSON fits on one line", !compact.Contains('\n'));
 
+// ---- TTS weapon path: regression net for the S8 bugs (melee-in-ranged-slot, weapon duplication) ----
+// The sample_tts.log fixture has NO weapons, so the weapon-assignment + dedup paths were entirely
+// uncovered — exactly where the repeated "weapons are wrong" reports came from. Pin them directly.
+
+// 1) Weapon-type affinity must beat raw affix-count: a crossbow target must claim the live crossbow
+//    even when a sword matches MORE of its wanted affixes (the "melee in the crossbow slot" report).
+{
+    var wTarget = new TargetBuild { Gear = {
+        new TargetGear { Slot = "weapon", Label = "Crossbow", ItemId = "2HCrossbow_Unique_Skyhunter",
+            Affixes = { new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Critical Strike Chance" } } },
+        new TargetGear { Slot = "weapon", Label = "Sword", ItemId = "1HSword_Unique_Etna",
+            Affixes = { new TargetAffix { Name = "Dexterity" } } } } };
+    var wLive = new LiveBuild { Gear = {
+        // the crossbow matches only 1 of the crossbow-target's affixes...
+        new Item { Name = "Skyhunter", Slot = "weapon", ItemType = "Crossbow",
+            Affixes = { new Affix { Text = "Dexterity", Value = 50 } } },
+        // ...the sword matches BOTH — without the type bonus it would steal the crossbow slot.
+        new Item { Name = "Etna's Lost Dagger", Slot = "weapon", ItemType = "Sword",
+            Affixes = { new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Critical Strike Chance", Value = 9 } } } } };
+    var wGroups = DiffEngine.Diff(wTarget, wLive).Categories.First(c => c.Id == "gear").Groups;
+    var xbow = wGroups.First(g => g.Name == "Crossbow");
+    var swd  = wGroups.First(g => g.Name == "Sword");
+    Check("Weapon assign: crossbow slot gets the crossbow, not the higher-affix sword",
+        xbow.LiveItems.Count == 1 && xbow.LiveItems[0].Name == "Skyhunter");
+    Check("Weapon assign: sword slot gets the sword",
+        swd.LiveItems.Count == 1 && swd.LiveItems[0].Name == "Etna's Lost Dagger");
+    Check("Weapon assign: the same weapon is never placed in two slots",
+        xbow.LiveItems.Count == 1 && swd.LiveItems.Count == 1 && xbow.LiveItems[0].Name != swd.LiveItems[0].Name);
+}
+
+// 2) LatestPerSlot must collapse the SAME weapon re-hovered at two panel positions to one entry
+//    (the "same weapon shows up in multiple slots" duplication report).
+{
+    var dup = new List<Item> {
+        new Item { Name = "Skyhunter", RawName = "SKYHUNTER", Slot = "weapon", SlotPosition = 1 },
+        new Item { Name = "Skyhunter", RawName = "SKYHUNTER", Slot = "weapon", SlotPosition = 2 },
+    };
+    Eq("LatestPerSlot: a re-hovered weapon collapses to one entry", 1, LogWatcher.LatestPerSlot(dup).Count);
+}
+
+// 3) ...but two DISTINCT dual-wield weapons must BOTH survive (guards the opposite failure mode:
+//    over-pruning to "only 2 weapons shown" / dropping a real second weapon).
+{
+    var two = new List<Item> {
+        new Item { Name = "Skyhunter", RawName = "SKYHUNTER", Slot = "weapon", SlotPosition = 1 },
+        new Item { Name = "Etna's Lost Dagger", RawName = "ETNA'S LOST DAGGER", Slot = "weapon", SlotPosition = 2 },
+    };
+    Eq("LatestPerSlot: two distinct dual-wield weapons are both kept", 2, LogWatcher.LatestPerSlot(two).Count);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
