@@ -308,6 +308,63 @@ Check("LogToJsonlConverter compact JSON fits on one line", !compact.Contains('\n
     Eq("LatestPerSlot: two distinct dual-wield weapons are both kept", 2, LogWatcher.LatestPerSlot(two).Count);
 }
 
+// ---- TTS diagnostics: faithful raw -> parsed -> classified -> final introspection for the in-app view ----
+{
+    // The sample fixture parses 5 items but has no nav/EQUIPPED lines (so they classify non-equipped) —
+    // assert the parse-level facts that hold regardless of classification.
+    if (File.Exists(sampleLog))
+    {
+        var ds = LogWatcher.Diagnose(sampleLog);
+        Check("Diagnose: sample log marked existing", ds.LogExists);
+        Eq("Diagnose: 5 items parsed from sample", 5, ds.Items.Count);
+        Check("Diagnose: helm row carries slot + item power", ds.Items.Any(d => d.Slot == "helm" && d.ItemPower == 780));
+        Check("Diagnose: raw tail captured", ds.RawTail.Count > 0);
+        Check("Diagnose: final set is a subset of parsed", ds.FinalEquipped.Count <= ds.Items.Count);
+    }
+    // With real navigation + EQUIPPED markers (as a live log has), an item must classify equipped and
+    // survive to the final displayed set — the path the stripped sample fixture can't exercise.
+    var navLog = new[] {
+        "=== d4scanner tts shim attached ===",
+        "Equipment", "Head", "EQUIPPED",
+        "ARCHON SPELLBLADE",
+        "Legendary Helm",
+        "780 Item Power",
+        "+1,540 Maximum Life [1,300 - 1,600]",
+        "Durability: 100/100. Tempers: 2/2",
+        "Requires Level 60",
+        "Right mouse button",
+    };
+    var dn = LogWatcher.DiagnoseLines(navLog);
+    Eq("Diagnose(nav): one item parsed", 1, dn.Items.Count);
+    Check("Diagnose(nav): item classified equipped", dn.Items.Count == 1 && dn.Items[0].Equipped);
+    Check("Diagnose(nav): item survives to final set", dn.Items.Count == 1 && dn.Items[0].InFinal);
+    Eq("Diagnose(nav): final equipped count 1", 1, dn.FinalEquipped.Count);
+    Check("Diagnose(nav): session marker counted", dn.SessionMarkers >= 1);
+    Check("Diagnose(nav): panel tracked as Character", dn.Items.Count == 1 && dn.Items[0].Panel == "Character");
+}
+
+// ---- Real S8 Rogue capture: full-loadout regression from an actual hover session ----
+// Covers the slots the original fixture lacked: bow + dual-wield melee, amulet, pants, runewords, and the
+// double-hovered off-hand sword that must collapse to one. This is the gold fixture from a live capture.
+var rogueLog = Path.Combine(AppContext.BaseDirectory, "sample_tts_rogue_s8.log");
+Check("Rogue fixture present", File.Exists(rogueLog));
+if (File.Exists(rogueLog))
+{
+    var g = LogWatcher.BuildFromFile(rogueLog, equippedOnly: true).Gear;
+    Eq("Rogue: 11 equipped items captured", 11, g.Count);
+    Eq("Rogue: exactly 3 weapons after dedup (bow + sword + dagger)", 3, g.Count(x => x.Slot == "weapon"));
+    Eq("Rogue: double-hovered off-hand sword collapses to one", 1, g.Count(x => x.Name.Contains("Obsidian Blade")));
+    Eq("Rogue: exactly 2 rings", 2, g.Count(x => x.Slot == "ring"));
+    Check("Rogue: bow captured as weapon @ 900 IP", g.Any(x => x.Name.Contains("Mammalbane") && x.Slot == "weapon" && x.ItemPower == 900));
+    Check("Rogue: main-hand dagger captured as weapon", g.Any(x => x.Name.Contains("Etna") && x.Slot == "weapon"));
+    Check("Rogue: helm unique captured", g.Any(x => x.Name.Contains("Nameless") && x.Slot == "helm" && x.IsUnique));
+    Check("Rogue: pants captured", g.Any(x => x.Name.Contains("Shrouded Gift") && x.Slot == "pants"));
+    Check("Rogue: amulet captured", g.Any(x => x.Name.Contains("Wildbolt") && x.Slot == "amulet"));
+    Check("Rogue: gloves captured", g.Any(x => x.Name.Contains("Vambraces") && x.Slot == "gloves"));
+    Check("Rogue: chest captured", g.Any(x => x.Name.Contains("Boneweave") && x.Slot == "chest"));
+    Check("Rogue: boots captured", g.Any(x => x.Name.Contains("Adventurer") && x.Slot == "boots"));
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

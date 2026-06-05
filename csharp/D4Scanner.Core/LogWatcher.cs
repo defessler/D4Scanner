@@ -269,6 +269,112 @@ public sealed class LogWatcher : IDisposable
         }
         return new LiveBuild { Gear = LatestPerSlot(ordered) };
     }
+
+    /// <summary>
+    /// Re-runs the full TTS parse → classify → dedup pipeline over a log file and captures every
+    /// intermediate stage, for the in-app diagnostics view. Faithful to the live <see cref="Poll"/>
+    /// loop: same panel state machine, same <see cref="ClassifyContext"/>, same <see cref="LatestPerSlot"/>.
+    /// </summary>
+    public static TtsDiagReport Diagnose(string path, int rawTailLines = 60)
+    {
+        bool exists = File.Exists(path);
+        var rep = DiagnoseLines(exists ? File.ReadAllLines(path) : Array.Empty<string>(), rawTailLines);
+        rep.LogPath = path;
+        rep.LogExists = exists;
+        if (exists)
+        {
+            var fi = new FileInfo(path);
+            rep.LogBytes = fi.Length;
+            rep.LastModifiedUtc = fi.LastWriteTimeUtc;
+        }
+        return rep;
+    }
+
+    /// <summary>Pipeline-introspection core (file-free, so tests can feed raw lines directly).</summary>
+    public static TtsDiagReport DiagnoseLines(string[] allLines, int rawTailLines = 60)
+    {
+        var rep = new TtsDiagReport { TotalLines = allLines.Length };
+        rep.RawTail = allLines.Where(l => l.Trim().Length > 0).Reverse().Take(rawTailLines).Reverse().ToList();
+
+        var seg = new GearParser();
+        string? currentPanel = null;
+        var ordered = new List<Item>();
+        for (int i = 0; i < allLines.Length; i++)
+        {
+            var clean = GearParser.Clean(allLines[i]);
+            if (clean.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase)) rep.SessionMarkers++;
+            if (PanelMarkers.TryGetValue(clean, out var panel))
+            {
+                var prev = currentPanel;
+                currentPanel = panel;
+                if (panel == "Character" && prev != "Character") seg.ResetSlotPositions();
+            }
+            var item = seg.Feed(allLines[i]);
+            if (item == null) continue;
+            item.Source = ItemSource.Tts;
+            item.UiPanel = currentPanel;
+            ClassifyContext(item, allLines, i, allLines.Length);
+            ordered.Add(item);
+        }
+
+        var equipped = ordered.Where(it => it.Equipped).ToList();
+        var final = LatestPerSlot(equipped);
+        var finalSet = new HashSet<Item>(final);   // reference identity — final holds the same Item objects
+        rep.FinalEquipped = final;
+        foreach (var it in ordered)
+        {
+            bool inFinal = finalSet.Contains(it);
+            rep.Items.Add(new TtsDiagItem
+            {
+                Name = it.Name,
+                RawName = it.RawName,
+                Slot = it.Slot ?? "?",
+                SlotPosition = it.SlotPosition,
+                ItemPower = it.ItemPower,
+                Rarity = it.Rarity,
+                Affixes = it.Affixes.Select(a => a.Text).ToList(),
+                Panel = it.UiPanel,
+                Equipped = it.Equipped,
+                Context = it.Context.ToString(),
+                InFinal = inFinal,
+                DropReason = inFinal ? null
+                    : !it.Equipped ? $"not equipped ({it.Context})"
+                    : $"superseded — a newer scan of '{it.Slot}' replaced it",
+            });
+        }
+        return rep;
+    }
+}
+
+/// <summary>One parsed item with its full classification trail, for the TTS diagnostics view.</summary>
+public sealed class TtsDiagItem
+{
+    public string Name { get; set; } = "";
+    public string RawName { get; set; } = "";
+    public string Slot { get; set; } = "";
+    public int SlotPosition { get; set; }
+    public int? ItemPower { get; set; }
+    public string? Rarity { get; set; }
+    public List<string> Affixes { get; set; } = new();
+    public string? Panel { get; set; }      // active UI panel when parsed (null if no nav line seen)
+    public bool Equipped { get; set; }
+    public string Context { get; set; } = "";   // UiContext after classification
+    public bool InFinal { get; set; }       // survived to the set the app actually displays
+    public string? DropReason { get; set; } // why it didn't (null when InFinal)
+}
+
+/// <summary>Full TTS pipeline snapshot: raw → parsed → classified → final, for the diagnostics view.</summary>
+public sealed class TtsDiagReport
+{
+    public string LogPath { get; set; } = "";
+    public bool LogExists { get; set; }
+    public long LogBytes { get; set; }
+    public DateTime LastModifiedUtc { get; set; }
+    public int TotalLines { get; set; }
+    public int SessionMarkers { get; set; }
+    public List<string> RawTail { get; set; } = new();
+    public List<TtsDiagItem> Items { get; set; } = new();   // every parsed item, in file order
+    public List<Item> FinalEquipped { get; set; } = new();  // what the app would display
 }
 
 public static class TargetLoader
