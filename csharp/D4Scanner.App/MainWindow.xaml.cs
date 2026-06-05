@@ -465,6 +465,9 @@ public partial class MainWindow : Window
         Render();
         if (added.Count == 1) { Toast($"Equipped  {added[0]}"); AppLog($"equipped: {added[0]}"); }
         else if (added.Count > 1) { Toast($"Gear updated — {added.Count} new items"); AppLog($"gear update: {added.Count} new items — {string.Join(", ", added)}"); }
+        // Show last scanned item in status bar
+        var newest = merged.Gear.OrderByDescending(g => g.LastScannedTicks).FirstOrDefault();
+        if (newest != null) StatusDetail.Text = $"last: {newest.Name}  ·  {System.IO.Path.GetFileName(_log)}";
     }
 
     static List<string> NewlyEquipped(LiveBuild oldB, LiveBuild newB)
@@ -2428,35 +2431,26 @@ public partial class MainWindow : Window
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
 
-        // center crest: character portrait (if the user has placed character.png in the d4scanner dir) OR
-        // class name + progress bar + live indicator. The canonical % lives in the header band.
+        // Center column: portrait if captured, otherwise just spacing for build categories below.
+        // The class name, LIVE/offline indicator, and progress minibar have moved to the status bar.
         var charImg = LoadCharacterImage();
-        bool liveGear = _live.Gear.Count > 0;
-        UIElement crestContent;
         if (charImg != null)
         {
-            // Portrait is shown as full-bleed backdrop behind the doll.
-            // The crest shows just the minimal class badge + live indicator.
-            var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
-            if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 14, true, new Thickness(0, 0, 0, 6))));
-            crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
-            crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ offline", liveGear ? Green : Faint, 9, true, new Thickness(0, 6, 0, 0))));
-            crestContent = crest;
+            // Framed portrait — contained in the center column, not bleed-through
+            charImg.Stretch = Stretch.UniformToFill;
+            charImg.VerticalAlignment = VerticalAlignment.Top;
+            charImg.HorizontalAlignment = HorizontalAlignment.Center;
+            center.Children.Add(new Border
+            {
+                Width = 148, Height = 200,
+                CornerRadius = new CornerRadius(6),
+                BorderBrush = Edge, BorderThickness = new Thickness(1.5),
+                Background = B("#0A090D"),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 0, 0, 14),
+                Child = charImg,
+            });
         }
-        else
-        {
-            var crest = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
-            if (!string.IsNullOrEmpty(className)) crest.Children.Add(Center(TBs(className!.ToUpperInvariant(), Ink, 15, true, new Thickness(0, 0, 0, 8))));
-            crest.Children.Add(Center((FrameworkElement)MiniBar(pct, pct >= 100 ? Green : Gold)));
-            crest.Children.Add(Center(TBs(liveGear ? "● LIVE" : "○ waiting for game", liveGear ? Green : Faint, 10, true, new Thickness(0, 9, 0, 0))));
-            crestContent = crest;
-        }
-        center.Children.Add(new Border
-        {
-            Child = crestContent, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8), Padding = charImg != null ? new Thickness(0) : new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14),
-            ClipToBounds = true,
-        });
 
         // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot
         bool allUniquesMapped = _target == null || _target.Uniques.All(u => SlotKey(u.Slot ?? "").Length > 0);
@@ -2474,60 +2468,10 @@ public partial class MainWindow : Window
         dollStack.Children.Add(grid);
         if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
 
-        // wrap is a 2-row Grid so the portrait backdrop bleeds behind the tab bar row too;
-        // the toggle buttons sit on top (opaque) while the portrait fades through beneath them.
-        var bc = ((SolidColorBrush)ClassColor(className)).Color;
-        var wrap = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        var backdropPortrait = LoadCharacterImage();
-        if (backdropPortrait != null)
-        {
-            // UniformToFill fills the entire container so the opacity mask has edge content to fade.
-            // VerticalAlignment.Top keeps the character's head anchored at the top of the space.
-            backdropPortrait.Stretch = Stretch.UniformToFill;
-            backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
-            backdropPortrait.Opacity = 0.55;
-            // Gradient centre at Y=0.55 (character torso) so the top edge is inside the fading band
-            // and all four edges dissolve smoothly rather than cutting off hard.
-            var mask = new RadialGradientBrush
-            {
-                GradientOrigin = new Point(0.5, 0.50), Center = new Point(0.5, 0.50), RadiusX = 0.58, RadiusY = 0.68,
-            };
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.26));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x90, 0, 0, 0), 0.52));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x20, 0, 0, 0), 0.76));
-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
-            backdropPortrait.OpacityMask = mask;
-            Grid.SetRowSpan(backdropPortrait, 2);
-            wrap.Children.Add(backdropPortrait);
-        }
-        else
-        {
-            var glow = new Border
-            {
-                Background = new RadialGradientBrush
-                {
-                    GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
-                    GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
-                }
-            };
-            Grid.SetRowSpan(glow, 2);
-            wrap.Children.Add(glow);
-        }
-
-        var toggle = DollToggle();
-        Grid.SetRow(toggle, 0);
-        wrap.Children.Add(toggle);
-
-        var dollOuter = new Grid();
-        dollOuter.Children.Add(dollStack);
-        Grid.SetRow(dollOuter, 1);
-        wrap.Children.Add(dollOuter);
-
+        // Simple StackPanel wrap — no backdrop (portrait is now a framed element in the center column)
+        var wrap = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        wrap.Children.Add(DollToggle());
+        wrap.Children.Add(dollStack);
         return wrap;
     }
 

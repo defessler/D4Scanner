@@ -1,14 +1,32 @@
 using D4Scanner.Core;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace D4Scanner.App;
 
 public partial class App : System.Windows.Application
 {
+    static System.Threading.Mutex? _singleInstance;
+
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     // "--render <out.png>": render the window to a PNG with no visible window, then exit.
-    // Lets the UI be inspected headlessly (e.g. to verify the on-screen guidance) without a display.
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        // Single-instance guard: if another D4Scanner is already running, bring it to the front.
+        _singleInstance = new System.Threading.Mutex(true, "D4Scanner.App.SingleInstance", out bool isNew);
+        if (!isNew)
+        {
+            var existing = Process.GetProcessesByName("D4Scanner").FirstOrDefault(p => p.Id != Process.GetCurrentProcess().Id);
+            if (existing != null && existing.MainWindowHandle != IntPtr.Zero)
+            {
+                ShowWindow(existing.MainWindowHandle, 9 /* SW_RESTORE */);
+                SetForegroundWindow(existing.MainWindowHandle);
+            }
+            Shutdown(0);
+            return;
+        }
         int idx = System.Array.IndexOf(e.Args, "--render");
         if (idx >= 0 && idx + 1 < e.Args.Length)
         {
@@ -30,9 +48,13 @@ public partial class App : System.Windows.Application
         {
             var exe = System.Environment.ProcessPath
                    ?? Process.GetCurrentProcess().MainModule!.FileName;
-            if (Updater.TryApplyStaged(staged.Value.path, exe))
+            // Place the new exe with its version in the filename (same directory as the current exe)
+            var dir      = System.IO.Path.GetDirectoryName(exe) ?? ".";
+            var newName  = $"D4Scanner-{staged.Value.tag}-win-x64.exe";
+            var newPath  = System.IO.Path.Combine(dir, newName);
+            if (Updater.TryApplyStaged(staged.Value.path, exe, newPath))
             {
-                Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(newPath) { UseShellExecute = true });
                 Shutdown(0);
                 return;
             }

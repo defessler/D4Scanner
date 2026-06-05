@@ -126,38 +126,33 @@ public static class Updater
 
     /// <summary>
     /// Swap the staged update into the running exe's location and return true so the caller
-    /// can immediately relaunch the new binary. Restores the original if the swap fails.
-    /// <para>
-    /// On Windows a process can rename its own image file (the file handle is on the inode, not
-    /// the path) — we rename the current exe to .old, then move the staged file into its place.
-    /// If the staged file is on a different volume, we fall back to Copy + Delete.
-    /// </para>
+    /// can immediately relaunch the new binary. If <paramref name="newExePath"/> is supplied,
+    /// the update lands at that path (versioned filename) instead of overwriting the current name.
     /// </summary>
-    public static bool TryApplyStaged(string stagedPath, string currentExe)
+    public static bool TryApplyStaged(string stagedPath, string currentExe, string? newExePath = null)
     {
+        var target = newExePath ?? currentExe;
         var old = currentExe + ".old";
         try
         {
-            // Rename current image out of the way (works even while running on Windows)
             File.Move(currentExe, old, overwrite: true);
             try
             {
                 bool sameVol = string.Equals(
                     Path.GetPathRoot(stagedPath),
-                    Path.GetPathRoot(currentExe),
+                    Path.GetPathRoot(target),
                     StringComparison.OrdinalIgnoreCase);
                 if (sameVol)
-                    File.Move(stagedPath, currentExe, overwrite: true);
+                    File.Move(stagedPath, target, overwrite: true);
                 else
                 {
-                    File.Copy(stagedPath, currentExe, overwrite: true);
+                    File.Copy(stagedPath, target, overwrite: true);
                     try { File.Delete(stagedPath); } catch { }
                 }
                 return true;
             }
             catch
             {
-                // Swap failed — restore original so the app remains runnable
                 try { File.Move(old, currentExe, overwrite: true); } catch { }
                 return false;
             }
