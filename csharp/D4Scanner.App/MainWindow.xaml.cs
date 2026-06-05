@@ -837,7 +837,7 @@ public partial class MainWindow : Window
             if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         else if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
             Body.Children.Add(WelcomeCard());
-            Status.Text = $"log: {_log}";
+            Status.Text = $"waiting for first scan  ·  {Updater.RunningVersion()}";
             return;
         }
         var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
@@ -927,6 +927,7 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
+        Body.Children.Add(IconLegend());
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
         var gapKeys = sections.Where(s => s.Gear != null && s.Status != "met").Select(s => s.Key).ToList();
@@ -1028,7 +1029,7 @@ public partial class MainWindow : Window
         }
         string src = _useTts && _useCapture ? "TTS+OCR" : _useTts ? "TTS" : _useCapture ? "OCR" : "offline";
         Status.Text = $"● live  ·  {gearCount} items  ·  {src}{ago}";
-        StatusDetail.Text = $"{Path.GetFileName(_log)}";
+        StatusDetail.Text = $"{Updater.RunningVersion()}  ·  {Path.GetFileName(_log)}";
     }
 
     // shown when the TTS capture shim isn't installed — one-click install into the Diablo IV folder
@@ -2436,6 +2437,27 @@ public partial class MainWindow : Window
         return b;
     }
 
+    // Small icon-key legend shown above the paper doll so first-time users understand the badges
+    UIElement IconLegend()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        void Entry(string icon, Brush iconBg, string desc)
+        {
+            var badge = new Border
+            {
+                Background = iconBg, CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 1, 5, 2), Margin = new Thickness(0, 0, 5, 0),
+                Child = TB(icon, B("#0C0C0F"), 10, true),
+            };
+            row.Children.Add(badge);
+            row.Children.Add(TB(desc, Faint, 11.5, false, new Thickness(0, 0, 16, 0)));
+        }
+        Entry("↑", Green, "upgrade in bags");
+        Entry("#1", Amber, "priority");
+        Entry("⚠", Amber, "under-rolled");
+        return row;
+    }
+
     UIElement SummaryStrip(DiffReport r)
     {
         var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 14) };
@@ -2483,13 +2505,26 @@ public partial class MainWindow : Window
         Place(left, new[] { "helm", "chest", "gloves", "pants", "boots" }, false);   // armor down the left
         Place(right, new[] { "amulet", "ring" }, true);                              // jewelry down the right
 
-        // weapons (+ offhand) sit across the bottom, matching the in-game character screen
+        // weapons (+ offhand) sit across the bottom, matching the in-game character screen.
+        // Pre-compute live item names already shown by gear: sections so we can skip uni: duplicates.
+        var shownWeaponLiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in gear.Where(x => x.Key.StartsWith("gear:") && SlotKey(x.Label) is "weapon" or "offhand"))
+            foreach (var li in s.Gear?.LiveItems ?? new())
+                if (!string.IsNullOrEmpty(li.Name)) shownWeaponLiveNames.Add(li.Name);
+
         var weaponsRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
         void PlaceWeapons(string[] order)
         {
             foreach (var k in order)
                 foreach (var s in gear.Where(x => !used.Contains(x) && SlotKey(x.Label) == k))
-                { weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s); }
+                {
+                    // Skip a uni: section if the same live weapon is already shown via a gear: section.
+                    // "Etna's Lost Dagger" appears as both gear:N (Sword) and uni:etna... — only show once.
+                    if (s.Key.StartsWith("uni:") && s.Gear?.LiveItems.Count > 0
+                        && shownWeaponLiveNames.Contains(s.Gear.LiveItems[0].Name))
+                    { used.Add(s); continue; }
+                    weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s);
+                }
         }
         PlaceWeapons(new[] { "weapon", "offhand" });
         foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
