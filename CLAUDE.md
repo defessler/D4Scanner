@@ -32,8 +32,10 @@ dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-The only allowed warning after build is **SYSLIB0014** in the vendored
-`csharp/third_party/CascLib/` — that library is not ours to modify.
+The build should be **warning-free**. The vendored CascLib emits `SYSLIB0014`
+(obsolete `WebRequest`); that's suppressed via `csharp/third_party/Directory.Build.props`
+(scoped to `third_party/` only, so our own code still flags the obsolete API). If you see
+any warning from `D4Scanner.*`, fix it — don't suppress it.
 
 Releases are built and published automatically by GitHub Actions on every `v*` tag push:
 ```powershell

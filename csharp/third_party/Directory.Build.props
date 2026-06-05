@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    Vendored third-party code (CascLib) is not ours to modify. CascLib calls the obsolete
+    WebRequest.CreateHttp API, which raises SYSLIB0014. We deliberately don't touch upstream
+    source, so suppress that one diagnostic here — scoped to everything under third_party/.
+
+    This does NOT affect D4Scanner.App / .Core / .Cli (they live outside third_party/), so
+    SYSLIB0014 still surfaces if our own code ever uses the obsolete WebRequest/WebClient API.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);SYSLIB0014</NoWarn>
+  </PropertyGroup>
+</Project>
