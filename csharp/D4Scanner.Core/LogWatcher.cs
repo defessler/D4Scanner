@@ -152,29 +152,22 @@ public sealed class LogWatcher : IDisposable
             return;
         }
         // Fast path 3: item was hovered while the Character panel is active.
-        // Accept as equipped only if the EQUIPPED marker was seen (item.Equipped already true)
-        // OR a positive "unequip" action appears in the lookahead.
-        // Bag items visible on the inventory tab also have UiPanel=="Character" — they're caught by
-        // the "store/salvage/mark as junk" counter-signals or by IsComparison (already handled above).
+        // The IsComparison guard above already filters comparison tooltips.
+        // If no definitive inventory/vendor/stash counter-signal fires, trust the panel context —
+        // D4 Season 8 does not always emit a standalone EQUIPPED line, so requiring one is too strict.
         if (item.UiPanel == "Character" && !item.IsComparison)
         {
-            bool positiveSignal = item.Equipped;   // EQUIPPED marker was already seen
             for (int look = i + 1; look < Math.Min(i + 12, lineCount); look++)
             {
                 var ctx = lines[look].Trim().ToLowerInvariant();
-                if (ctx.Contains("unequip"))   { positiveSignal = true; break; }
                 if (ctx.Contains("store") || ctx.Contains("salvage") || ctx.Contains("mark as junk"))
                     { item.Equipped = false; item.Context = UiContext.BagItem; return; }
                 if (ctx.Contains("buy"))  { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
                 if (ctx.Contains("take")) { item.Equipped = false; item.Context = UiContext.StashItem; return; }
             }
-            if (positiveSignal)
-            {
-                item.Equipped = true;
-                item.Context = UiContext.WornGear;
-                return;
-            }
-            // No positive signal and no counter-signal — fall through to the generic lookahead below
+            item.Equipped = true;
+            item.Context = UiContext.WornGear;
+            return;
         }
         // Fallback: scan up to 12 post-end-marker lines for the action verb.
         if (item.Equipped)
