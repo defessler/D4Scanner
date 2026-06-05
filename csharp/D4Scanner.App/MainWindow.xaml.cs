@@ -189,7 +189,7 @@ public partial class MainWindow : Window
         SetUrlText("");   // start empty with the placeholder; the loaded build shows in the header
         ImportBtn.Click += async (_, _) => await DoImport();
         TargetBtn.Click += (_, _) => ShowBuilds();
-        LogBtn.Click += (_, _) => PickLog();
+        // LogBtn removed from header — log actions live in Settings
         RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); };
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
@@ -197,7 +197,7 @@ public partial class MainWindow : Window
         InstallCaptureBtn.Click += (_, _) => RunInstall(InstallCaptureBtn);
         OpenSrcBtn.Click += (_, _) => OpenSource();
         HelpBtn.Click += (_, _) => ToggleHelp();
-        NextBtn.Click += (_, _) => { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); };
+        // NextBtn removed from header — "View all steps" link lives inside the DO NEXT panel
         SettingsBtn.Click += (_, _) => ShowSettings();
         ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
         ThreshLbl.Text = ((int)_minRollPct) + "%";
@@ -1283,7 +1283,7 @@ public partial class MainWindow : Window
         host.MouseLeftButtonDown += (_, e) => { if (e.Source == host) CloseModal(); };
         RootLayer.Children.Add(host);
 
-        var sp = new StackPanel { Width = 480 };
+        var sp = new StackPanel { Width = 560 };
 
         var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
         var xBtn = MakeLink("✕", Soft); xBtn.FontSize = 15;
@@ -1298,7 +1298,7 @@ public partial class MainWindow : Window
         host.Children.Add(new Border
         {
             Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(26, 22, 26, 24), Width = 480,
+            Padding = new Thickness(26, 22, 26, 24), Width = 612,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = sp,
         });
 
@@ -1472,7 +1472,7 @@ public partial class MainWindow : Window
         void Close() => SettingsHost.Visibility = Visibility.Collapsed;
 
         // ── content StackPanel (scrollable) ───────────────────────────────────
-        var sp = new StackPanel { Width = 500 };
+        var sp = new StackPanel { Width = 580 };
 
         // header row (stays outside the scroll)
         var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
@@ -1523,10 +1523,37 @@ public partial class MainWindow : Window
                 }
             });
 
+        // OCR toggle with inline status feedback
+        var ocrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var ocrChk = new CheckBox { IsChecked = _useCapture, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 12, 0) };
+        DockPanel.SetDock(ocrChk, Dock.Left); ocrRow.Children.Add(ocrChk);
+        var ocrCol = new StackPanel();
+        var ocrHdrRow = new DockPanel();
+        var ocrStatusLbl = TB(_useCapture ? "active" : "", Faint, 11, false);
+        ocrStatusLbl.VerticalAlignment = VerticalAlignment.Center; ocrStatusLbl.Margin = new Thickness(10, 0, 0, 0);
         var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), IsEnabled = _useCapture, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
-        scanNowBtn.Click += async (_, _) => { if (_captureEngine != null) await _captureEngine.ScanNowAsync(); };
-        ToggleRow("Screen capture (OCR)", "Captures the game window via Windows OCR — free, no API key, no DLL. Works in borderless and exclusive fullscreen.",
-            _useCapture, on => { _useCapture = on; scanNowBtn.IsEnabled = on; SaveSettings(); StartWatching(); }, scanNowBtn);
+        scanNowBtn.Click += async (_, _) => { if (_captureEngine != null) { scanNowBtn.Content = "…"; await _captureEngine.ScanNowAsync(); scanNowBtn.Content = "Scan now"; } };
+        DockPanel.SetDock(scanNowBtn, Dock.Right); ocrHdrRow.Children.Add(scanNowBtn);
+        ocrHdrRow.Children.Add(TBs("Screen capture (OCR)", Ink, 13, true));
+        ocrCol.Children.Add(ocrHdrRow);
+        var ocrDescLbl = TB("Captures the game window via Windows OCR — free, no API key, no DLL. Works in borderless and exclusive fullscreen.", Soft, 11.5, false);
+        ocrDescLbl.TextWrapping = TextWrapping.Wrap; ocrCol.Children.Add(ocrDescLbl);
+        ocrCol.Children.Add(ocrStatusLbl);
+        ocrRow.Children.Add(ocrCol);
+        sp.Children.Add(ocrRow);
+        ocrChk.Checked += (_, _) =>
+        {
+            _useCapture = true; scanNowBtn.IsEnabled = true;
+            ocrStatusLbl.Text = "starting…"; ocrStatusLbl.Foreground = Soft;
+            SaveSettings(); StartWatching();
+            Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() =>
+                ocrStatusLbl.Text = _captureEngine != null ? "active" : "inactive"));
+        };
+        ocrChk.Unchecked += (_, _) =>
+        {
+            _useCapture = false; scanNowBtn.IsEnabled = false;
+            ocrStatusLbl.Text = ""; SaveSettings(); StartWatching();
+        };
 
         // character portrait capture
         sp.Children.Add(TBs("Character portrait", Ink, 13, true, new Thickness(0, 0, 0, 4)));
@@ -1565,11 +1592,22 @@ public partial class MainWindow : Window
 
         ToggleRow("Debug info", "Show last-scan time and slot key diagnostics on each paper-doll cell.", _debugMode, on => { _debugMode = on; SaveSettings(); Render(); });
 
-        // ── ITEMS section ─────────────────────────────────────────────────────
-        Section("ITEMS");
-        var invBtn = new Button { Content = "View all scanned items…", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 0, 16) };
-        invBtn.Click += (_, _) => { Close(); ShowInventoryModal(); };
-        sp.Children.Add(invBtn);
+        // ── LOG section ───────────────────────────────────────────────────────
+        Section("LOG");
+        var logRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var openLogBtn = new Button { Content = "Open log file", Padding = new Thickness(14, 6, 14, 6) };
+        openLogBtn.Click += (_, _) => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_log) { UseShellExecute = true }); } catch { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer", $"/select,\"{_log}\"") { UseShellExecute = true }); } catch { } } };
+        var openAppLogBtn = new Button { Content = "Open app log", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
+        openAppLogBtn.Click += (_, _) => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppLogPath) { UseShellExecute = true }); } catch { } };
+        DockPanel.SetDock(openLogBtn, Dock.Left); logRow.Children.Add(openLogBtn);
+        DockPanel.SetDock(openAppLogBtn, Dock.Left); logRow.Children.Add(openAppLogBtn);
+        sp.Children.Add(logRow);
+        var logPathRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var logPathLbl = TB(System.IO.Path.GetFileName(_log), Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(logPathLbl, Dock.Left); logPathRow.Children.Add(logPathLbl);
+        var changeLogBtn = new Button { Content = "Change…", Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Right, FontSize = 12 };
+        changeLogBtn.Click += (_, _) => { Close(); PickLog(); };
+        logPathRow.Children.Add(changeLogBtn); sp.Children.Add(logPathRow);
 
         // ── CACHE section ─────────────────────────────────────────────────────
         Section("CACHE");
@@ -1578,20 +1616,21 @@ public partial class MainWindow : Window
 
         var iconDir     = Path.Combine(IconResolver.CacheDir, "icons");
         var gameIconDir = Path.Combine(iconDir, "game");
+        var liveJsonPath = LivePath;
         var cacheFiles = new (string label, string detail, Func<bool> exists, Action clear)[]
         {
             ("Game item icons",  $"{CountFiles(gameIconDir)} files — extracted from your D4 install",
                 () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0,
                 () => { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }),
-            ("Downloaded icons", $"{CountFiles(iconDir, "*.webp")} files — unique/class art from GitHub",
-                () => CountFiles(iconDir, "*.webp") > 0,
-                () => { try { foreach (var f in Directory.GetFiles(iconDir, "*.webp", SearchOption.AllDirectories)) File.Delete(f); } catch { } }),
             ("Build index",      "Maxroll guide list — re-fetched on next launch",
                 () => File.Exists(IconResolver.IndexPath),
                 () => { try { File.Delete(IconResolver.IndexPath); } catch { } }),
             ("Maxroll data",     "Planner item/affix data — re-fetched on next import",
                 () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
                 () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } }),
+            ("Live gear cache",  "Last-known equipped items — cleared to re-read from the current log",
+                () => File.Exists(liveJsonPath),
+                () => { try { File.Delete(liveJsonPath); _live = new(); } catch { } }),
         };
 
         var checks = new CheckBox[cacheFiles.Length];
@@ -1614,7 +1653,8 @@ public partial class MainWindow : Window
         clearBtn.Click += (_, _) =>
         {
             for (int i = 0; i < cacheFiles.Length; i++) if (checks[i].IsChecked == true) cacheFiles[i].clear();
-            Close(); Toast("Cache cleared — takes effect on next launch");
+            Close(); Render();
+            Toast("Cache cleared");
         };
         DockPanel.SetDock(cancelBtn, Dock.Right); cancelBtn.Margin = new Thickness(8, 0, 0, 0); cacheRow.Children.Add(cancelBtn);
         DockPanel.SetDock(clearBtn,  Dock.Right); cacheRow.Children.Add(clearBtn);
@@ -1626,7 +1666,7 @@ public partial class MainWindow : Window
         var panel = new Border
         {
             Background = Card, BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(28, 22, 28, 24), Width = 556,
+            Padding = new Thickness(28, 22, 28, 24), Width = 636,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = scroll,
         };
         SettingsHost.Children.Add(panel);
@@ -1984,24 +2024,30 @@ public partial class MainWindow : Window
         var top = view.Take(9).ToList();   // BuildGuide.Steps is already impact-ordered
 
         var sp = new StackPanel();
-        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, focused ? 6 : 8) };
-        var cnt = TB(view.Count + (view.Count == 1 ? " step left" : " steps left"), Soft, 11.5, false);
-        cnt.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(cnt, Dock.Right); hdr.Children.Add(cnt);
-        hdr.Children.Add(TBs("DO NEXT", Gold, 13, true));
+
+        // header: "DO NEXT" + step count + (focused: focus label + clear)
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var allStepsLink = TB($"all {acts.Count} steps →", Steel, 11, false);
+        allStepsLink.VerticalAlignment = VerticalAlignment.Center;
+        allStepsLink.Cursor = System.Windows.Input.Cursors.Hand;
+        allStepsLink.MouseLeftButtonUp += (_, _) => { _stepsView = true; Render(); };
+        DockPanel.SetDock(allStepsLink, Dock.Right); hdr.Children.Add(allStepsLink);
+        var cntLbl = TB($"{view.Count} steps  ", Faint, 11.5, false);
+        cntLbl.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(cntLbl, Dock.Right); hdr.Children.Add(cntLbl);
+        hdr.Children.Add(TBs("DO NEXT", Gold, 13.5, true));
         sp.Children.Add(hdr);
 
         if (focused)
         {
             var fb = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-            var clear = TB("✕ show all", Steel, 11.5, false); clear.Cursor = System.Windows.Input.Cursors.Hand;
+            var clear = TB("✕ all", Steel, 11, false); clear.Cursor = System.Windows.Input.Cursors.Hand;
             clear.MouseLeftButtonUp += (_, _) => { _focusKey = null; Render(); };
             DockPanel.SetDock(clear, Dock.Right); fb.Children.Add(clear);
-            fb.Children.Add(TB("focused on  " + BuildGuide.FocusLabel(r, _focusKey!), Ink, 11.5, true));
+            fb.Children.Add(TB(BuildGuide.FocusLabel(r, _focusKey!), Faint, 11, false));
             sp.Children.Add(fb);
         }
 
-        // lead with the single most important action as a prominent hero; the rest follow as compact rows.
-        // (in focus mode we've already narrowed to one thing, so keep the plain headline there.)
         IEnumerable<GuideStep> rows = top;
         if (!focused)
         {
@@ -2010,26 +2056,18 @@ public partial class MainWindow : Window
         }
         else
         {
-            var hl = TB(top[0].Headline, Ink, 14.5, false, new Thickness(0, 0, 0, 8));
+            var hl = TB(top[0].Headline ?? top[0].Text, Ink, 14, false, new Thickness(0, 0, 0, 8));
             hl.TextWrapping = TextWrapping.Wrap; sp.Children.Add(hl);
         }
 
+        // compact step rows — no tier labels, just a thin rule between tiers for breathing room
         int? lastTier = null;
         foreach (var a in rows)
         {
-            if (a.Tier != lastTier)
-            {
-                sp.Children.Add(TBs(BuildGuide.TierLabel(a.Tier), Faint, 10, true, new Thickness(0, lastTier == null ? 2 : 11, 0, 5)));
-                lastTier = a.Tier;
-            }
+            if (a.Tier != lastTier && lastTier != null)
+                sp.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 5, 0, 5) });
+            lastTier = a.Tier;
             sp.Children.Add(StepRow(a));
-        }
-        if (!focused && acts.Count > top.Count)
-        {
-            var more = TB($"View all {acts.Count} steps →", Steel, 12, false, new Thickness(0, 9, 0, 0));
-            more.Cursor = System.Windows.Input.Cursors.Hand;
-            more.MouseLeftButtonUp += (_, _) => { _stepsView = true; Render(); };
-            sp.Children.Add(more);
         }
         return new Border
         {
@@ -2387,45 +2425,72 @@ public partial class MainWindow : Window
     // tab toggle above the doll: preview the build's wanted gear ("Target") vs your equipped gear ("My gear")
     UIElement DollToggle()
     {
-        // D4-style tab row: active tab has a golden bottom underline bar and warm highlight background
-        var sp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 10) };
-        void Tab(string key, string label, string? icon = null)
+        // D4-style tab strip: active tab has a thick amber underline + elevated background;
+        // inactive tabs are muted with a subtle hover effect
+        var strip = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 10),
+        };
+
+        // baseline rule the full strip sits on
+        var baseRule = new Border
+        {
+            Height = 2, Background = Edge,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+
+        var wrapper = new Grid();
+        wrapper.Children.Add(baseRule);
+        wrapper.Children.Add(strip);
+
+        void Tab(string key, string label, string icon)
         {
             bool on = _dollView == key;
-            var lbl = new StackPanel { Orientation = Orientation.Horizontal };
-            if (icon != null) lbl.Children.Add(TB(icon + " ", on ? Amber : Soft, 11, false));
-            lbl.Children.Add(TB(label, on ? Amber : Soft, 12, on));
-            // Active: warm amber text + gold bottom border + slightly raised bg
-            // Inactive: dimmed, flat
-            var inner = new Border
+            var iconTB = TB(icon + " ", on ? Gold : Faint, 11.5, false);
+            var labelTB = TB(label, on ? Ink : Soft, 12.5, on);
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(iconTB); content.Children.Add(labelTB);
+
+            // bottom accent bar — amber when active, invisible when not
+            var bar = new Border
             {
-                Child = lbl,
-                Padding = new Thickness(16, 6, 16, 6),
-                Background = on ? B("#2A2318") : System.Windows.Media.Brushes.Transparent,
+                Height = 3, CornerRadius = new CornerRadius(1.5, 1.5, 0, 0),
+                Background = on ? Gold : System.Windows.Media.Brushes.Transparent,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(4, 0, 4, 0),
             };
-            var outer = new Border
+
+            var cell = new Grid { Margin = new Thickness(2, 0, 2, 0) };
+            cell.Children.Add(new Border
             {
-                Child = inner,
-                Margin = new Thickness(0, 0, 4, 0),
-                CornerRadius = new CornerRadius(3, 3, 0, 0),
-                BorderBrush = on ? Gold : Edge,
-                // Active tab: gold bottom bar + side borders; inactive: subtle bottom only
-                BorderThickness = on ? new Thickness(1, 1, 1, 2) : new Thickness(0, 0, 0, 1),
-                Cursor = System.Windows.Input.Cursors.Hand,
-            };
-            outer.MouseLeftButtonUp += (_, e) =>
+                Child = content, Padding = new Thickness(14, 7, 14, 9),
+                Background = on ? B("#22201C") : System.Windows.Media.Brushes.Transparent,
+                CornerRadius = new CornerRadius(4, 4, 0, 0),
+            });
+            cell.Children.Add(bar);
+            cell.Cursor = System.Windows.Input.Cursors.Hand;
+
+            cell.MouseLeftButtonUp += (_, e) =>
             {
                 if (key == "all") { ShowInventoryModal(); e.Handled = true; return; }
                 _dollView = key; Render();
             };
-            outer.MouseEnter += (_, _) => { if (!on) inner.Background = B("#221D14"); };
-            outer.MouseLeave += (_, _) => { if (!on) inner.Background = System.Windows.Media.Brushes.Transparent; };
-            sp.Children.Add(outer);
+            if (!on)
+            {
+                var bg = (Border)cell.Children[0];
+                cell.MouseEnter += (_, _) => { bg.Background = B("#1C1B18"); iconTB.Foreground = Soft; };
+                cell.MouseLeave += (_, _) => { bg.Background = System.Windows.Media.Brushes.Transparent; iconTB.Foreground = Faint; };
+            }
+            strip.Children.Add(cell);
         }
-        Tab("mine",   "My Gear",  "◆");
-        Tab("target", "Target",   "◎");
-        Tab("all",    "All Items", "⊞");
-        return sp;
+
+        Tab("mine",   "My Gear",   "◆");
+        Tab("target", "Target",    "◎");
+        Tab("all",    "All Items",  "⊞");
+        return wrapper;
     }
 
     // slim framed cell for a build-wide category (uniques / skills / paragon), matching the slot cells
@@ -2514,7 +2579,7 @@ public partial class MainWindow : Window
         var frameRc = ((SolidColorBrush)frameBrush).Color;
 
         const double boxW = 54, boxH = 76;    // portrait — tall and skinny, like a D4 inventory slot
-        const double artW = 42, artH = 62;
+        const double artW = 34, artH = 50;   // inset: 10px margin each side so placeholder sits inside the frame
         var grid = new Grid { Width = boxW, Height = boxH };
 
         // dark base + diagonal rarity-colored overlay (top-right → bottom-left, matching D4's slot shading)

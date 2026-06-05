@@ -4,11 +4,10 @@ using System.Text.Json;
 namespace D4Scanner.Core;
 
 /// <summary>
-/// Resolves real Diablo IV item art at runtime from the community "diablo4icons" repo
-/// (uniques are filed by their display name, e.g. General/Doombringer.webp). Icons are
-/// downloaded and cached under %LOCALAPPDATA%\d4scanner\cache\icons and never bundled in
-/// the release. A name index is fetched once (cached weekly). Raises <see cref="Changed"/>
-/// when a newly downloaded icon becomes available so the UI can refresh.
+/// Resolves real Diablo IV item art: first from the user's local game files (extracted via
+/// GameDataIcons, keyed by Maxroll image handle), then from user-configured template sources.
+/// Falls back to the slot silhouette when nothing is available. Raises <see cref="Changed"/>
+/// when a newly extracted or downloaded icon is ready.
 /// </summary>
 public static class IconResolver
 {
@@ -20,17 +19,12 @@ public static class IconResolver
         return h;
     }
 
-    const string TreeUrl = "https://api.github.com/repos/Howard-Starfield/diablo4icons/git/trees/main?recursive=1";
-    const string RawBase = "https://raw.githubusercontent.com/Howard-Starfield/diablo4icons/main/";
-    static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
-
     public static string CacheDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache");
     static string IconDir => Path.Combine(CacheDir, "icons");
+    // IndexPath kept for cache-clear compatibility (file deleted by settings)
     public static string IndexPath => Path.Combine(CacheDir, "icon_index.json");
 
-    static Dictionary<string, List<string>> _byName = new();   // normalized item name -> repo paths
-    static volatile bool _loaded;
     static readonly object _lock = new();
     static readonly HashSet<string> _inflight = new();
 
@@ -39,53 +33,23 @@ public static class IconResolver
     static List<TemplateSource> _templates = new();
     static string SourcesPath => Path.Combine(CacheDir, "icon_sources.json");
 
-    /// <summary>Raised (on a background thread) when a new icon finishes downloading.</summary>
+    /// <summary>Raised (on a background thread) when a new icon finishes downloading or extracting.</summary>
     public static event Action? Changed;
 
     static IconResolver()
     {
-        // a freshly extracted game-data icon should refresh the UI just like a downloaded one
         GameDataIcons.Changed += () => Changed?.Invoke();
     }
 
-    public static async Task LoadIndexAsync(CancellationToken ct = default)
+    /// <summary>No-op — GitHub CDN removed. Template sources are still loaded.</summary>
+    public static Task LoadIndexAsync(CancellationToken ct = default)
     {
         LoadSources();
-        try
-        {
-            if (File.Exists(IndexPath) && DateTime.UtcNow - File.GetLastWriteTimeUtc(IndexPath) < MaxAge)
-            {
-                var cached = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(await File.ReadAllTextAsync(IndexPath, ct));
-                if (cached is { Count: > 0 }) { _byName = cached; _loaded = true; return; }
-            }
-            var json = await Http.GetStringAsync(TreeUrl, ct);
-            using var doc = JsonDocument.Parse(json);
-            var map = new Dictionary<string, List<string>>();
-            foreach (var n in doc.RootElement.GetProperty("tree").EnumerateArray())
-            {
-                var p = n.TryGetProperty("path", out var pe) ? pe.GetString() : null;
-                if (p == null || !p.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)) continue;
-                var file = Path.GetFileNameWithoutExtension(p);
-                var key = Norm(file);
-                if (key.Length == 0) continue;
-                if (!map.TryGetValue(key, out var list)) map[key] = list = new();
-                list.Add(p);
-            }
-            if (map.Count > 0)
-            {
-                _byName = map; _loaded = true;
-                Directory.CreateDirectory(CacheDir);
-                await File.WriteAllTextAsync(IndexPath, JsonSerializer.Serialize(map), ct);
-            }
-        }
-        catch { /* offline / rate-limited — icons just won't resolve */ }
+        return Task.CompletedTask;
     }
 
-    static string Norm(string s) => new((s ?? "").ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
     static string Safe(string s) => new(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 
-    // Loads user-configurable icon sources from icon_sources.json (auto-created with disabled examples
-    // documenting the format). These are template sources tried AFTER the built-in diablo4icons index.
     static void LoadSources()
     {
         try
@@ -107,31 +71,21 @@ public static class IconResolver
         catch { _templates = new(); }
     }
 
-    /// <summary>Re-read icon_sources.json (after the user edits it).</summary>
     public static void ReloadSources() { LoadSources(); Changed?.Invoke(); }
 
     public static string? Get(string? name, string? klass = null) => Get(name, null, null, klass);
 
     /// <summary>
-    /// Resolve an item's icon across the source chain — built-in diablo4icons (by name), then each
-    /// enabled template source (by name/id/image) — returning the first cached hit (by priority) and
-    /// kicking off background downloads for the rest. Null until something lands; UI fires <see cref="Changed"/>.
+    /// Source chain: (1) game-data PNG keyed by Maxroll image handle, (2) user-configured template
+    /// sources. Returns a cached local path immediately or null while background extraction runs.
     /// </summary>
     public static string? Get(string? name, string? id, long? image, string? klass)
     {
-        // source 0 (highest priority): the real icon extracted from the user's own local game files,
-        // keyed by Maxroll's image handle. Returns a cached PNG path, or null while it extracts in the
-        // background (UI refreshes via Changed). Inert when the game isn't installed.
+        // Source 1 (highest priority): real icon extracted from the user's local D4 install.
+        // Keyed by Maxroll's hImageHandle. Returns cached PNG path or null while extracting.
         if (GameDataIcons.Get(image) is string gamePath) return gamePath;
 
-        // source 1 (built-in): diablo4icons index, keyed by item name
-        if (_loaded && !string.IsNullOrWhiteSpace(name) && Resolve(name!, klass) is string repoPath)
-        {
-            var local = Path.Combine(IconDir, repoPath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(local)) return local;
-            Download(RawBase + string.Join("/", repoPath.Split('/').Select(Uri.EscapeDataString)), local);
-        }
-        // sources 2+ : configurable template sources, in order
+        // Source 2+: user-configured template sources
         foreach (var s in _templates)
         {
             var val = s.Key.ToLowerInvariant() switch { "name" => name, "id" => id, "image" => image?.ToString(), _ => null };
@@ -141,14 +95,6 @@ public static class IconResolver
             Download(s.UrlTemplate.Replace("{key}", Uri.EscapeDataString(val!)), cacheFile);
         }
         return null;
-    }
-
-    static string? Resolve(string name, string? klass)
-    {
-        if (!_byName.TryGetValue(Norm(name), out var paths) || paths.Count == 0) return null;
-        // prefer the class-agnostic "General" art, then the build's class folder, else whatever exists
-        string? cls = klass == null ? null : paths.FirstOrDefault(p => Norm(p.Split('/')[0]).StartsWith(Norm(klass)[..Math.Min(4, Norm(klass).Length)]));
-        return paths.FirstOrDefault(p => p.StartsWith("General/", StringComparison.OrdinalIgnoreCase)) ?? cls ?? paths[0];
     }
 
     static void Download(string url, string local)
@@ -162,7 +108,7 @@ public static class IconResolver
                 var bytes = await Http.GetByteArrayAsync(url);
                 if (bytes.Length > 0) { await File.WriteAllBytesAsync(local, bytes); Changed?.Invoke(); }
             }
-            catch { /* leave uncached; UI keeps the silhouette / next source */ }
+            catch { }
             finally { lock (_lock) { _inflight.Remove(url); } }
         });
     }
