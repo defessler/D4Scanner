@@ -50,8 +50,8 @@ csharp/
   D4Scanner.Core/         business logic (no UI — fully headless-testable)
     Models.cs               Item, Affix, LiveBuild, TargetBuild, UiContext, ItemSource
     GearParser.cs           TTS log lines → Item objects; also ParseTooltipLines() for OCR
-    LogWatcher.cs           tails d4_tts.log; emits LiveBuild via Updated event
-    LogToJsonlConverter.cs  mirrors the log to a .jsonl side-car (one Item per line)
+    LogWatcher.cs           tails d4_tts.log; emits LiveBuild; Diagnose() capture-health report
+    LiveGearResolver.cs     pure live-gear merge (Tts>Ocr) + paper-doll weapon de-dup decision
     DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring
     BuildGuide.cs           prioritised "Do Next" steps (FIND/GET/IMPROVE/TEMPER/…)
     Substitutes.cs          best-owned stand-ins + Now/Better/Best ladder
@@ -157,9 +157,8 @@ amber accent** — do not add warm brown or heavy gold fills to large areas.
 
 ## Gotchas
 
-- `LogToJsonlConverter` uses compact (non-indented) JSON options (`CompactOpts`), NOT the
-  global `Json.Opts` (which has `WriteIndented = true`). This matters: `BuildFromJsonl`
-  reads one JSON object per line.
+- `LogWatcher.Poll` and `BuildFromFile` clear accumulated gear on a `=== d4scanner tts shim
+  attached` marker so a prior session's loadout doesn't linger on the HAVE side after a relaunch.
 - `LatestPerSlot` deduplicates by `(name, SlotPosition)` for character-panel items and by
   `name` only for bag hovers. Multi-ring / multi-weapon slots require `SlotPosition > 0`.
 - `StartWatching()` is idempotent — it disposes and recreates all watchers. Re-call it

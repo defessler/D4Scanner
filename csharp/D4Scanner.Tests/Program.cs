@@ -249,14 +249,14 @@ if (File.Exists(sampleLog))
         lbTts.Gear.Count > 0 && lbTts.Gear.All(g => g.Source == ItemSource.Tts));
 }
 
-// LogToJsonlConverter: compact serialization produces one line per item (no newlines in the JSON).
+// Item compact serialization stays on one line (no newlines in the JSON).
 var testItem = new Item { Name = "Doom", Slot = "helm", Rarity = "Legendary",
     Affixes = { new Affix { Text = "Max Life", Value = 1000 } } };
 var compact = System.Text.Json.JsonSerializer.Serialize(testItem, new System.Text.Json.JsonSerializerOptions
 {
     DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
 });
-Check("LogToJsonlConverter compact JSON fits on one line", !compact.Contains('\n'));
+Check("Item compact JSON fits on one line", !compact.Contains('\n'));
 
 // ---- TTS weapon path: regression net for the S8 bugs (melee-in-ranged-slot, weapon duplication) ----
 // The sample_tts.log fixture has NO weapons, so the weapon-assignment + dedup paths were entirely
@@ -401,6 +401,279 @@ if (File.Exists(rogueLog))
         LiveGearResolver.ShouldHideDuplicateWeapon(liveWeaponNames, "Etna's Lost Dagger"));
     Check("Rogue: weapon-dedup keeps a weapon not in the loadout",
         !LiveGearResolver.ShouldHideDuplicateWeapon(liveWeaponNames, "Doombringer"));
+
+    // ---- #1 item freshness: every item carries the TRUE hover time from its line's '[ISO]' prefix ----
+    // The whole rogue fixture is stamped on 2026-06-05 ~23:20Z; before the fix LogTimeUtc was always null
+    // (Clean dropped the prefix) and LastScannedTicks got 'now', so an old loadout looked current at launch.
+    Check("Rogue: every captured item has a parsed LogTimeUtc (from its '[ISO]' prefix)",
+        g.All(x => x.LogTimeUtc != null));
+    Check("Rogue: LogTimeUtc lands on the fixture's recording day (2026-06-05Z)",
+        g.All(x => x.LogTimeUtc!.Value.UtcDateTime.Date == new DateTime(2026, 6, 5)));
+    // The bow's block is wholly stamped 23:20:06Z, so its hover time is exactly that instant.
+    Eq("Rogue: bow LogTimeUtc == 2026-06-05T23:20:06Z (block's '[ISO]' time)",
+        new DateTimeOffset(2026, 6, 5, 23, 20, 6, TimeSpan.Zero), bow.LogTimeUtc);
+    // LastScannedTicks the app shows as 'age' must DERIVE from the log time, not the wall clock — this
+    // mirrors Poll's expression so a replayed old loadout can't masquerade as 'now'.
+    long derivedTicks = bow.LogTimeUtc?.UtcTicks ?? DateTime.UtcNow.Ticks;
+    Eq("Rogue: bow age-ticks derive from its '[ISO]' time (Poll's formula), not the system clock",
+        new DateTimeOffset(2026, 6, 5, 23, 20, 6, TimeSpan.Zero).UtcTicks, derivedTicks);
+}
+
+// ---- ParseAffix accuracy: Set-Charm capture, comparison-leak drop, skill-rank clean, mid-string recover ----
+// Each block FAILS before the v0.12.x ParseAffix/LooksLikeItem accuracy pass and PASSES after. Built from the
+// REAL S8 Rogue live-log strings (PHOBA OF MASTERY charm; Toughness comparison deltas; "+2 to Heartseeker";
+// the "Lucky Hit ... Restore +6 Primary Resource" and "Way of the Blurring Blade:." mid-string rolls).
+
+// (1) SET CHARM DROP — a Set Charm voices its type ("Set Charm") + affixes but NO rarity word. LooksLikeItem
+//     gating on Rarity discarded the equipped charm; gating on ItemType now keeps it. (Real lines 7683-7686.)
+var phoba = GearParser.ParseTooltipLines(new[] {
+    "PHOBA OF MASTERY",
+    "Set Charm",
+    "+2 to Subterfuge Skills [1 - 2] (+2)",
+    "+167 Physical Resistance [165 - 210] (+167)",
+});
+Check("ParseAffix #1: Set Charm with no rarity word is captured (PHOBA OF MASTERY)", phoba != null);
+if (phoba != null)
+{
+    Eq("ParseAffix #1: charm slot", "charm", phoba.Slot ?? "");
+    Eq("ParseAffix #1: charm type", "Set Charm", phoba.ItemType ?? "");
+    Check("ParseAffix #1: charm has no rarity word (gated on ItemType, not Rarity)", phoba.Rarity == null);
+    Check("ParseAffix #1: charm keeps the '+167 Physical Resistance' affix",
+        phoba.Affixes.Any(a => a.Text.Equals("Physical Resistance", StringComparison.Ordinal) && a.Value == 167));
+    // (3) "+2 to Subterfuge Skills" -> "Subterfuge Skills" (leading 'to ' stripped, no dangling connective).
+    Check("ParseAffix #3: charm skill affix '+2 to Subterfuge Skills' -> clean 'Subterfuge Skills'",
+        phoba.Affixes.Any(a => a.Text.Equals("Subterfuge Skills", StringComparison.Ordinal)));
+    Check("ParseAffix #3: charm affix never retains the leading 'to '",
+        phoba.Affixes.All(a => !a.Text.StartsWith("to ", StringComparison.OrdinalIgnoreCase)));
+}
+// Charm survives the FULL stateful Feed path even though its real block trails a "Properties lost when
+// equipped:" comparison section (the parser still captures it; downstream routes charms separately).
+{
+    var raw = new[] {
+        "[2026-06-05T16:48:48Z]PHOBA OF MASTERY ",
+        "[2026-06-05T16:48:48Z]Set Charm",
+        "[2026-06-05T16:48:48Z]+2 to Subterfuge Skills [1 - 2] (+2)",
+        "[2026-06-05T16:48:48Z]+167 Physical Resistance [165 - 210] (+167)",
+        "[2026-06-05T16:48:48Z]Properties lost when equipped:",
+        "[2026-06-05T16:48:48Z]+8% Bonus Kill Experience (0.8% at level 70)",
+        "[2026-06-05T16:48:48Z]Requires Level 54. Unique Equipped. Lord of Hatred Item ",
+        "[2026-06-05T16:48:48Z]Right mouse button",
+    };
+    var fseg = new GearParser();
+    Item? fed = null;
+    foreach (var l in raw) { var r = fseg.Feed(l); if (r != null) fed = r; }
+    Check("ParseAffix #1: real PHOBA block survives Feed (was dropped by the Rarity gate)",
+        fed != null && fed.Slot == "charm" && fed.ItemType == "Set Charm");
+}
+
+// (2) COMPARISON-TOOLTIP LEAK — "638 Armor (-4.2% Toughness)" / "157 All Resist (-3.8% Toughness)" are the
+//     D4 comparison overlay's delta, NOT real affixes. They must never become affixes (and so can't
+//     false-match a target's Armor/All-Res). The real rolled "+892 Armor [780-980]" still survives.
+var cmp = GearParser.ParseTooltipLines(new[] {
+    "BONEWEAVE HAUBERK",
+    "Legendary Chest Armor",
+    "800 Item Power",
+    "638 Armor (-4.2% Toughness)",
+    "157 All Resist (-3.8% Toughness)",
+    "+892 Armor [780 - 980] (+892)",
+});
+Check("ParseAffix #2: comparison-delta chest parsed", cmp != null);
+if (cmp != null)
+{
+    Check("ParseAffix #2: no affix text ever contains 'Toughness'",
+        cmp.Affixes.All(a => !a.Text.Contains("Toughness", StringComparison.OrdinalIgnoreCase)));
+    Check("ParseAffix #2: the 'All Resist (-Toughness)' comparison line is not an affix",
+        !cmp.Affixes.Any(a => a.Text.Contains("All Resist", StringComparison.OrdinalIgnoreCase)));
+    Eq("ParseAffix #2: only the rolled '+892 Armor' Armor affix survives (the summary delta is dropped)",
+        1, cmp.Affixes.Count(a => a.Text.Equals("Armor", StringComparison.OrdinalIgnoreCase)));
+    Check("ParseAffix #2: the surviving Armor affix is the rolled one (has a [range])",
+        cmp.Affixes.First(a => a.Text.Equals("Armor", StringComparison.OrdinalIgnoreCase)).Min == 780);
+}
+
+// (3) SKILL-RANK / CLARIFIER NOISE — "+2 to Heartseeker" -> "Heartseeker"; the "(0.8% at level 70)"
+//     clarifier is stripped off "Bonus Kill Experience". (Real lines 1569, 7689.)
+var skn = GearParser.ParseTooltipLines(new[] {
+    "DARK SHROUD GLOVES",
+    "Legendary Gloves",
+    "800 Item Power",
+    "+2 to Heartseeker [1 - 2] (+2)",
+    "+8% Bonus Kill Experience (0.8% at level 70) [2 - 10]%[0.2 - 1.0]%",
+});
+Check("ParseAffix #3: skill-rank gloves parsed", skn != null);
+if (skn != null)
+{
+    Check("ParseAffix #3: '+2 to Heartseeker' -> clean 'Heartseeker' affix",
+        skn.Affixes.Any(a => a.Text.Equals("Heartseeker", StringComparison.Ordinal)));
+    Check("ParseAffix #3: no affix keeps the dangling 'to Heartseeker'",
+        !skn.Affixes.Any(a => a.Text.Contains("to Heartseeker", StringComparison.OrdinalIgnoreCase)));
+    Check("ParseAffix #3: trailing '(... at level ...)' clarifier stripped from 'Bonus Kill Experience'",
+        skn.Affixes.Any(a => a.Text.Equals("Bonus Kill Experience", StringComparison.Ordinal)));
+    Check("ParseAffix #3: no affix retains a letter-bearing trailing clarifier paren",
+        skn.Affixes.All(a => !(a.Text.EndsWith(")") && a.Text.Contains("level", StringComparison.OrdinalIgnoreCase))));
+}
+
+// (4) RECOVER DROPPED AFFIXES (conservative) — only the clean "value-first" seal/charm power-name shape is
+//     recovered; multi-clause "Lucky Hit: Up to a …" lines (value NOT first) route to PowerText, since their
+//     value can't be picked safely (taking the last number yields a wrong roll — verified on real data).
+//   (4a) value-NOT-first: "Lucky Hit: Up to a 15% Chance to Restore +6 Primary Resource [6-8]" -> PowerText.
+var lh = GearParser.ParseTooltipLines(new[] {
+    "RESTORATIVE RING", "Legendary Ring", "800 Item Power",
+    "Lucky Hit: Up to a 15% Chance to Restore +6 Primary Resource [6 - 8] (+6)",
+});
+Check("ParseAffix #4a: ring parsed", lh != null);
+if (lh != null)
+    Check("ParseAffix #4a: value-not-first Lucky-Hit line is NOT recovered as an affix (safe -> PowerText)",
+        !lh.Affixes.Any(a => a.Text.Contains("Primary Resource", StringComparison.OrdinalIgnoreCase)
+                          || a.Text.Contains("Chance", StringComparison.OrdinalIgnoreCase)));
+//   (4a-2) the wrong-token bug: "...Slow for 2 Seconds [3.0-4.0]%" must NOT yield a bogus value-2 affix.
+var slow = GearParser.ParseTooltipLines(new[] {
+    "SLOWING CHARM", "Set Charm",
+    "Lucky Hit: Up to a +3.5% Chance to Slow for 2 Seconds [3.0 - 4.0]% (+3.5%)",
+});
+if (slow != null)
+    Check("ParseAffix #4a-2: 'Slow for 2 Seconds' never recovers a bogus value-2 affix",
+        !slow.Affixes.Any(a => a.Value == 2));
+//   (4b) seal/charm power-name roll, value + name AFTER a "Name:." prefix and even after the bracket:
+//        "Way of the Blurring Blade:. +22% [13-25]% Critical Strike Damage" (real line 7759).
+var bb = GearParser.ParseTooltipLines(new[] {
+    "PHOBA OF MASTERY",
+    "Set Charm",
+    "Way of the Blurring Blade:. +22% [13 - 25]% Critical Strike Damage",
+});
+Check("ParseAffix #4b: power-name seal/charm roll parsed", bb != null);
+if (bb != null)
+    Check("ParseAffix #4b: 'Way of the Blurring Blade:. +22% [..] Critical Strike Damage' -> 'Critical Strike Damage' affix",
+        bb.Affixes.Any(a => a.Text.Equals("Critical Strike Damage", StringComparison.Ordinal) && a.Value == 22 && a.IsPercent));
+
+//   (4c) S8 Horadric Seal '%[x]' (multiplicative) value-first rolls — recover a CLEAN name, SET the multiplier
+//        flag, and leak NO '[x]'/'%'/'(+…)' markup into the name (the exact real lines the first cut corrupted).
+var sealMul = GearParser.ParseTooltipLines(new[] {
+    "FOCUSED HORADRIC SEAL OF TOXINS", "Horadric Seal", "Requires Level 70",
+    "24.0%[x] Critical Strike Damage [13.0 - 25.0]%[x] (+7.0%[x])",
+});
+if (sealMul != null)
+{
+    var csd = sealMul.Affixes.FirstOrDefault(a => a.Text.Contains("Critical Strike Damage", StringComparison.Ordinal));
+    Check("ParseAffix #4c: seal '%[x]' roll recovered with a CLEAN name (no markup)",
+        csd != null && csd.Text == "Critical Strike Damage");
+    Check("ParseAffix #4c: seal '%[x]' roll sets IsMultiplier=true, value 24",
+        csd != null && csd.IsMultiplier && csd.Value == 24);
+}
+var sealMul2 = GearParser.ParseTooltipLines(new[] {
+    "SEAL TWO", "Horadric Seal", "Requires Level 70",
+    "Spellbound Steel:. +8%[x] [7 - 10]% Shadow Damage",
+});
+if (sealMul2 != null)
+    Check("ParseAffix #4c: 'Spellbound Steel:. +8%[x] [..] Shadow Damage' -> 'Shadow Damage' mul=true val=8",
+        sealMul2.Affixes.Any(a => a.Text == "Shadow Damage" && a.IsMultiplier && a.Value == 8));
+Check("ParseAffix #4c: no recovered seal affix retains '['/']'/'%'/'(' markup",
+    (sealMul?.Affixes ?? new()).Concat(sealMul2?.Affixes ?? new())
+        .All(a => !a.Text.Contains('[') && !a.Text.Contains(']') && !a.Text.Contains('%') && !a.Text.Contains('(')));
+
+// (4 GATE) a multi-sentence Imprinted/legendary power that ALSO has a [range] must NOT be recovered as an
+//     affix — it stays in PowerText (the ". " sentence-boundary + length gate). (Real bow power, line 104.)
+var pwr = GearParser.ParseTooltipLines(new[] {
+    "FROSTBITTEN MAMMALBANE BOW",
+    "Unique Bow",
+    "900 Item Power",
+    "Enemies hit by your Stun Grenades have a chance equal to your Critical Strike Chance to be Frozen for 2 seconds. . You deal 150%[x] [100 - 150]% increased Critical Strike Damage against Frozen or Stunned enemies.",
+});
+Check("ParseAffix #4 gate: multi-sentence legendary power parsed", pwr != null);
+if (pwr != null)
+{
+    Check("ParseAffix #4 gate: the multi-sentence power is NOT turned into an affix",
+        pwr.Affixes.Count == 0);
+    Check("ParseAffix #4 gate: the multi-sentence power stays in PowerText",
+        pwr.PowerText.Any(p => p.Contains("Stun Grenades", StringComparison.OrdinalIgnoreCase)));
+}
+
+// ---- #1 item freshness: CleanWithTime parses the '[ISO]' prefix; Clean's string output is unchanged ----
+{
+    // Prefixed line: time is parsed, and the cleaned text is byte-identical to plain Clean().
+    var cleaned = GearParser.CleanWithTime("[2026-06-06T15:37:50Z]LIFEBINDING AMULET", out var t);
+    Eq("CleanWithTime: prefix stripped from text", "LIFEBINDING AMULET", cleaned);
+    Eq("CleanWithTime: text identical to Clean()", GearParser.Clean("[2026-06-06T15:37:50Z]LIFEBINDING AMULET"), cleaned);
+    Check("CleanWithTime: time parsed from '[ISO]' prefix", t != null);
+    Eq("CleanWithTime: time == 2026-06-06T15:37:50Z",
+        new DateTimeOffset(2026, 6, 6, 15, 37, 50, TimeSpan.Zero), t);
+    // Un-prefixed line (old shim / sample_tts.log): no time, text still cleaned exactly as before.
+    var bare = GearParser.CleanWithTime("ARCHON SPELLBLADE", out var t2);
+    Check("CleanWithTime: no prefix -> null time (fall back to system clock)", t2 == null);
+    Eq("CleanWithTime: un-prefixed text unchanged", "ARCHON SPELLBLADE", bare);
+    Eq("CleanWithTime: un-prefixed matches Clean()", GearParser.Clean("ARCHON SPELLBLADE"), bare);
+    // A bracketed-but-not-a-timestamp line must NOT be mis-parsed as a time and must keep its text.
+    Eq("CleanWithTime: non-timestamp bracket text preserved",
+        "[FAVORITED ITEM]. SOME BOW", GearParser.CleanWithTime("[FAVORITED ITEM]. SOME BOW", out var t3));
+    Check("CleanWithTime: non-timestamp bracket -> null time", t3 == null);
+}
+
+// ---- #1 item freshness: a Feed-completed item carries LogTimeUtc from its block's prefix ----
+{
+    var seg = new GearParser();
+    Item? built = null;
+    foreach (var ln in new[] {
+        "[2026-06-06T15:37:50Z]EQUIPPED",
+        "[2026-06-06T15:37:50Z]FROSTBITTEN MAMMALBANE BOW",
+        "[2026-06-06T15:37:50Z]Legendary Bow",
+        "[2026-06-06T15:37:50Z]900 Item Power",
+        "[2026-06-06T15:37:50Z]+100 Dexterity [80 - 120]",
+        "[2026-06-06T15:37:50Z]Right mouse button" })
+        built = seg.Feed(ln) ?? built;
+    Check("Feed: completed item is non-null", built != null);
+    Check("Feed: completed item carries LogTimeUtc from its '[ISO]' prefix", built?.LogTimeUtc != null);
+    Eq("Feed: LogTimeUtc == 2026-06-06T15:37:50Z",
+        new DateTimeOffset(2026, 6, 6, 15, 37, 50, TimeSpan.Zero), built?.LogTimeUtc);
+}
+
+// ---- #1 item freshness: an OLD-session item is OLDER than a CURRENT-session one (two-session input) ----
+// One file, two sessions ~8h apart (the real log spans 07:49 and 15:37). An item hovered in the morning
+// session must carry the older LogTimeUtc so it can be deprioritized/expired vs the afternoon scan.
+{
+    var twoSession = new[]
+    {
+        // morning session — old helm
+        "[2026-06-06T07:49:15Z]=== d4scanner tts shim attached v2 ===",
+        "[2026-06-06T07:49:16Z]EQUIPPED",
+        "[2026-06-06T07:49:16Z]OLD MORNING HELM",
+        "[2026-06-06T07:49:16Z]Legendary Helm",
+        "[2026-06-06T07:49:16Z]800 Item Power",
+        "[2026-06-06T07:49:16Z]+100 Dexterity [80 - 120]",
+        "[2026-06-06T07:49:16Z]Right mouse button",
+        // afternoon session — new helm in the same slot
+        "[2026-06-06T15:37:50Z]=== d4scanner tts shim attached v2 ===",
+        "[2026-06-06T15:37:51Z]EQUIPPED",
+        "[2026-06-06T15:37:51Z]NEW AFTERNOON HELM",
+        "[2026-06-06T15:37:51Z]Legendary Helm",
+        "[2026-06-06T15:37:51Z]925 Item Power",
+        "[2026-06-06T15:37:51Z]+150 Dexterity [80 - 120]",
+        "[2026-06-06T15:37:51Z]Right mouse button",
+    };
+    var rep = LogWatcher.DiagnoseLines(twoSession);
+    Eq("TwoSession: both session markers counted", 2, rep.SessionMarkers);
+    var oldHelm = rep.Items.First(it => it.RawName == "OLD MORNING HELM");
+    var newHelm = rep.Items.First(it => it.RawName == "NEW AFTERNOON HELM");
+    // DiagnoseLines exposes TtsDiagItem (no LogTimeUtc), so verify ordering/freshness via Feed directly:
+    var seg2 = new GearParser();
+    Item? oldItem = null, newItem = null;
+    foreach (var ln in twoSession)
+    {
+        var it = seg2.Feed(ln);
+        if (it?.RawName == "OLD MORNING HELM") oldItem = it;
+        if (it?.RawName == "NEW AFTERNOON HELM") newItem = it;
+    }
+    Check("TwoSession: old-session helm parsed", oldItem != null);
+    Check("TwoSession: new-session helm parsed", newItem != null);
+    Check("TwoSession: old helm LogTimeUtc is from the morning session (07:49Z)",
+        oldItem!.LogTimeUtc == new DateTimeOffset(2026, 6, 6, 7, 49, 16, TimeSpan.Zero));
+    Check("TwoSession: new helm LogTimeUtc is from the afternoon session (15:37Z)",
+        newItem!.LogTimeUtc == new DateTimeOffset(2026, 6, 6, 15, 37, 51, TimeSpan.Zero));
+    Check("TwoSession: the prior-session item is strictly OLDER (deprioritizable/expirable)",
+        oldItem!.LogTimeUtc < newItem!.LogTimeUtc);
+    // Both reach the diagnostics list; the afternoon scan supersedes the morning one in the final set.
+    Check("TwoSession: newest-per-slot keeps the afternoon helm",
+        rep.FinalEquipped.Any(x => x.RawName == "NEW AFTERNOON HELM"));
+    Check("TwoSession: morning helm is dropped from the final set (superseded)",
+        !rep.FinalEquipped.Any(x => x.RawName == "OLD MORNING HELM"));
 }
 
 // ---- ReQuality: paren-single-number Quality form + bare-Quality guard (no fixture needed) ----
@@ -416,6 +689,150 @@ var cleanAff = GearParser.ParseTooltipLines(new[] {
     "GUARD ITEM", "Legendary Ring", "800 Item Power", "+100 Critical Strike Chance [80 - 120]" });
 Check("Trailing strip: a normal affix keeps its exact text (no over-strip)",
     cleanAff != null && cleanAff.Affixes.Any(a => a.Text == "Critical Strike Chance"));
+
+// ---- SOCKET capture: "Socket (N)" = total capacity, "Empty Socket" = one unfilled ----
+var sockItem = GearParser.ParseTooltipLines(new[] {
+    "LURKING SHELL", "Rare Chest Armor", "850 Item Power",
+    "+90 Dexterity +[83 - 99]", "+434 Lightning Resistance [416 - 523]",
+    "Empty Socket", "Socket (1)", "Requires Level 70" });
+Check("Socket: armor block parses", sockItem != null);
+Check("Socket: SocketCount = 1 from 'Socket (1)'", sockItem?.SocketCount == 1);
+Eq("Socket: one 'Empty Socket' line counted", 1, sockItem?.EmptySockets ?? -1);
+Check("Socket: bare socket lines do NOT leak into PowerText",
+    sockItem != null && !sockItem.PowerText.Any(p => p.StartsWith("Socket") || p == "Empty Socket"));
+var sockFull = GearParser.ParseTooltipLines(new[] {
+    "SHADOW SHELL", "Rare Chest Armor", "850 Item Power",
+    "+1,212 Maximum Life [1,016 - 1,225]", "Socket (2)", "Requires Level 70" });
+Check("Socket: SocketCount = 2, EmptySockets = 0 (filled)", sockFull?.SocketCount == 2 && sockFull?.EmptySockets == 0);
+
+// ---- SET CHARM capture: "<Set> (active/total). (T) Set:. <bonus>" (passes via the already-applied LooksLikeItem charm fix) ----
+var setItem = GearParser.ParseTooltipLines(new[] {
+    "PHOBA OF MASTERY", "Set Charm",
+    "+2 to Subterfuge Skills [1 - 2]", "+167 Physical Resistance [165 - 210]",
+    "Mastery", "Phoba of Mastery", "Fer of Mastery",
+    "Mastery (0/2). (2) Set:. +2 to All Skills",
+    "Requires Level 54" });
+Check("Set: charm survives parse (LooksLikeItem charm fix)", setItem != null);
+if (setItem != null)
+{
+    Eq("Set: name = 'Mastery' (member lines ignored)", "Mastery", setItem.SetName ?? "");
+    Eq("Set: active = 0", 0, setItem.SetActive ?? -1);
+    Eq("Set: total = 2 (piece count, not the (2) tier marker)", 2, setItem.SetTotal ?? -1);
+}
+var setBlade = GearParser.ParseTooltipLines(new[] {
+    "LINTA OF THE BLURRING BLADE", "Set Charm",
+    "6.5% Maximum Life [6.5 - 8.0]%",
+    "Way of the Blurring Blade (0/5). (2) Set:. Cutthroat Skills deal 45%[x] increased damage.. (3) Set:. x. (5) Set:. y",
+    "Requires Level 70" });
+if (setBlade != null)
+{
+    Eq("Set: 5-piece set total parsed", 5, setBlade.SetTotal ?? -1);
+    Eq("Set: 5-piece set name", "Way of the Blurring Blade", setBlade.SetName ?? "");
+}
+
+// ---- runeword counts as a FILLED socket (no bare Socket line) ----
+var runeItem = GearParser.ParseTooltipLines(new[] {
+    "SHROUDED GIFT", "Unique Pants", "850 Item Power",
+    "+109 Dexterity +[83 - 99]",
+    "NeoVex (200/100) - Graceful Heart of the Oak",
+    "Requires Level 70" });
+Check("Socket(runeword): RunewordName captured, no bare Socket line, EmptySockets 0",
+    runeItem != null && runeItem.RunewordName != null && runeItem.SocketCount == null && runeItem.EmptySockets == 0);
+
+// ---- DiffEngine: socket HAVE/NEED is conditional + presence-style (does NOT move Matched/Total) ----
+{
+    var tWantSock = new TargetBuild { Gear = {
+        new TargetGear { Slot = "chest", Sockets = { "Rune of Invocation" },
+            Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
+    var liveEmpty = new LiveBuild { Gear = {
+        new Item { Name = "Lurking Shell", Slot = "chest", SocketCount = 1, EmptySockets = 1,
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } } } };
+    var grpEmpty = DiffEngine.Diff(tWantSock, liveEmpty).Categories.First(c => c.Id == "gear").Groups[0];
+    Check("Diff socket: empty socket -> SocketsDone false", !grpEmpty.SocketsDone);
+    Check("Diff socket: status mentions empty", grpEmpty.SocketStatus != null && grpEmpty.SocketStatus.Contains("empty"));
+    var liveRune = new LiveBuild { Gear = {
+        new Item { Name = "Shrouded Gift", Slot = "chest", RunewordName = "Graceful Heart of the Oak",
+            SocketedRunes = { "Neo", "Vex" },
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } } } };
+    var grpRune = DiffEngine.Diff(tWantSock, liveRune).Categories.First(c => c.Id == "gear").Groups[0];
+    Check("Diff socket: runeword present -> SocketsDone true", grpRune.SocketsDone);
+    var tNoSock = new TargetBuild { Gear = {
+        new TargetGear { Slot = "chest", Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
+    var grpNo = DiffEngine.Diff(tNoSock, liveEmpty).Categories.First(c => c.Id == "gear").Groups[0];
+    Check("Diff socket: non-socket target has null SocketStatus (no behavior change)", grpNo.SocketStatus == null);
+    Eq("Diff socket: presence-line does not inflate Total", grpNo.Total, grpEmpty.Total);
+}
+
+// ---- capture-health verdict (Core heuristic in DiagnoseLines) ----
+{
+    var brokenSweep = Enumerable.Range(0, 10)
+        .SelectMany(_ => new[] { "Legendary", "850 Item Power" })   // 20 tooltip-shaped lines, 0 blocks
+        .ToArray();
+    var hb = LogWatcher.DiagnoseLines(brokenSweep);
+    Eq("Health: broken sweep parses 0 items", 0, hb.Items.Count);
+    Eq("Health: broken sweep has 0 EQUIPPED tokens", 0, hb.EquippedTokens);
+    Check("Health: broken sweep counts tooltip-shaped lines", hb.TooltipShapedLines >= 8);
+    Eq("Health: tooltip-shaped + no items + no EQUIPPED -> Warning", CaptureHealth.Warning, hb.Health);
+    Check("Health: warning summary mentions format change", hb.HealthSummary.Contains("format"));
+
+    // (a-2) EQUIPPED tokens present but STILL 0 parsed items (format break) -> Warning, NOT a false Healthy.
+    var brokenEquipped = new[] {
+        "EQUIPPED", "Legendary", "850 Item Power", "EQUIPPED", "Unique", "900 Item Power",
+        "EQUIPPED", "Legendary", "800 Item Power", "EQUIPPED", "Rare", "850 Item Power",
+    };
+    var he = LogWatcher.DiagnoseLines(brokenEquipped);
+    Check("Health: EQUIPPED tokens present but 0 items parsed", he.EquippedTokens >= 1 && he.Items.Count == 0);
+    Eq("Health: EQUIPPED-with-zero-parsed -> Warning (not a false Healthy)", CaptureHealth.Warning, he.Health);
+
+    var healthNav = new[] {
+        "=== d4scanner tts shim attached ===",
+        "Equipment", "Head", "EQUIPPED",
+        "ARCHON SPELLBLADE", "Legendary Helm", "780 Item Power",
+        "+1,540 Maximum Life [1,300 - 1,600]", "Requires Level 60",
+        "Right mouse button",
+    };
+    var hh = LogWatcher.DiagnoseLines(healthNav);
+    Eq("Health: nav fixture completed-blocks == items", hh.Items.Count, hh.CompletedBlocks);
+    Check("Health: nav fixture counted the EQUIPPED token", hh.EquippedTokens >= 1);
+    Eq("Health: a parsed+equipped fixture -> Healthy", CaptureHealth.Healthy, hh.Health);
+
+    Eq("Health: empty input -> NoData", CaptureHealth.NoData, LogWatcher.DiagnoseLines(Array.Empty<string>()).Health);
+
+    var quiet = new[] { "Main Menu", "Inventory", "Left mouse button", "Settings" };
+    Eq("Health: quiet non-tooltip input -> NoPanel", CaptureHealth.NoPanel, LogWatcher.DiagnoseLines(quiet).Health);
+
+    if (File.Exists(rogueLog))
+    {
+        var hr = LogWatcher.Diagnose(rogueLog);
+        Check("Health: real rogue fixture parsed >0 items", hr.CompletedBlocks > 0);
+        Eq("Health: real rogue fixture -> Healthy", CaptureHealth.Healthy, hr.Health);
+    }
+}
+
+// ---- session expiry: a new "=== d4scanner attached" marker drops prior-session gear the new session never
+//      re-hovers. Discriminating: the ring exists ONLY in session 1, so LatestPerSlot cannot fake its removal. ----
+{
+    var twoSession = Path.Combine(Path.GetTempPath(), "d4s_twosession_test.log");
+    File.WriteAllLines(twoSession, new[] {
+        "=== d4scanner tts shim attached ===",
+        "Head", "EQUIPPED", "SESSION ONE HELM", "Legendary Helm", "780 Item Power",
+        "+1,000 Maximum Life [900 - 1,100]", "Requires Level 60", "Right mouse button",
+        "Ring", "EQUIPPED", "SESSION ONE RING", "Legendary Ring", "800 Item Power",
+        "+90 Dexterity [80 - 100]", "Requires Level 60", "Right mouse button",
+        "=== d4scanner tts shim attached ===",
+        "Head", "EQUIPPED", "SESSION TWO HELM", "Legendary Helm", "790 Item Power",
+        "+1,200 Maximum Life [900 - 1,300]", "Requires Level 60", "Right mouse button",
+    });
+    try
+    {
+        var lb2 = LogWatcher.BuildFromFile(twoSession, equippedOnly: false).Gear;
+        Check("Session expiry: a prior-session ring the new session never re-hovers is dropped",
+            !lb2.Any(g => g.Slot == "ring"));
+        Check("Session expiry: the current-session helm is kept", lb2.Any(g => g.Name.Contains("Session Two Helm")));
+        Eq("Session expiry: only the current session's gear remains", 1, lb2.Count);
+    }
+    finally { try { File.Delete(twoSession); } catch { } }
+}
 
 // ---- LiveGearResolver.Merge (extracted MergeGear) + weapon de-dup decision ----
 Item MkGear(string name, string slot, ItemSource src) => new Item { Name = name, Slot = slot, Source = src };

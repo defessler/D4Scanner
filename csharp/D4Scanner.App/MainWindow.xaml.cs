@@ -134,7 +134,6 @@ public partial class MainWindow : Window
     OcrCaptureEngine? _captureEngine;
     bool _useTts = true;
     bool _useCapture = false;
-    LogToJsonlConverter? _jsonl;   // mirrors the TTS log to a one-item-per-line .jsonl side-car
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
     LiveBuild _live = new();
@@ -248,7 +247,7 @@ public partial class MainWindow : Window
         };
         CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
         Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
-        Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _jsonl?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
+        Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
         {
@@ -513,9 +512,6 @@ public partial class MainWindow : Window
                     if (err == null) { Render(); AppLog("portrait auto-captured from character panel"); }
                 }));
             _watcher.Start();
-            _jsonl?.Dispose();
-            _jsonl = new LogToJsonlConverter(_log);
-            _jsonl.Start();
             _live = new LiveBuild
             {
                 Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
@@ -1837,6 +1833,24 @@ public partial class MainWindow : Window
         titleSp.Children.Add(TBs("TTS capture diagnostics", Ink, 17, true));
         hd.Children.Add(titleSp);
         sp.Children.Add(hd);
+
+        // ── capture-health banner ──
+        (Brush hbar, string hicon) = rep.Health switch
+        {
+            CaptureHealth.Healthy => (Green,  "✓"),
+            CaptureHealth.Warning => (Crimson, "⚠"),
+            CaptureHealth.NoPanel => (Steel,  "○"),
+            _                     => (Faint,  "—"),
+        };
+        var bannerTb = TB($"{hicon}  {rep.HealthSummary}", hbar, 12.5, true);
+        bannerTb.TextWrapping = TextWrapping.Wrap;
+        sp.Children.Add(new Border
+        {
+            Background = new SolidColorBrush(((SolidColorBrush)hbar).Color) { Opacity = 0.12 },
+            BorderBrush = hbar, BorderThickness = new Thickness(0, 0, 0, 2),
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(12, 9, 12, 9),
+            Margin = new Thickness(0, 0, 0, 16), Child = bannerTb,
+        });
 
         // ── status ──
         bool watching = _useTts && _watcher != null;

@@ -59,14 +59,58 @@ public class GearParser
     // Tooltip summary totals ("2,805 Armor", "157 All Resist"): the real rolled affix of the same name
     // carries a + sign and a [range]; the bare summary form (no sign, no range) is a derived total.
     static readonly Regex ReSummaryStat = new(@"^(Armor|All Resist(ance)?)$", RegexOptions.IgnoreCase);
+    // Comparison-tooltip parenthetical: D4's "show comparison" overlay appends a delta like
+    // "157 All Resist (-3.8% Toughness)" / "638 Armor (-4.2% Toughness)". This is NOT a real affix —
+    // strip the trailing delta paren so the bare-summary filter (ReSummaryStat) can drop the stat,
+    // and so a leaked Toughness pseudo-affix can't false-match a target's Armor/All-Res requirement.
+    // Two forms: a numeric-delta-led paren ("(-3.8% Toughness)", "(-160)") or any letter-bearing
+    // clarifier paren ("(0.8% at level 70)"). A value-only paren like "(+892)" has NO letter and no
+    // leading sign+number+text shape we strip here only when it trails the whole core — and on a
+    // bracketed affix that paren is already gone (core = text before the '['), so equipped rolls are safe.
+    static readonly Regex ReCompareDelta = new(@"\s*\([+-]?[\d.,]+%?[^)]*\)\s*$");
+    static readonly Regex ReTrailingClarifier = new(@"\s*\((?=[^)]*\p{L})[^)]*\)\s*$");
+    // Skill-rank / dangling-connective noise: "+2 to Heartseeker" -> text "to Heartseeker"; strip the
+    // leading "to " so DiffEngine.PhraseMatch (substring) sees the clean skill name "Heartseeker".
+    static readonly Regex ReLeadingConnective = new(@"^to\s+", RegexOptions.IgnoreCase);
+    // Recover-dropped-affix fallback (conservative): only the clean "value-first" seal/charm power-name
+    // shape is recovered, e.g. "+8%[x] [7-10]% Shadow Damage" -> {Shadow Damage, 8, x-mult}. The value MUST
+    // be the leading token (after an optional "Name:." prefix); multi-clause powers / "Lucky Hit: Up to a…"
+    // lines (value not first) route to PowerText instead, since their value can't be picked safely.
+    static readonly Regex ReLeadValue = new(@"^([+x-]?)\s*([\d][\d,.]*)\s*(%?)\s*(\[x\]|\[\+\])?\s*", RegexOptions.IgnoreCase);
+    static readonly Regex ReMarkerJunk = new(@"\[[x+]\]", RegexOptions.IgnoreCase);
+    // A leading "Power Name:." or "Power Name:" prefix on a seal/charm affix line
+    // ("Way of the Blurring Blade:. +22% [13-25]% Critical Strike Damage").
+    static readonly Regex RePowerNamePrefix = new(@"^[^:.]{1,40}:\.?\s+");
+    // Sockets: bare "Socket (2)" = TOTAL socket capacity (comparison/bag view); "Empty Socket" = one unfilled
+    // socket (counted). A FILLED socket renders as the runeword line (ReRuneword) instead, never as "Socket (N)".
+    static readonly Regex ReSocket = new(@"^Socket\s*\((\d+)\)\s*$", RegexOptions.IgnoreCase);
+    static readonly Regex ReEmptySocket = new(@"^Empty Socket\s*$", RegexOptions.IgnoreCase);
+    // Set Charm bonus header: "<SetName> (active/total). (T) Set:. <bonus...>". The FIRST (n/m) is the piece
+    // count; the later (T) is a tier threshold. Member-name lines (e.g. "Phoba of Mastery") carry no (n/m) and
+    // won't match, so this selects only the real header. Captures: 1=name, 2=active, 3=total.
+    static readonly Regex ReSetName = new(@"^(.+?)\s*\((\d+)/(\d+)\)\.\s*\(\d+\)\s*Set:", RegexOptions.None);
 
-    public static string Clean(string s)
+    public static string Clean(string s) => CleanWithTime(s, out _);
+
+    /// <summary>Like <see cref="Clean"/> but also returns the UTC time parsed from the line's '[ISO]'
+    /// prefix (the enhanced DLL stamps each line with the real hover time). <paramref name="logTime"/> is
+    /// null when no parseable prefix is present. The returned string is byte-identical to <see cref="Clean"/>
+    /// for every input, so existing callers are unaffected — only the out-time is new.</summary>
+    public static string CleanWithTime(string s, out DateTimeOffset? logTime)
     {
+        logTime = null;
         s = WebUtility.HtmlDecode(s ?? "");
         // Strip optional ISO timestamp prefix added by the enhanced DLL: [2026-06-04T00:30:15Z]
         // Format is exactly 22 chars: [YYYY-MM-DDTHH:MM:SSZ]
         if (s.Length > 22 && s[0] == '[' && s[21] == ']')
+        {
+            // Parse the 20-char inner ISO instant before stripping; on a fresh launch the whole
+            // cumulative log replays, so this is the only way to know an item's TRUE age.
+            if (DateTimeOffset.TryParse(s.AsSpan(1, 20), CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var t))
+                logTime = t;
             s = s.Substring(22);
+        }
         s = s.Replace((char)0x2018, (char)0x27).Replace((char)0x2019, (char)0x27).Replace((char)0x201C, (char)0x22).Replace((char)0x201D, (char)0x22);
         s = Regex.Replace(s, @"\s+", " ").Trim();
         return s;
@@ -124,16 +168,28 @@ public class GearParser
         double? vmin = null, vmax = null;
         string core = ln;
         var rng = ReBracket.Match(ln);
+        string afterBracket = "";
         if (rng.Success)
         {
             vmin = ToNum(rng.Groups[1].Value);
             vmax = rng.Groups[2].Success && rng.Groups[2].Value != "" ? ToNum(rng.Groups[2].Value) : null;
             core = ln[..rng.Index].Trim();
+            afterBracket = ln[(rng.Index + rng.Length)..].Trim();   // kept for the name-after-bracket fallback
         }
+        // (2)/(3) Strip the comparison-tooltip delta and any letter-bearing clarifier from the END of the
+        // pre-bracket text BEFORE the affix/summary tests run. Order: delta first (covers "(-3.8% Toughness)"),
+        // then the generic letter-bearing clarifier ("(0.8% at level 70)"). A value-only "(+6)" survives —
+        // it has no letter, and after a [range] it's already been dropped with the bracket.
+        core = ReCompareDelta.Replace(core, "").Trim();
+        core = ReTrailingClarifier.Replace(core, "").Trim();
+
         var m = ReAffix.Match(core);
-        if (!m.Success) return null;
+        if (!m.Success)
+            return RecoverMidStringAffix(core, afterBracket, vmin, vmax, rng.Success);   // (4) fallback
+
         string sign = m.Groups[1].Value, num = m.Groups[2].Value, pct = m.Groups[3].Value, text = m.Groups[4].Value.Trim();
         text = ReAffixTrailJunk.Replace(text, "").Trim();   // strip dangling '+' / stray trailing punctuation (S8 "+109 Dexterity +[..]")
+        text = ReLeadingConnective.Replace(text, "").Trim(); // (3) "+2 to Heartseeker" -> "Heartseeker"
         var value = ToNum(num);
         if (value == null || text.Length == 0 || text.Equals("Item Power", StringComparison.OrdinalIgnoreCase)) return null;
         // Drop weapon implicits outright, and tooltip summary totals when in their bare (no sign, no range) form.
@@ -144,6 +200,46 @@ public class GearParser
             Text = text, Value = value, Min = vmin, Max = vmax,
             IsPercent = pct == "%", IsMultiplier = sign == "x",
         };
+    }
+
+    /// <summary>
+    /// (4) Recover a rolled affix whose value sits MID-STRING so the leading-value <see cref="ReAffix"/>
+    /// rejected it: "Lucky Hit: Up to a 15% Chance to Restore +6 Primary Resource [6-8]" and seal/charm
+    /// power-name rolls "Way of the Blurring Blade:. +22% [13-25]% Critical Strike Damage". Only fires when
+    /// a [min-max] bracket is present (a genuine rollable). The value is the LAST numeric token before the
+    /// bracket; the name is the surrounding text (pre- + post-bracket) minus that token and a "Name:." prefix.
+    /// Gated to short, single-clause, period-free lines so multi-sentence Imprinted/legendary powers still
+    /// route to PowerText, not Affixes.
+    /// </summary>
+    static Affix? RecoverMidStringAffix(string core, string afterBracket, double? vmin, double? vmax, bool hadBracket)
+    {
+        if (!hadBracket) return null;                       // no [range] => not a rollable affix
+        // Strip a leading "Power Name:." prefix (seal/charm power-name affix lines).
+        var lead = RePowerNamePrefix.Match(core);
+        string body = (lead.Success ? core[lead.Length..] : core).Trim();
+        // SAFE GATE: the value MUST be the leading token. If it isn't, this is a multi-clause power
+        // ("Lucky Hit: Up to a +3.5% Chance to Slow for 2 Seconds …") whose value can't be picked
+        // reliably — leave it for PowerText (the safe pre-change behavior) rather than emit a wrong affix.
+        var lv = ReLeadValue.Match(body);
+        if (!lv.Success || lv.Index != 0 || lv.Length == 0) return null;
+        var value = ToNum(lv.Groups[2].Value);
+        if (value == null) return null;
+        bool isPct = lv.Groups[3].Value == "%";
+        bool isMul = lv.Groups[1].Value == "x" || lv.Groups[4].Success;   // a trailing "[x]" marks a multiplier
+        // Name = the text after the value token + the post-bracket remainder, with the range's unit suffix
+        // ("%", "%[x]"), stray [x]/[+] markers, and any trailing comparison delta removed.
+        string tail = Regex.Replace(afterBracket, @"^\s*%?\s*(\[x\]|\[\+\])?\s*", "", RegexOptions.IgnoreCase);
+        tail = ReCompareDelta.Replace(tail, "").Trim();
+        string name = (body[lv.Length..] + " " + tail).Trim();
+        name = ReMarkerJunk.Replace(name, "");
+        name = ReTrailingClarifier.Replace(name, "").Trim();
+        name = Regex.Replace(name, @"\s+", " ").Trim().Trim('%', '+', '.', ',', ';', ':', ' ');
+        name = ReLeadingConnective.Replace(name, "").Trim();
+        // Reject anything that still carries markup, a sentence boundary, or is too long — route to PowerText.
+        if (name.Length == 0 || name.Length > 40) return null;
+        if (name.IndexOfAny(new[] { '[', ']', '%', '(', ')' }) >= 0) return null;
+        if (name.Contains(". ") || ReWeaponStat.IsMatch(name)) return null;
+        return new Affix { Text = name, Value = value, Min = vmin, Max = vmax, IsPercent = isPct, IsMultiplier = isMul };
     }
 
     static Item ParseBlock(string name, List<string> body)
@@ -186,6 +282,18 @@ public class GearParser
                 item.RunewordName = rw.Groups[2].Value.Trim();
                 item.PowerText.Add(ln); continue;
             }
+            var msk = ReSocket.Match(ln);
+            if (msk.Success) { item.SocketCount = (int?)ToNum(msk.Groups[1].Value); continue; }
+            if (ReEmptySocket.IsMatch(ln)) { item.EmptySockets++; continue; }
+            var mset = ReSetName.Match(ln);
+            if (mset.Success && item.SetName == null)
+            {
+                item.SetName = mset.Groups[1].Value.Trim();
+                item.SetActive = (int?)ToNum(mset.Groups[2].Value);
+                item.SetTotal = (int?)ToNum(mset.Groups[3].Value);
+                item.PowerText.Add(ln);   // keep the bonus text discoverable like other PowerText
+                continue;
+            }
             var af = ParseAffix(ln);
             if (af != null) { item.Affixes.Add(af); continue; }
             if (ln.Any(char.IsLower) && ln.Length > 8) item.PowerText.Add(ln);
@@ -198,7 +306,11 @@ public class GearParser
     {
         if (it == null) return false;
         if (it.ItemPower != null) return true;
-        if (it.Slot is "seal" or "charm" or "rune") return it.Rarity != null;   // Season 8: no Item Power line
+        // Season 8 seals/charms/runes have no Item Power line. They also may carry NO rarity word —
+        // a Set Charm voices only its type ("Set Charm") + affixes, so gating on Rarity discarded the
+        // equipped charm (e.g. PHOBA OF MASTERY) and left every charm slot empty in the diff. The TypeSlot
+        // pass already classified the item from its type line, so trust ItemType instead of Rarity here.
+        if (it.Slot is "seal" or "charm" or "rune") return it.ItemType != null;
         return it.Rarity != null && it.Affixes.Count > 0;
     }
 
@@ -228,6 +340,7 @@ public class GearParser
     bool _seenSlotHeader, _blockFromCharPanel;
     string? _currentSlotHeader;   // most recent character-panel slot header
     int _blockSlotPosition;       // 1-based position within a multi-slot category (rings, weapons)
+    DateTimeOffset? _lastLogTime; // '[ISO]' time of the most recently fed line — the block's hover time
 
     // D4 character-panel slot headers — voiced when the player opens the character sheet.
     // If one of these immediately precedes an EQUIPPED block it confirms the item is definitively worn.
@@ -258,7 +371,8 @@ public class GearParser
     /// <summary>Feed one raw log line; returns a completed Item when a tooltip block ends (else null).</summary>
     public Item? Feed(string raw)
     {
-        var ln = Clean(raw);
+        var ln = CleanWithTime(raw, out var lineTime);
+        if (lineTime != null) _lastLogTime = lineTime;   // remember the block's true hover time for stamping
         if (ln.Length == 0) return null;
         // Slot headers confirm character panel; track position for multi-slot categories (Ring, weapon)
         if (SlotHeaders.Contains(ln))
@@ -281,6 +395,7 @@ public class GearParser
             _name = null; _body = new(); _equip = false; _blockEquip = false;
             _seenSlotHeader = false; _blockFromCharPanel = false; _currentSlotHeader = null;
             _blockSlotPosition = 0; _slotPositionCounts.Clear();
+            _lastLogTime = null;   // a new session starts fresh — don't inherit the prior session's stamp
             return null;
         }
         if (ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) { _equip = true; return null; }
@@ -296,6 +411,7 @@ public class GearParser
             var item = ParseBlock(_name, _body);
             item.Equipped = _blockEquip;
             item.FromCharPanel = _blockFromCharPanel;
+            item.LogTimeUtc = _lastLogTime;           // true hover time from the line's '[ISO]' prefix (null if un-stamped)
             item.SlotPosition = _blockSlotPosition;   // 1-based: ring:1 / ring:2, weapon:1 / weapon:2 / weapon:3
             _name = null; _body = new(); _blockEquip = false; _blockFromCharPanel = false; _blockSlotPosition = 0;
             return LooksLikeItem(item) ? item : null;   // drop menu/map noise

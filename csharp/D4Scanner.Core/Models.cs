@@ -47,10 +47,24 @@ public class Item
     public List<string> SocketedRunes { get; set; } = new();
     /// <summary>Runeword name if a complete runeword is active, e.g. "Graceful Heart of the Oak".</summary>
     public string? RunewordName { get; set; }
+    /// <summary>Total socket capacity from a bare "Socket (N)" line (comparison/bag view). Null = no socket line seen.</summary>
+    public int? SocketCount { get; set; }
+    /// <summary>Number of unfilled sockets — one per "Empty Socket" line in the tooltip.</summary>
+    public int EmptySockets { get; set; }
+    /// <summary>Set name from a Set Charm bonus header, e.g. "Mastery" / "Way of the Blurring Blade".</summary>
+    public string? SetName { get; set; }
+    /// <summary>Set pieces currently equipped (the "active" in "Mastery (0/2)").</summary>
+    public int? SetActive { get; set; }
+    /// <summary>Total pieces in the set (the "total" in "Mastery (0/2)").</summary>
+    public int? SetTotal { get; set; }
     /// <summary>Positional slot within a multi-slot category (1-based), e.g. 1 or 2 for rings. 0 = unknown.</summary>
     public int SlotPosition { get; set; }
     /// <summary>UTC ticks when this item was last scanned from the TTS log.</summary>
     public long LastScannedTicks { get; set; }
+    /// <summary>UTC time parsed from the log line's '[ISO]' prefix (set by the shim) — the TRUE time the
+    /// item was hovered in-game, not the time the line was replayed at app launch. Null when the line had
+    /// no timestamp prefix (older shim / un-prefixed fixtures); callers fall back to the system clock.</summary>
+    public DateTimeOffset? LogTimeUtc { get; set; }
     public ItemSource Source { get; set; }   // Tts (default/zero) or Ocr
 }
 
@@ -249,6 +263,9 @@ public class Group
     public string? WantAspect { get; set; }           // aspect the build wants in this slot
     public List<string> WantSockets { get; set; } = new();   // gems/runes the build wants socketed here
     public List<string> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
+    /// <summary>Live socket fill summary for this slot, e.g. "1/2 filled (1 empty)"; null when target wants none.</summary>
+    public string? SocketStatus { get; set; }
+    public bool SocketsDone { get; set; }                    // all wanted sockets filled (no empties / runeword present)
 }
 
 public class Category

@@ -242,6 +242,26 @@ public static class DiffEngine
                 grp.Extras = extras;
                 grp.WantAspect = g.Aspect;
                 grp.WantSockets = g.Sockets;
+                // Socket HAVE/NEED — only when the target actually wants sockets here (zero-risk for non-socket slots).
+                if (g.Sockets.Count > 0)
+                {
+                    int want = g.Sockets.Count;
+                    // filled count: a captured runeword/socketed rune counts as filled; otherwise derive from
+                    // total capacity minus the empties the tooltip voiced. Clamp to >= 0.
+                    int? cap = it?.SocketCount;
+                    int empty = it?.EmptySockets ?? 0;
+                    bool hasRune = !string.IsNullOrEmpty(it?.RunewordName) || (it?.SocketedRunes.Count > 0);
+                    int filled = cap != null ? Math.Max(0, cap.Value - empty)
+                               : hasRune ? want                         // runeword present, no bare socket line
+                               : (it != null ? Math.Max(0, want - empty) : 0);
+                    bool done = it != null && empty == 0 && (cap == null ? hasRune : filled >= cap.Value) && filled >= want;
+                    grp.SocketsDone = done;
+                    grp.SocketStatus = it == null
+                        ? $"0/{want} filled (item not detected)"
+                        : (cap != null
+                            ? $"{filled}/{cap.Value} filled" + (empty > 0 ? $" ({empty} empty)" : "")
+                            : hasRune ? $"{want}/{want} filled (runeword)" : $"{Math.Max(0, want - empty)}/{want} filled" + (empty > 0 ? $" ({empty} empty)" : ""));
+                }
 
                 // upgrade-finding: non-equipped items of this slot that meet MORE target affixes
                 int eqMet = items.Count(x => x.Status == "met");

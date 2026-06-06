@@ -46,6 +46,11 @@ public sealed class LogWatcher : IDisposable
         ["Gems"]       = "Gems",       ["Uniques"] = "Stash",
     };
 
+    // Rarity words mirror GearParser.Rarities — a cleaned line equal to one of these (whole-line) is a
+    // tooltip-shaped line even when the rest of the pipeline produced nothing.
+    static readonly HashSet<string> RarityWords = new(StringComparer.OrdinalIgnoreCase)
+        { "Mythic Unique", "Mythic", "Unique", "Legendary", "Rare", "Magic", "Common" };
+
     public LiveBuild Build { get; private set; } = new();
     public event Action<LiveBuild>? Updated;
     /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
@@ -87,6 +92,10 @@ public sealed class LogWatcher : IDisposable
             {
                 // Panel state machine: update current panel from navigation lines
                 var rawLine = GearParser.Clean(lines[i]);
+                // New shim session appended to the same file: drop the prior session's accumulated gear so a
+                // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
+                if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
+                { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; }
                 if (PanelMarkers.TryGetValue(rawLine, out var panel))
                 {
                     var prev = _currentPanel;
@@ -104,7 +113,9 @@ public sealed class LogWatcher : IDisposable
                 if (item == null) continue;
                 item.Source = ItemSource.Tts;
                 item.UiPanel = _currentPanel;
-                item.LastScannedTicks = DateTime.UtcNow.Ticks;   // attach the active panel to the item for richer context
+                // Prefer the TRUE hover time from the line's '[ISO]' prefix so a replayed old loadout isn't
+                // stamped 'now' at launch; fall back to the system clock only when the line was un-stamped.
+                item.LastScannedTicks = (item.LogTimeUtc?.UtcTicks) ?? DateTime.UtcNow.Ticks;
                 ClassifyContext(item, lines, i, lines.Length - 1);
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
                 if (item.Slot is "charm" or "seal" or "rune") { /* Season 8 items routed to dedicated collections in Build */ }
@@ -261,6 +272,8 @@ public sealed class LogWatcher : IDisposable
         var allLines = File.ReadAllLines(path);
         for (int i = 0; i < allLines.Length; i++)
         {
+            // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
+            if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
             ClassifyContext(item, allLines, i, allLines.Length);
@@ -303,6 +316,10 @@ public sealed class LogWatcher : IDisposable
         {
             var clean = GearParser.Clean(allLines[i]);
             if (clean.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase)) rep.SessionMarkers++;
+            if (clean.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) rep.EquippedTokens++;
+            bool isItemPower = clean.Contains("Item Power", StringComparison.OrdinalIgnoreCase);
+            if (isItemPower) rep.ItemPowerLines++;
+            if (isItemPower || RarityWords.Contains(clean)) rep.TooltipShapedLines++;
             if (PanelMarkers.TryGetValue(clean, out var panel))
             {
                 var prev = currentPanel;
@@ -342,8 +359,48 @@ public sealed class LogWatcher : IDisposable
                     : $"superseded — a newer scan of '{it.Slot}' replaced it",
             });
         }
+        rep.CompletedBlocks = rep.Items.Count;
+        AssignHealth(rep);
         return rep;
     }
+
+    /// <summary>Derive the capture-health verdict from the raw + parsed signal counts. Kept in Core so it
+    /// is unit-tested; the App only color-codes <see cref="TtsDiagReport.Health"/> into a banner.</summary>
+    static void AssignHealth(TtsDiagReport rep)
+    {
+        const int TooltipFloor = 8;   // a few stray rarity words shouldn't trip the warning; a real sweep clears this
+        if (rep.TotalLines == 0)
+        {
+            rep.Health = CaptureHealth.NoData;
+            rep.HealthSummary = "No log data — TTS capture hasn't written anything yet.";
+        }
+        else if (rep.CompletedBlocks > 0)
+        {
+            rep.Health = CaptureHealth.Healthy;
+            rep.HealthSummary = $"Looks healthy — {rep.CompletedBlocks} item(s) parsed, {rep.EquippedTokens} EQUIPPED token(s), {rep.FinalEquipped.Count} displayed.";
+        }
+        else if (rep.TooltipShapedLines >= TooltipFloor)
+        {
+            // Tooltip-shaped lines flowing in but NOTHING parsed (even with EQUIPPED tokens) is the strong
+            // signal that a season string change broke the parser — not just "panel not opened yet".
+            rep.Health = CaptureHealth.Warning;
+            rep.HealthSummary = $"WARNING: {rep.TooltipShapedLines} tooltip-shaped lines but 0 parsed items — the TTS format may have changed.";
+        }
+        else
+        {
+            rep.Health = CaptureHealth.NoPanel;
+            rep.HealthSummary = "No character panel opened yet — open D4's character sheet (press C) and hover your gear.";
+        }
+    }
+}
+
+/// <summary>Capture-health verdict for the TTS pipeline, derived in <see cref="LogWatcher.DiagnoseLines"/>.</summary>
+public enum CaptureHealth
+{
+    NoData,    // log empty or missing — nothing to judge
+    NoPanel,   // pipeline quiet AND no tooltip shapes — user just hasn't opened the character sheet
+    Healthy,   // tooltip shapes present and the pipeline parsed items
+    Warning,   // tooltip shapes present but 0 parsed items — format likely changed (even if EQUIPPED tokens appeared)
 }
 
 /// <summary>One parsed item with its full classification trail, for the TTS diagnostics view.</summary>
@@ -372,6 +429,12 @@ public sealed class TtsDiagReport
     public DateTime LastModifiedUtc { get; set; }
     public int TotalLines { get; set; }
     public int SessionMarkers { get; set; }
+    public int TooltipShapedLines { get; set; }   // cleaned lines that are a rarity word or contain "Item Power"
+    public int ItemPowerLines { get; set; }        // cleaned lines containing "Item Power"
+    public int EquippedTokens { get; set; }        // standalone "EQUIPPED" lines (block-equip markers)
+    public int CompletedBlocks { get; set; }       // tooltip blocks that parsed into an Item (== Items.Count)
+    public CaptureHealth Health { get; set; }      // overall capture-health verdict
+    public string HealthSummary { get; set; } = "";// one-line human-readable verdict for the banner
     public List<string> RawTail { get; set; } = new();
     public List<TtsDiagItem> Items { get; set; } = new();   // every parsed item, in file order
     public List<Item> FinalEquipped { get; set; } = new();  // what the app would display
