@@ -15,7 +15,6 @@ public class Affix
     public double? Max { get; set; }
     public bool IsPercent { get; set; }
     public bool IsMultiplier { get; set; }
-    public bool IsGreater { get; set; }
 }
 
 public class Item

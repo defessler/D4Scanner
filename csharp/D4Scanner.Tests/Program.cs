@@ -382,7 +382,119 @@ if (File.Exists(rogueLog))
     var boots = g.First(x => x.Name.Contains("Adventurer"));
     Check("Rogue: boots keep the real 'Resistance to All Elements' affix",
         boots.Affixes.Any(a => a.Text.Contains("Resistance to All Elements", StringComparison.OrdinalIgnoreCase)));
+
+    // (C) Etna main-hand dagger voices "25 ( +25) Quality" — null before the ReQuality fix, must now be 25.
+    var etna = g.First(x => x.Name.Contains("Etna") && x.Slot == "weapon");
+    Check("Rogue: Etna dagger Quality parsed from '25 ( +25)' form", etna.Quality == 25);
+    // (B) "+176 Dexterity +[125 - 149]" -> 'Dexterity' (dangling '+' stripped), not 'Dexterity +'.
+    Check("Rogue: Etna dagger has a clean 'Dexterity' affix (trailing '+' stripped)",
+        etna.Affixes.Any(a => a.Text.Equals("Dexterity", StringComparison.Ordinal)));
+    Check("Rogue: no affix text retains a dangling '+'",
+        g.All(x => x.Affixes.All(a => !a.Text.EndsWith("+") && a.Text.Trim() == a.Text)));
+    // (B) "+231 Life on Kill +[219 - 263]" -> 'Life on Kill', never 'Life on Kill +'.
+    Check("Rogue: 'Life on Kill' affix parsed without trailing '+'",
+        g.Any(x => x.Affixes.Any(a => a.Text.Equals("Life on Kill", StringComparison.Ordinal))) &&
+        g.All(x => !x.Affixes.Any(a => a.Text.Equals("Life on Kill +", StringComparison.Ordinal))));
+    // weapon de-dup bound to REAL fixture names (this Rogue's actual bow/sword/dagger), not just synthetic strings.
+    var liveWeaponNames = LiveGearResolver.BuildShownWeaponNameSet(g.Where(x => x.Slot == "weapon").Select(x => x.Name));
+    Check("Rogue: weapon-dedup hides the actual equipped Etna dagger by name",
+        LiveGearResolver.ShouldHideDuplicateWeapon(liveWeaponNames, "Etna's Lost Dagger"));
+    Check("Rogue: weapon-dedup keeps a weapon not in the loadout",
+        !LiveGearResolver.ShouldHideDuplicateWeapon(liveWeaponNames, "Doombringer"));
 }
+
+// ---- ReQuality: paren-single-number Quality form + bare-Quality guard (no fixture needed) ----
+var qParen1 = GearParser.ParseTooltipLines(new[] {
+    "SOME UNIQUE BLADE", "Unique Dagger", "850 Item Power", "25 ( +25) Quality", "+100 Dexterity [80 - 120]" });
+Check("ReQuality fix: paren single-number '25 ( +25) Quality' parsed", qParen1 != null);
+Check("ReQuality fix: item.Quality == 25 (paren, no slash)", qParen1?.Quality == 25);
+var qBare = GearParser.ParseTooltipLines(new[] {
+    "PLAIN ITEM", "Legendary Ring", "800 Item Power", "50 Quality", "+200 Maximum Life [150 - 250]" });
+Check("ReQuality: bare '50 Quality' still parses (non-regression guard, pre-existing branch)", qBare?.Quality == 50);
+// ReAffixTrailJunk must NOT over-strip: a normal multi-word affix is left byte-identical.
+var cleanAff = GearParser.ParseTooltipLines(new[] {
+    "GUARD ITEM", "Legendary Ring", "800 Item Power", "+100 Critical Strike Chance [80 - 120]" });
+Check("Trailing strip: a normal affix keeps its exact text (no over-strip)",
+    cleanAff != null && cleanAff.Affixes.Any(a => a.Text == "Critical Strike Chance"));
+
+// ---- LiveGearResolver.Merge (extracted MergeGear) + weapon de-dup decision ----
+Item MkGear(string name, string slot, ItemSource src) => new Item { Name = name, Slot = slot, Source = src };
+// empty fresh returns the persisted list unchanged (reference-identical) — callers rely on no defensive copy.
+{
+    var persisted = new List<Item> { MkGear("Helm-T", "Helm", ItemSource.Tts) };
+    var merged = LiveGearResolver.Merge(persisted, new List<Item>());
+    Check("Merge: empty fresh returns persisted (reference)", ReferenceEquals(persisted, merged));
+}
+// fresh Tts replaces a persisted item for the same slot base.
+{
+    var persisted = new List<Item> { MkGear("OldHelm", "Helm", ItemSource.Tts) };
+    var fresh     = new List<Item> { MkGear("NewHelm", "Helm", ItemSource.Tts) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: fresh-Tts replaces persisted (count)", 1, merged.Count);
+    Eq("Merge: fresh-Tts replaces persisted (name)", "NewHelm", merged[0].Name);
+}
+// fresh Ocr does NOT replace a persisted Tts for the same slot base — Tts is kept.
+{
+    var persisted = new List<Item> { MkGear("TtsHelm", "Helm", ItemSource.Tts) };
+    var fresh     = new List<Item> { MkGear("OcrHelm", "Helm", ItemSource.Ocr) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: fresh-Ocr does NOT replace persisted-Tts (count)", 1, merged.Count);
+    Eq("Merge: fresh-Ocr does NOT replace persisted-Tts (kept Tts name)", "TtsHelm", merged[0].Name);
+    Check("Merge: kept item is the Tts one", merged[0].Source == ItemSource.Tts);
+}
+// a fresh batch with BOTH Tts and Ocr for a slot: whole fresh group wins over persisted-Tts.
+{
+    var persisted = new List<Item> { MkGear("TtsHelm", "Helm", ItemSource.Tts) };
+    var fresh     = new List<Item> { MkGear("FreshTtsHelm", "Helm", ItemSource.Tts), MkGear("FreshOcrHelm", "Helm", ItemSource.Ocr) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: fresh batch with a Tts wins over persisted-Tts (count)", 2, merged.Count);
+    Check("Merge: fresh batch with a Tts replaced persisted", merged.All(i => i.Name.StartsWith("Fresh")));
+}
+// fresh Ocr replaces a persisted Ocr (no Tts conflict -> fresh wins).
+{
+    var persisted = new List<Item> { MkGear("OldOcrHelm", "Helm", ItemSource.Ocr) };
+    var fresh     = new List<Item> { MkGear("NewOcrHelm", "Helm", ItemSource.Ocr) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: fresh-Ocr replaces persisted-Ocr (count)", 1, merged.Count);
+    Eq("Merge: fresh-Ocr replaces persisted-Ocr (name)", "NewOcrHelm", merged[0].Name);
+}
+// fresh Tts UPGRADES a slot that previously held only Ocr — the central 'Tts wins' direction.
+{
+    var persisted = new List<Item> { MkGear("StaleOcrHelm", "Helm", ItemSource.Ocr) };
+    var fresh     = new List<Item> { MkGear("FreshTtsHelm", "Helm", ItemSource.Tts) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: fresh-Tts upgrades a persisted-Ocr slot", "FreshTtsHelm", merged[0].Name);
+    Check("Merge: upgraded item is Tts", merged[0].Source == ItemSource.Tts);
+}
+// untouched slots preserved: fresh only touches Helm, persisted Chest survives.
+{
+    var persisted = new List<Item> { MkGear("ChestT", "Chest", ItemSource.Tts), MkGear("HelmT", "Helm", ItemSource.Tts) };
+    var fresh     = new List<Item> { MkGear("NewHelm", "Helm", ItemSource.Tts) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: untouched slot preserved (count)", 2, merged.Count);
+    Check("Merge: untouched Chest preserved", merged.Any(i => i.Name == "ChestT" && i.Source == ItemSource.Tts));
+    Check("Merge: touched Helm updated", merged.Any(i => i.Name == "NewHelm"));
+    Check("Merge: stale Helm removed", !merged.Any(i => i.Name == "HelmT"));
+}
+// slot base-name normalization: 'Ring #1' and 'Ring 2' share base 'ring'; fresh-Ocr ring must not replace persisted-Tts ring.
+{
+    var persisted = new List<Item> { MkGear("TtsRing", "Ring #1", ItemSource.Tts) };
+    var fresh     = new List<Item> { MkGear("OcrRing", "Ring 2", ItemSource.Ocr) };
+    var merged = LiveGearResolver.Merge(persisted, fresh);
+    Eq("Merge: ring base-name Ocr does NOT replace persisted-Tts (count)", 1, merged.Count);
+    Eq("Merge: ring base-name kept the Tts name", "TtsRing", merged[0].Name);
+}
+// weapon de-dup decision (paper-doll: same unique weapon must not render twice)
+var shownWeapons = LiveGearResolver.BuildShownWeaponNameSet(new[] { "Etna's Lost Dagger", "Word of Hakan", "", null });
+Eq("BuildShownWeaponNameSet skips null/empty", 2, shownWeapons.Count);
+Check("BuildShownWeaponNameSet is case-insensitive", shownWeapons.Contains("etna's lost dagger"));
+Check("ShouldHideDuplicateWeapon hides an already-shown weapon", LiveGearResolver.ShouldHideDuplicateWeapon(shownWeapons, "Etna's Lost Dagger"));
+Check("ShouldHideDuplicateWeapon keeps a distinct weapon", !LiveGearResolver.ShouldHideDuplicateWeapon(shownWeapons, "Doombringer"));
+Check("ShouldHideDuplicateWeapon is case-insensitive", LiveGearResolver.ShouldHideDuplicateWeapon(shownWeapons, "ETNA'S LOST DAGGER"));
+Check("ShouldHideDuplicateWeapon null candidate is false", !LiveGearResolver.ShouldHideDuplicateWeapon(shownWeapons, null));
+Check("ShouldHideDuplicateWeapon empty candidate is false", !LiveGearResolver.ShouldHideDuplicateWeapon(shownWeapons, ""));
+Check("ShouldHideDuplicateWeapon works on a plain list (case-insensitive)", LiveGearResolver.ShouldHideDuplicateWeapon(new List<string> { "Word of Hakan" }, "word of hakan"));
+Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHideDuplicateWeapon(new HashSet<string>(), "Doombringer"));
 
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");

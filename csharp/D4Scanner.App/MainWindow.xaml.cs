@@ -724,28 +724,10 @@ public partial class MainWindow : Window
 
     // Merge fresh scan results into the persisted live state. Tts items win over Ocr items per slot:
     // if the incoming batch has only Ocr for a slot where persisted has a Tts item, keep the Tts item.
-    static List<Item> MergeGear(List<Item> persisted, List<Item> fresh)
-    {
-        if (fresh.Count == 0) return persisted;
-        var freshBySlot = fresh
-            .GroupBy(it => DiffEngine.SlotBaseName(it.Slot ?? ""), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var result = new List<Item>();
-        var handledSlots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kv in freshBySlot)
-        {
-            bool hasTtsFresh = kv.Value.Any(it => it.Source == ItemSource.Tts);
-            var persistedForSlot = persisted.Where(it => DiffEngine.SlotBaseName(it.Slot ?? "") == kv.Key).ToList();
-            bool hasTtsPersisted = persistedForSlot.Any(it => it.Source == ItemSource.Tts);
-            if (!hasTtsFresh && hasTtsPersisted)
-                result.AddRange(persistedForSlot);  // keep existing Tts, ignore incoming Ocr
-            else
-                result.AddRange(kv.Value);          // fresh wins (Tts fresh, or no Tts conflict)
-            handledSlots.Add(kv.Key);
-        }
-        result.AddRange(persisted.Where(it => !handledSlots.Contains(DiffEngine.SlotBaseName(it.Slot ?? ""))));
-        return result;
-    }
+    // Merge fresh scan results into the persisted live state. Tts items win over Ocr items per slot.
+    // Logic lives in D4Scanner.Core.LiveGearResolver (UI-free + headlessly tested); thin wrapper so
+    // the call sites stay untouched.
+    static List<Item> MergeGear(List<Item> persisted, List<Item> fresh) => LiveGearResolver.Merge(persisted, fresh);
 
     void PickLog()
     {
@@ -2637,10 +2619,11 @@ public partial class MainWindow : Window
 
         // weapons (+ offhand) sit across the bottom, matching the in-game character screen.
         // Pre-compute live item names already shown by gear: sections so we can skip uni: duplicates.
-        var shownWeaponLiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var s in gear.Where(x => x.Key.StartsWith("gear:") && SlotKey(x.Label) is "weapon" or "offhand"))
-            foreach (var li in s.Gear?.LiveItems ?? new())
-                if (!string.IsNullOrEmpty(li.Name)) shownWeaponLiveNames.Add(li.Name);
+        // De-dup policy (case-insensitive, skip empty) lives in Core; UI supplies the names off its Sections.
+        var shownWeaponLiveNames = LiveGearResolver.BuildShownWeaponNameSet(
+            gear.Where(x => x.Key.StartsWith("gear:") && SlotKey(x.Label) is "weapon" or "offhand")
+                .SelectMany(s => s.Gear?.LiveItems ?? new())
+                .Select(li => li.Name));
 
         var weaponsRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
         void PlaceWeapons(string[] order)
@@ -2651,7 +2634,7 @@ public partial class MainWindow : Window
                     // Skip a uni: section if the same live weapon is already shown via a gear: section.
                     // "Etna's Lost Dagger" appears as both gear:N (Sword) and uni:etna... — only show once.
                     if (s.Key.StartsWith("uni:") && s.Gear?.LiveItems.Count > 0
-                        && shownWeaponLiveNames.Contains(s.Gear.LiveItems[0].Name))
+                        && LiveGearResolver.ShouldHideDuplicateWeapon(shownWeaponLiveNames, s.Gear.LiveItems[0].Name))
                     { used.Add(s); continue; }
                     weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s);
                 }

@@ -35,11 +35,16 @@ public class GearParser
     static readonly Regex ReDps = new(@"([\d,]+(?:\.\d+)?)\s+Damage Per Second", RegexOptions.IgnoreCase);
     static readonly Regex ReMasterwork = new(@"Masterwork[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     // Season 8 Quality: "50 (+50/25) Quality" or "50 +50/25 Quality" — current score, optional bonus/max
-    static readonly Regex ReQuality = new(@"^(\d+)\s*(?:[+-]?\d+/\d+|\(\s*[+-]?\d+/\d+\s*\))?\s+Quality", RegexOptions.IgnoreCase);
+    static readonly Regex ReQuality = new(@"^(\d+)\s*(?:\(\s*[+-]?\d+(?:/\d+)?\s*\)|[+-]?\d+(?:/\d+)?)?\s+Quality", RegexOptions.IgnoreCase);
     static readonly Regex ReTemper = new(@"Tempers?[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReReqLevel = new(@"Requires Level\s+(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReBracket = new(@"\[\s*([\d,.]+)\s*%?\s*(?:-\s*([\d,.]+)\s*%?\s*)?\]");
     static readonly Regex ReAffix = new(@"^\s*([+x]?)\s*([\d,.]+)\s*(%?)\s+(.+?)\s*$");
+    // S8 core-stat affixes voice the value twice: "+109 Dexterity +[83 - 99]". After the [range] is
+    // stripped, a dangling '+' (and any stray trailing punctuation/space) is left on the affix text.
+    // NOTE: applied in ParseAffix BEFORE the weapon-implicit/summary-total filters, which rely on the
+    // sign+range guard — don't reorder the strip after them or a rolled summary affix could be dropped.
+    static readonly Regex ReAffixTrailJunk = new(@"[+\s.,;:]+$");
     static readonly Regex ReNameMarker = new(@"^\s*(EQUIPPED|\[FAVORITED ITEM\]\.?|\[.*?\]\.?)\s*", RegexOptions.IgnoreCase);
     static readonly Regex ReImprinted = new(@"^Imprinted:\s*(.+)", RegexOptions.IgnoreCase);
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
@@ -128,6 +133,7 @@ public class GearParser
         var m = ReAffix.Match(core);
         if (!m.Success) return null;
         string sign = m.Groups[1].Value, num = m.Groups[2].Value, pct = m.Groups[3].Value, text = m.Groups[4].Value.Trim();
+        text = ReAffixTrailJunk.Replace(text, "").Trim();   // strip dangling '+' / stray trailing punctuation (S8 "+109 Dexterity +[..]")
         var value = ToNum(num);
         if (value == null || text.Length == 0 || text.Equals("Item Power", StringComparison.OrdinalIgnoreCase)) return null;
         // Drop weapon implicits outright, and tooltip summary totals when in their bare (no sign, no range) form.
@@ -136,7 +142,7 @@ public class GearParser
         return new Affix
         {
             Text = text, Value = value, Min = vmin, Max = vmax,
-            IsPercent = pct == "%", IsMultiplier = sign == "x", IsGreater = !rng.Success,
+            IsPercent = pct == "%", IsMultiplier = sign == "x",
         };
     }
 
