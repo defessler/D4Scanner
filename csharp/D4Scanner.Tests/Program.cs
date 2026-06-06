@@ -363,6 +363,25 @@ if (File.Exists(rogueLog))
     Check("Rogue: gloves captured", g.Any(x => x.Name.Contains("Vambraces") && x.Slot == "gloves"));
     Check("Rogue: chest captured", g.Any(x => x.Name.Contains("Boneweave") && x.Slot == "chest"));
     Check("Rogue: boots captured", g.Any(x => x.Name.Contains("Adventurer") && x.Slot == "boots"));
+
+    // stat-line noise filter: weapon implicits + bare summary totals must NOT become affixes,
+    // while real affixes of similar names survive (regression guard against over-filtering).
+    var bow = g.First(x => x.Name.Contains("Mammalbane"));
+    Check("Rogue: bow drops the Weapon Damage implicit",
+        !bow.Affixes.Any(a => a.Text.Equals("Weapon Damage", StringComparison.OrdinalIgnoreCase)));
+    Check("Rogue: bow drops the Attacks per Second stat",
+        !bow.Affixes.Any(a => a.Text.Contains("Attacks per Second", StringComparison.OrdinalIgnoreCase)));
+    var chest = g.First(x => x.Name.Contains("Boneweave"));
+    Eq("Rogue: chest keeps exactly one Armor affix (summary total dropped)",
+        1, chest.Affixes.Count(a => a.Text.Equals("Armor", StringComparison.OrdinalIgnoreCase)));
+    Check("Rogue: chest's surviving Armor affix is the rolled one (has a range)",
+        chest.Affixes.First(a => a.Text.Equals("Armor", StringComparison.OrdinalIgnoreCase)).Min != null);
+    var amulet = g.First(x => x.Name.Contains("Wildbolt"));
+    Check("Rogue: amulet drops the bare 'All Resist' summary",
+        !amulet.Affixes.Any(a => a.Text.Equals("All Resist", StringComparison.OrdinalIgnoreCase)));
+    var boots = g.First(x => x.Name.Contains("Adventurer"));
+    Check("Rogue: boots keep the real 'Resistance to All Elements' affix",
+        boots.Affixes.Any(a => a.Text.Contains("Resistance to All Elements", StringComparison.OrdinalIgnoreCase)));
 }
 
 // ---- report ----

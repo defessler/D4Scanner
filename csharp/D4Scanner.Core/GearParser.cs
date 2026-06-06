@@ -48,6 +48,12 @@ public class GearParser
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
     // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
     static readonly Regex ReRuneword = new(@"^([A-Z][a-zA-Z]{1,8})\s*\(\d+/\d+\)\s*-\s*(.+)", RegexOptions.None);
+    // Weapon implicit stats (base damage / attack speed) — voiced like affixes but never rollable or
+    // wanted. Dropped so a target "Damage" can't false-match a weapon's "Weapon Damage" implicit.
+    static readonly Regex ReWeaponStat = new(@"^(Weapon Damage|Attacks? per Second|Damage per Hit)\b", RegexOptions.IgnoreCase);
+    // Tooltip summary totals ("2,805 Armor", "157 All Resist"): the real rolled affix of the same name
+    // carries a + sign and a [range]; the bare summary form (no sign, no range) is a derived total.
+    static readonly Regex ReSummaryStat = new(@"^(Armor|All Resist(ance)?)$", RegexOptions.IgnoreCase);
 
     public static string Clean(string s)
     {
@@ -124,6 +130,9 @@ public class GearParser
         string sign = m.Groups[1].Value, num = m.Groups[2].Value, pct = m.Groups[3].Value, text = m.Groups[4].Value.Trim();
         var value = ToNum(num);
         if (value == null || text.Length == 0 || text.Equals("Item Power", StringComparison.OrdinalIgnoreCase)) return null;
+        // Drop weapon implicits outright, and tooltip summary totals when in their bare (no sign, no range) form.
+        if (ReWeaponStat.IsMatch(text)) return null;
+        if (sign.Length == 0 && !rng.Success && ReSummaryStat.IsMatch(text)) return null;
         return new Affix
         {
             Text = text, Value = value, Min = vmin, Max = vmax,
