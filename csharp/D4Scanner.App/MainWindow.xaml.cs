@@ -1717,6 +1717,14 @@ public partial class MainWindow : Window
         DockPanel.SetDock(openLogBtn, Dock.Left); logRow.Children.Add(openLogBtn);
         DockPanel.SetDock(openAppLogBtn, Dock.Left); logRow.Children.Add(openAppLogBtn);
         sp.Children.Add(logRow);
+        var diagRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var diagBtn = new Button { Content = "🩺 Diagnose capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
+        diagBtn.Click += (_, _) => ShowTtsDiagnostics();
+        DockPanel.SetDock(diagBtn, Dock.Left); diagRow.Children.Add(diagBtn);
+        var diagHint = TB("See exactly what TTS parsed, how each item was classified, and why anything was dropped.", Faint, 11, false);
+        diagHint.TextWrapping = TextWrapping.Wrap; diagHint.VerticalAlignment = VerticalAlignment.Center; diagHint.Margin = new Thickness(12, 0, 0, 0);
+        diagRow.Children.Add(diagHint);
+        sp.Children.Add(diagRow);
         var logPathRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
         var logPathLbl = TB(System.IO.Path.GetFileName(_log), Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(logPathLbl, Dock.Left); logPathRow.Children.Add(logPathLbl);
@@ -1806,6 +1814,126 @@ public partial class MainWindow : Window
     }
 
     static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
+
+    // ---- TTS capture diagnostics ----
+    // Re-runs the full parse → classify → dedup pipeline over the live log and shows every stage,
+    // so "the log has data but items don't update" becomes a self-diagnosable, screenshot-free report.
+    void ShowTtsDiagnostics()
+    {
+        SettingsHost.Children.Clear();
+        var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)) };
+        backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        SettingsHost.Children.Add(backdrop);
+        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
+
+        var rep = LogWatcher.Diagnose(_log);
+        var sp = new StackPanel();
+
+        void Hdr(string title) => sp.Children.Add(new Border
+        {
+            BorderBrush = Edge, BorderThickness = new Thickness(0, 0, 0, 1),
+            Margin = new Thickness(0, 16, 0, 10), Padding = new Thickness(0, 0, 0, 4), Child = TB(title, Faint, 10, true),
+        });
+        static string Rel(DateTime utc)
+        {
+            var ts = DateTime.UtcNow - utc;
+            if (ts.TotalSeconds < 60) return $"{(int)ts.TotalSeconds}s ago";
+            if (ts.TotalMinutes < 60) return $"{(int)ts.TotalMinutes}m ago";
+            if (ts.TotalHours   < 24) return $"{(int)ts.TotalHours}h ago";
+            return $"{(int)ts.TotalDays}d ago";
+        }
+
+        // ── header ──
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
+        var xb = new Border { Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand };
+        xb.MouseLeftButtonUp += (_, _) => Close();
+        xb.MouseEnter += (_, _) => xb.Background = B("#2A2430");
+        xb.MouseLeave += (_, _) => xb.Background = System.Windows.Media.Brushes.Transparent;
+        DockPanel.SetDock(xb, Dock.Right); hd.Children.Add(xb);
+        var titleSp = new StackPanel { Orientation = Orientation.Horizontal };
+        titleSp.Children.Add(TB("🩺 ", Gold, 16, true));
+        titleSp.Children.Add(TBs("TTS capture diagnostics", Ink, 17, true));
+        hd.Children.Add(titleSp);
+        sp.Children.Add(hd);
+
+        // ── status ──
+        bool watching = _useTts && _watcher != null;
+        string rel = rep.LogExists ? Rel(rep.LastModifiedUtc) : "—";
+        sp.Children.Add(TB((watching ? "● Watching" : "○ Not watching")
+            + $"     last write {rel}     {rep.TotalLines:#,0} lines     {rep.SessionMarkers} session(s)",
+            watching ? Green : Faint, 12, false));
+        var pathLine = TB(rep.LogExists ? rep.LogPath : rep.LogPath + "   (not found)", Faint, 10.5, false);
+        pathLine.TextWrapping = TextWrapping.Wrap; pathLine.Margin = new Thickness(0, 2, 0, 12);
+        sp.Children.Add(pathLine);
+
+        int eq = rep.Items.Count(i => i.Equipped);
+        sp.Children.Add(TBs($"Parsed {rep.Items.Count}   →   {eq} equipped   →   {rep.FinalEquipped.Count} displayed", Ink, 13.5, true, new Thickness(0, 0, 0, 4)));
+        var legend = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 2) };
+        void Leg(Brush c, string t) { legend.Children.Add(TB("● ", c, 11, false)); legend.Children.Add(TB(t + "     ", Faint, 10.5, false)); }
+        Leg(Green, "displayed"); Leg(Gold, "equipped · superseded"); Leg(Faint, "not equipped");
+        sp.Children.Add(legend);
+
+        // ── parsed items ──
+        Hdr("PARSED ITEMS");
+        if (rep.Items.Count == 0)
+            sp.Children.Add(TB("No items parsed yet. Open D4's character panel (press C) and hover your gear.", Soft, 12, false));
+        foreach (var it in rep.Items)
+        {
+            var dot = it.InFinal ? Green : it.Equipped ? Gold : Faint;
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 7) };
+            var bullet = TB("●", dot, 12, false); bullet.VerticalAlignment = VerticalAlignment.Top; bullet.Margin = new Thickness(0, 1, 8, 0);
+            DockPanel.SetDock(bullet, Dock.Left); row.Children.Add(bullet);
+            var col = new StackPanel();
+            var l1 = new StackPanel { Orientation = Orientation.Horizontal };
+            l1.Children.Add(TBs(it.Name.Length > 0 ? it.Name : "(unnamed)", Ink, 12.5, true));
+            l1.Children.Add(TB($"   {it.Slot}" + (it.ItemPower != null ? $" · {it.ItemPower}" : "") + $" · {it.Affixes.Count} affix", Soft, 11, false));
+            col.Children.Add(l1);
+            string sub = $"panel={it.Panel ?? "—"} · {it.Context}";
+            if (!it.InFinal && it.DropReason != null) sub += $"   ✕ {it.DropReason}";
+            var l2 = TB(sub, it.InFinal ? Faint : Gold, 10.5, false); l2.TextWrapping = TextWrapping.Wrap;
+            col.Children.Add(l2);
+            row.Children.Add(col); sp.Children.Add(row);
+        }
+
+        // ── raw log tail ──
+        Hdr("RAW LOG TAIL (timestamps stripped)");
+        var tailText = string.Join("\n", rep.RawTail.Select(GearParser.Clean).Where(s => s.Length > 0).TakeLast(40));
+        var tailBox = new TextBox
+        {
+            Text = tailText.Length > 0 ? tailText : "(empty)", IsReadOnly = true,
+            FontFamily = new FontFamily("Consolas"), FontSize = 10.5, Foreground = Soft,
+            Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0),
+            TextWrapping = TextWrapping.NoWrap, MaxHeight = 180, Padding = new Thickness(10, 8, 10, 8),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        sp.Children.Add(new Border { Background = B("#12121A"), CornerRadius = new CornerRadius(6), Child = tailBox, Margin = new Thickness(0, 0, 0, 14) });
+
+        // ── buttons ──
+        var btnRow = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        var closeBtn = new Button { Content = "Close", Padding = new Thickness(14, 6, 14, 6) };
+        closeBtn.Click += (_, _) => Close();
+        var refreshBtn = new Button { Content = "↻ Refresh", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
+        refreshBtn.Click += (_, _) => ShowTtsDiagnostics();
+        var openBtn = new Button { Content = "Open log file", Padding = new Thickness(14, 6, 14, 6) };
+        openBtn.Click += (_, _) => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_log) { UseShellExecute = true }); } catch { } };
+        DockPanel.SetDock(closeBtn, Dock.Right); closeBtn.Margin = new Thickness(8, 0, 0, 0); btnRow.Children.Add(closeBtn);
+        DockPanel.SetDock(refreshBtn, Dock.Right); btnRow.Children.Add(refreshBtn);
+        DockPanel.SetDock(openBtn, Dock.Left); btnRow.Children.Add(openBtn);
+        sp.Children.Add(btnRow);
+
+        // ── panel + scroll ──
+        var wa = SystemParameters.WorkArea;
+        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = wa.Height * 0.86 };
+        var panel = new Border
+        {
+            Background = B("#1A1921"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(32, 28, 32, 30), Width = Math.Min(820, wa.Width * 0.66),
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = scroll,
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7 },
+        };
+        SettingsHost.Children.Add(panel);
+        SettingsHost.Visibility = Visibility.Visible;
+    }
 
     // ---- Item Inventory Modal ----
     // Shows all scanned items (equipped + bag) with slot, name, age, and a delete button per entry.
