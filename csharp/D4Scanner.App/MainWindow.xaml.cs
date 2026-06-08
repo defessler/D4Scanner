@@ -2945,7 +2945,16 @@ public partial class MainWindow : Window
         var tg = _target?.Gear.FirstOrDefault(x =>
             !string.IsNullOrEmpty(x.ItemId) && DiffEngine.PhraseMatch(x.ItemId, it.Name) && x.Image.HasValue);
         if (tg != null) return (it.Name, rcol, it.Name, tg.ItemId, tg.Image);
-        // 3. Name-only lookup (IconResolver will try game-data by name via any configured templates)
+        // 3. No build match: for a normal item, resolve a REAL game-data icon by its base item type.
+        //    Legendaries/rares carry no handle of their own, so without this they fall back to the
+        //    tinted slot silhouette. The art is still extracted from the local D4 install (game data).
+        if (!it.IsUnique)
+        {
+            var liveItem = EffectiveLive().Gear.FirstOrDefault(g => DiffEngine.PhraseMatch(g.Name, it.Name));
+            if (BaseIconIndex.HandleForType(liveItem?.ItemType, liveItem?.Slot) is long h)
+                return (it.Name, rcol, it.Name, null, h);
+        }
+        // 4. Nothing resolved — IconResolver falls back to the tinted slot silhouette.
         return (it.Name, rcol, it.Name, null, null);
     }
 
