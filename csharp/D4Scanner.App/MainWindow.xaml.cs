@@ -1979,24 +1979,94 @@ public partial class MainWindow : Window
         void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; }
 
         var live = EffectiveLive();
-        var allItems = live.Gear.Concat(live.Inventory).ToList();
+        var items = GearList.Build(live);                  // every captured item, de-duped by affix fingerprint
+        var affixKeys = GearList.AffixKeys(items);
         var now = DateTime.UtcNow.Ticks;
 
+        // filter / sort state — "My Gear" stands on its own here; no target build is consulted.
+        string? affixFilter = null;
+        string search = "";
+        var sortMode = GearSortMode.RecentlyAcquired;      // default: newest hovers first
+
         // ---- header ----
-        var sp = new StackPanel { MinWidth = 700, MaxWidth = 1000 };
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var sp = new StackPanel { MinWidth = 760, MaxWidth = 1000 };
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
         var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
         xb.MouseLeftButtonUp += (_, _) => Close();
         hd.Children.Add(xb);
-        hd.Children.Add(TBs($"All scanned items  ·  {allItems.Count}", Gold, 17, true));
+        hd.Children.Add(TBs($"All scanned items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
-        sp.Children.Add(TB("Hover for compare · click to pin · ✕ to delete stale entries", Soft, 12, false, new Thickness(0, 0, 0, 12)));
+        sp.Children.Add(TB("Your captured gear, independent of the build.  Hover to compare · click to pin · ✕ to delete.", Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
 
-        // ---- item grid ----
-        var scroll = new ScrollViewer { MaxHeight = 560, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        // ---- filter / sort bar ----
+        Border Chip(string label, bool on, Action click)
+        {
+            var c = new Border
+            {
+                Background = on ? TileSel : Card, BorderBrush = on ? Gold : Edge, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4), Padding = new Thickness(9, 3, 9, 4),
+                Margin = new Thickness(0, 0, 6, 6), Cursor = System.Windows.Input.Cursors.Hand,
+                Child = TB(label, on ? Gold : Soft, 11, on),
+            };
+            c.MouseLeftButtonUp += (_, _) => click();
+            return c;
+        }
 
-        foreach (var item in allItems.OrderBy(i => i.Slot ?? "").ThenByDescending(i => i.ItemPower ?? 0).ThenBy(i => i.Name))
+        var listPanel = new StackPanel();
+        var countLbl = TB("", Faint, 11, false, new Thickness(2, 0, 0, 8));
+        var chipBar = new StackPanel { Margin = new Thickness(0, 0, 0, 6) };
+
+        void Rebuild()
+        {
+            var view = GearList.Apply(items, affixFilter, search, sortMode);
+            listPanel.Children.Clear();
+            foreach (var it in view) listPanel.Children.Add(BuildRow(it));
+            countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
+        }
+
+        void BuildChips()
+        {
+            chipBar.Children.Clear();
+            var sortRow = new WrapPanel();
+            sortRow.Children.Add(TB("Sort", Faint, 11, false, new Thickness(0, 3, 8, 0)));
+            void S(string lbl, GearSortMode m) => sortRow.Children.Add(Chip(lbl, sortMode == m, () => { sortMode = m; BuildChips(); Rebuild(); }));
+            S("Recently acquired", GearSortMode.RecentlyAcquired);
+            S("Slot", GearSortMode.Slot);
+            S("Item power", GearSortMode.ItemPower);
+            S("Name", GearSortMode.Name);
+            chipBar.Children.Add(sortRow);
+
+            if (affixKeys.Count > 0)
+            {
+                var affRow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+                affRow.Children.Add(TB("Affix", Faint, 11, false, new Thickness(0, 3, 8, 0)));
+                affRow.Children.Add(Chip("All", affixFilter == null, () => { affixFilter = null; BuildChips(); Rebuild(); }));
+                foreach (var key in affixKeys)
+                {
+                    var k = key;
+                    affRow.Children.Add(Chip(k, string.Equals(affixFilter, k, StringComparison.OrdinalIgnoreCase),
+                        () => { affixFilter = string.Equals(affixFilter, k, StringComparison.OrdinalIgnoreCase) ? null : k; BuildChips(); Rebuild(); }));
+                }
+                chipBar.Children.Add(affRow);
+            }
+        }
+
+        var searchBox = new TextBox
+        {
+            Background = B("#15151A"), Foreground = Ink, CaretBrush = Gold,
+            BorderBrush = Edge, BorderThickness = new Thickness(1), Padding = new Thickness(8, 5, 8, 5),
+            FontSize = 12, Margin = new Thickness(0, 0, 0, 8),
+        };
+        searchBox.TextChanged += (_, _) => { search = searchBox.Text; Rebuild(); };
+        sp.Children.Add(TB("Search", Faint, 10.5, true, new Thickness(2, 0, 0, 3)));
+        sp.Children.Add(searchBox);
+        sp.Children.Add(chipBar);
+        sp.Children.Add(countLbl);
+
+        // ---- item list ----
+        var scroll = new ScrollViewer { MaxHeight = 500, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+
+        UIElement BuildRow(Item item)
         {
             var sec = ItemToSection(item);
             var rcol = RarityBrush(item.Rarity);
@@ -2071,8 +2141,8 @@ public partial class MainWindow : Window
             var card = new Border
             {
                 Child = delGrid,
-                Padding = new Thickness(10, 8, 10, 8), Margin = new Thickness(0, 0, 8, 8),
-                CornerRadius = new CornerRadius(6), Width = 260,
+                Padding = new Thickness(12, 9, 12, 9), Margin = new Thickness(0, 0, 0, 7),
+                CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Stretch,
                 Background = pinned ? TileSel : Card,
                 BorderBrush = pinned ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B)),
                 BorderThickness = new Thickness(pinned ? 1.5 : 1),
@@ -2120,9 +2190,12 @@ public partial class MainWindow : Window
 
                 Render();   // update compare deck in the main window behind the modal
             };
-            wrap.Children.Add(card);
+            return card;
         }
-        scroll.Content = wrap;
+
+        BuildChips();
+        Rebuild();
+        scroll.Content = listPanel;
         sp.Children.Add(scroll);
 
         var panel = new Border
@@ -2658,45 +2731,9 @@ public partial class MainWindow : Window
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
 
-        // Center column: portrait if captured, otherwise just spacing for build categories below.
-        // The class name, LIVE/offline indicator, and progress minibar have moved to the status bar.
-        var charImg = LoadCharacterImage();
-        if (charImg != null)
-        {
-            charImg.Stretch = Stretch.UniformToFill;
-            charImg.VerticalAlignment = VerticalAlignment.Top;
-            charImg.HorizontalAlignment = HorizontalAlignment.Center;
-
-            const double pw = 172, ph = 290;
-
-            // Layer 0: dark stone background
-            // Layer 1: portrait image (clipped via the containing grid's Clip)
-            // Layer 2: bottom-fade gradient — image dissolves into card background colour
-            // Layer 3: subtle amber rim (matches rarity-frame aesthetic)
-            var bgCol = Color.FromRgb(0x16, 0x15, 0x1A);
-            var fadeGrad = new LinearGradientBrush { StartPoint = new Point(0.5, 0.52), EndPoint = new Point(0.5, 1.0) };
-            fadeGrad.GradientStops.Add(new GradientStop(Color.FromArgb(0,    bgCol.R, bgCol.G, bgCol.B), 0));
-            fadeGrad.GradientStops.Add(new GradientStop(Color.FromArgb(0xCC, bgCol.R, bgCol.G, bgCol.B), 0.78));
-            fadeGrad.GradientStops.Add(new GradientStop(bgCol,                                           1));
-
-            var pg = new Grid
-            {
-                Width = pw, Height = ph,
-                Background = B("#0A090D"),
-                Clip = new System.Windows.Media.RectangleGeometry(new Rect(0, 0, pw, ph), 6, 6),
-                Margin = new Thickness(0, 0, 0, 12),
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            pg.Children.Add(charImg);
-            pg.Children.Add(new Border { Background = fadeGrad });
-            pg.Children.Add(new Border
-            {
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xD4, 0xA7, 0x30)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-            });
-            center.Children.Add(pg);
-        }
+        // Center column holds the BUILD category cells. The character portrait is rendered as a
+        // radial-masked backdrop behind the entire doll (see the wrap Grid below) — not as a framed
+        // thumbnail here — so it emanates from the character and dissolves smoothly at every edge.
 
         // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot
         bool allUniquesMapped = _target == null || _target.Uniques.All(u => SlotKey(u.Slot ?? "").Length > 0);
@@ -2714,10 +2751,60 @@ public partial class MainWindow : Window
         dollStack.Children.Add(grid);
         if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
 
-        // Simple StackPanel wrap — no backdrop (portrait is now a framed element in the center column)
-        var wrap = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        wrap.Children.Add(DollToggle());
-        wrap.Children.Add(dollStack);
+        // wrap is a 2-row Grid so the character portrait backdrop bleeds behind the tab bar row too;
+        // the toggle buttons sit on top (opaque) while the portrait fades through beneath them. The
+        // portrait is masked with a RadialGradientBrush so it emanates from the character's centre and
+        // dissolves to transparent at every edge (restored from the pre-v0.9.4 atmospheric design).
+        var bc = ((SolidColorBrush)ClassColor(className)).Color;
+        var wrap = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var backdropPortrait = LoadCharacterImage();
+        if (backdropPortrait != null)
+        {
+            // UniformToFill fills the entire container so the opacity mask has edge content to fade.
+            backdropPortrait.Stretch = Stretch.UniformToFill;
+            backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
+            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
+            backdropPortrait.Opacity = 0.55;
+            // Gradient centre at the character torso so all four edges dissolve smoothly rather than cut off.
+            var mask = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.5, 0.50), Center = new Point(0.5, 0.50), RadiusX = 0.58, RadiusY = 0.68,
+            };
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
+            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.26));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x90, 0, 0, 0), 0.52));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x20, 0, 0, 0), 0.76));
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
+            backdropPortrait.OpacityMask = mask;
+            Grid.SetRowSpan(backdropPortrait, 2);
+            wrap.Children.Add(backdropPortrait);
+        }
+        else
+        {
+            // No portrait captured yet: a soft class-coloured radial glow keeps the centre alive.
+            var glow = new Border
+            {
+                Background = new RadialGradientBrush
+                {
+                    GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
+                    GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+                }
+            };
+            Grid.SetRowSpan(glow, 2);
+            wrap.Children.Add(glow);
+        }
+
+        var toggle = DollToggle();
+        Grid.SetRow(toggle, 0);
+        wrap.Children.Add(toggle);
+
+        var dollOuter = new Grid();
+        dollOuter.Children.Add(dollStack);
+        Grid.SetRow(dollOuter, 1);
+        wrap.Children.Add(dollOuter);
         return wrap;
     }
 

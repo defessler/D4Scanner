@@ -913,6 +913,47 @@ Check("ShouldHideDuplicateWeapon empty candidate is false", !LiveGearResolver.Sh
 Check("ShouldHideDuplicateWeapon works on a plain list (case-insensitive)", LiveGearResolver.ShouldHideDuplicateWeapon(new List<string> { "Word of Hakan" }, "word of hakan"));
 Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHideDuplicateWeapon(new HashSet<string>(), "Doombringer"));
 
+// ---- GearList: fingerprint id + "All Items" table (filter / sort / dedup) ----
+{
+    Item Mk(string name, string slot, int ip, params (string t, double v)[] affs) => new Item
+    {
+        Name = name, Slot = slot, ItemPower = ip,
+        Affixes = affs.Select(a => new Affix { Text = a.t, Value = a.v }).ToList(),
+    };
+
+    var razorA = Mk("Crushing Jaguar's Razor", "weapon", 850, ("Dexterity", 139), ("Maximum Life", 1637));
+    var razorB = Mk("Crushing Jaguar's Razor", "weapon", 850, ("Dexterity", 139), ("Maximum Life", 1637)); // same roll
+    var razorC = Mk("Crushing Jaguar's Razor", "weapon", 850, ("Dexterity", 176), ("Maximum Life", 1637)); // diff dex roll
+    Eq("Fingerprint: identical roll -> same id", GearList.Fingerprint(razorA), GearList.Fingerprint(razorB));
+    Check("Fingerprint: different roll -> different id", GearList.Fingerprint(razorA) != GearList.Fingerprint(razorC));
+    Check("Fingerprint: stable 12-hex id", GearList.Fingerprint(razorA).Length == 12);
+
+    var helm = Mk("Adventurer's Helm", "helm", 850, ("Dexterity", 96), ("Lucky Hit Chance", 7.4));
+    helm.LogTimeUtc = new DateTimeOffset(2026, 6, 8, 1, 28, 0, TimeSpan.Zero);
+    var ring = Mk("Conceited Nightborne Signet", "ring", 900, ("Maximum Life", 1414));
+    ring.LogTimeUtc = new DateTimeOffset(2026, 6, 8, 1, 30, 0, TimeSpan.Zero);   // newer hover
+
+    var live = new LiveBuild { Gear = { razorA, helm, ring }, Inventory = { razorB } };  // razorB is a dup of razorA
+    var all = GearList.Build(live);
+    Eq("Build: dedups identical captures by fingerprint", 3, all.Count);
+
+    Check("HasAffix: PhraseMatch hit", GearList.HasAffix(helm, "Dexterity"));
+    Check("HasAffix: miss", !GearList.HasAffix(ring, "Dexterity"));
+    Check("AffixKeys: distinct labels include Maximum Life", GearList.AffixKeys(all).Contains("Maximum Life"));
+
+    var byDex = GearList.Apply(all, "Dexterity", null, GearSortMode.Slot);
+    Eq("Apply: by-affix filter keeps only Dexterity items", 2, byDex.Count);
+    Check("Apply: by-affix filter drops the non-Dex ring", !byDex.Any(i => i.Name.Contains("Signet")));
+
+    var recent = GearList.Apply(all, null, null, GearSortMode.RecentlyAcquired);
+    Eq("Apply: recently-acquired puts newest hover first", "Conceited Nightborne Signet", recent[0].Name);
+
+    Check("MatchesSearch: name hit (case-insensitive)", GearList.MatchesSearch(helm, "adventurer"));
+    Check("MatchesSearch: affix hit", GearList.MatchesSearch(ring, "maximum life"));
+    Check("MatchesSearch: unrelated miss", !GearList.MatchesSearch(ring, "crossbow"));
+    Eq("Apply: free-text search narrows to the razor", 1, GearList.Apply(all, null, "razor", GearSortMode.Slot).Count);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
