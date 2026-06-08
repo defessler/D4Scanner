@@ -1984,7 +1984,7 @@ public partial class MainWindow : Window
         var now = DateTime.UtcNow.Ticks;
 
         // filter / sort state — "My Gear" stands on its own here; no target build is consulted.
-        string? affixFilter = null;
+        var selectedAffixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string search = "";
         var sortMode = GearSortMode.RecentlyAcquired;      // default: newest hovers first
 
@@ -2018,7 +2018,7 @@ public partial class MainWindow : Window
 
         void Rebuild()
         {
-            var view = GearList.Apply(items, affixFilter, search, sortMode);
+            var view = GearList.Apply(items, selectedAffixes, search, sortMode);
             listPanel.Children.Clear();
             foreach (var it in view) listPanel.Children.Add(BuildRow(it));
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
@@ -2035,20 +2035,6 @@ public partial class MainWindow : Window
             S("Item power", GearSortMode.ItemPower);
             S("Name", GearSortMode.Name);
             chipBar.Children.Add(sortRow);
-
-            if (affixKeys.Count > 0)
-            {
-                var affRow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-                affRow.Children.Add(TB("Affix", Faint, 11, false, new Thickness(0, 3, 8, 0)));
-                affRow.Children.Add(Chip("All", affixFilter == null, () => { affixFilter = null; BuildChips(); Rebuild(); }));
-                foreach (var key in affixKeys)
-                {
-                    var k = key;
-                    affRow.Children.Add(Chip(k, string.Equals(affixFilter, k, StringComparison.OrdinalIgnoreCase),
-                        () => { affixFilter = string.Equals(affixFilter, k, StringComparison.OrdinalIgnoreCase) ? null : k; BuildChips(); Rebuild(); }));
-                }
-                chipBar.Children.Add(affRow);
-            }
         }
 
         var searchBox = new TextBox
@@ -2058,8 +2044,80 @@ public partial class MainWindow : Window
             FontSize = 12, Margin = new Thickness(0, 0, 0, 8),
         };
         searchBox.TextChanged += (_, _) => { search = searchBox.Text; Rebuild(); };
+
+        // ---- affix filter: multiselect combo (tag box + dropdown of all affixes present) ----
+        var tagBox = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var affixListPanel = new StackPanel();
+        var affixPopup = new System.Windows.Controls.Primitives.Popup
+        {
+            StaysOpen = false, AllowsTransparency = true,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+            Child = new Border
+            {
+                Background = B("#15151A"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4), Padding = new Thickness(4), MaxWidth = 380,
+                Child = new ScrollViewer { MaxHeight = 340, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = affixListPanel },
+            },
+        };
+
+        void RebuildAffixList()
+        {
+            affixListPanel.Children.Clear();
+            foreach (var key in affixKeys)
+            {
+                var k = key;
+                bool sel = selectedAffixes.Contains(k);
+                var row = new Border
+                {
+                    Background = sel ? TileSel : System.Windows.Media.Brushes.Transparent,
+                    CornerRadius = new CornerRadius(3), Padding = new Thickness(8, 4, 12, 5),
+                    Margin = new Thickness(0, 0, 0, 1), Cursor = System.Windows.Input.Cursors.Hand, MinWidth = 250,
+                    Child = TB((sel ? "✓  " : "      ") + k, sel ? Gold : Soft, 11.5, sel),
+                };
+                row.MouseLeftButtonUp += (_, _) =>
+                {
+                    if (!selectedAffixes.Add(k)) selectedAffixes.Remove(k);
+                    RebuildAffixList(); RebuildTagBox(); Rebuild();
+                };
+                affixListPanel.Children.Add(row);
+            }
+        }
+
+        void RebuildTagBox()
+        {
+            tagBox.Children.Clear();
+            tagBox.Children.Add(TB("Affix", Faint, 11, false, new Thickness(0, 4, 8, 0)));
+            foreach (var k in selectedAffixes)
+            {
+                var kk = k;
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                row.Children.Add(TB(kk + "  ", Gold, 11, false));
+                var x = TB("✕", Soft, 10, true); x.Cursor = System.Windows.Input.Cursors.Hand;
+                x.MouseLeftButtonUp += (_, e) => { selectedAffixes.Remove(kk); RebuildAffixList(); RebuildTagBox(); Rebuild(); e.Handled = true; };
+                row.Children.Add(x);
+                tagBox.Children.Add(new Border
+                {
+                    Background = TileSel, BorderBrush = Gold, BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 6, 3), Margin = new Thickness(0, 0, 5, 5),
+                    Child = row,
+                });
+            }
+            var addBtn = new Border
+            {
+                Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3), Padding = new Thickness(9, 3, 9, 4), Margin = new Thickness(0, 0, 0, 5),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Child = TB(selectedAffixes.Count == 0 ? "Filter by affix  ▾" : "add  ▾", Soft, 11, false),
+            };
+            addBtn.MouseLeftButtonUp += (_, _) => { affixPopup.PlacementTarget = addBtn; affixPopup.IsOpen = !affixPopup.IsOpen; };
+            tagBox.Children.Add(addBtn);
+            if (affixPopup.IsOpen) affixPopup.PlacementTarget = addBtn;
+        }
+
         sp.Children.Add(TB("Search", Faint, 10.5, true, new Thickness(2, 0, 0, 3)));
         sp.Children.Add(searchBox);
+        sp.Children.Add(tagBox);
+        sp.Children.Add(affixPopup);
         sp.Children.Add(chipBar);
         sp.Children.Add(countLbl);
 
@@ -2194,6 +2252,8 @@ public partial class MainWindow : Window
         }
 
         BuildChips();
+        RebuildTagBox();
+        RebuildAffixList();
         Rebuild();
         scroll.Content = listPanel;
         sp.Children.Add(scroll);
@@ -2817,7 +2877,7 @@ public partial class MainWindow : Window
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(0, 0, 0, 6),
         };
 
         // baseline rule the full strip sits on
@@ -2852,7 +2912,7 @@ public partial class MainWindow : Window
             var cell = new Grid { Margin = new Thickness(2, 0, 2, 0) };
             cell.Children.Add(new Border
             {
-                Child = content, Padding = new Thickness(14, 7, 14, 9),
+                Child = content, Padding = new Thickness(13, 3, 13, 4),
                 Background = on ? B("#22201C") : System.Windows.Media.Brushes.Transparent,
                 CornerRadius = new CornerRadius(4, 4, 0, 0),
             });
@@ -3023,7 +3083,7 @@ public partial class MainWindow : Window
             try
             {
                 var pt = fe.TransformToAncestor(this).Transform(new Point(0, 0));
-                bool nearRight = pt.X + fe.ActualWidth + 460 > ActualWidth;   // ~460 = compare-card width budget
+                bool nearRight = pt.X + fe.ActualWidth + 680 > ActualWidth;   // ~680 = compare-card width budget
                 _hoverPopup.Placement = nearRight
                     ? System.Windows.Controls.Primitives.PlacementMode.Left
                     : System.Windows.Controls.Primitives.PlacementMode.Right;
@@ -3032,7 +3092,8 @@ public partial class MainWindow : Window
         }
         _hoverPopup.PlacementTarget = target;
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
-        cc.MaxWidth = 780;
+        // the 2 star columns need a real width or they collapse to a thin, tall strip in the free-floating popup
+        cc.MinWidth = 640; cc.MaxWidth = 820;
         _hoverPopup.Child = cc;   // no outer wrapper — each panel has its own opaque background
         _hoverPopup.IsOpen = true;
     }

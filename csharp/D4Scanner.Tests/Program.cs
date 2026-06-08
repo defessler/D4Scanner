@@ -941,9 +941,11 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("HasAffix: miss", !GearList.HasAffix(ring, "Dexterity"));
     Check("AffixKeys: distinct labels include Maximum Life", GearList.AffixKeys(all).Contains("Maximum Life"));
 
-    var byDex = GearList.Apply(all, "Dexterity", null, GearSortMode.Slot);
+    var byDex = GearList.Apply(all, new[] { "Dexterity" }, null, GearSortMode.Slot);
     Eq("Apply: by-affix filter keeps only Dexterity items", 2, byDex.Count);
     Check("Apply: by-affix filter drops the non-Dex ring", !byDex.Any(i => i.Name.Contains("Signet")));
+    Eq("Apply: multi-affix filter requires ALL selected affixes", 1,
+        GearList.Apply(all, new[] { "Dexterity", "Maximum Life" }, null, GearSortMode.Slot).Count);
 
     var recent = GearList.Apply(all, null, null, GearSortMode.RecentlyAcquired);
     Eq("Apply: recently-acquired puts newest hover first", "Conceited Nightborne Signet", recent[0].Name);

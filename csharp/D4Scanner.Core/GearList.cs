@@ -73,11 +73,13 @@ public static class GearList
         return string.Join(" ", parts).Contains(q.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Filter (by affix + free-text) then sort. Pure — the UI owns the widget state.</summary>
-    public static List<Item> Apply(IEnumerable<Item> items, string? affixKey, string? search, GearSortMode sort)
+    /// <summary>Filter (by one-or-more affixes + free-text) then sort. An item must carry EVERY selected
+    /// affix (intersection / narrowing). Pure — the UI owns the widget state.</summary>
+    public static List<Item> Apply(IEnumerable<Item> items, IReadOnlyCollection<string>? affixKeys, string? search, GearSortMode sort)
     {
         var q = items;
-        if (!string.IsNullOrWhiteSpace(affixKey)) q = q.Where(i => HasAffix(i, affixKey!));
+        if (affixKeys is { Count: > 0 })
+            q = q.Where(i => affixKeys.All(k => HasAffix(i, k)));
         if (!string.IsNullOrWhiteSpace(search)) q = q.Where(i => MatchesSearch(i, search!));
         return Sort(q, sort);
     }
