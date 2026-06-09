@@ -63,6 +63,12 @@ public sealed class ProfileStore
         catch { }
     }
 
+    public void Delete(string slug)
+    {
+        try { var p = PathFor(slug); if (File.Exists(p)) File.Delete(p); } catch { }
+        if (ActiveSlug == slug) ActiveSlug = null;
+    }
+
     public string? ActiveSlug
     {
         get

@@ -14,8 +14,7 @@ public sealed class LogWatcher : IDisposable
     GearParser _seg = new();
     readonly CharacterParser _char = new();   // total attributes + paragon level from the character sheet
     readonly SkillParser _skills = new();     // selected skills/passives + ranks from the skill tree
-    readonly RosterParser _roster = new();    // character-select roster — the only source of the character NAME
-    readonly RosterGate _rosterGate = new();  // only treat >=2 contiguous roster lines as char-select (ignore lone in-game nameplates)
+    readonly CharSelectParser _charSel = new();   // character-select screen: own characters + the picked name/class
     readonly Dictionary<string, Item> _items = new();
     readonly Dictionary<string, Item> _inv = new();
     // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
@@ -60,14 +59,26 @@ public sealed class LogWatcher : IDisposable
     /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
     /// Subscribe to auto-capture the portrait without requiring a manual button click.</summary>
     public event Action? CharacterPanelDetected;
-    /// <summary>Fires when the character-select roster is voiced — i.e. the player left the game to switch
+    /// <summary>Fires when the character-select screen appears — i.e. the player left the game to switch
     /// characters. Subscribe to persist the current character's loadout and re-arm auto-identification.</summary>
     public event Action? CharacterSelectDetected;
+    /// <summary>Fires when the player enters the world from character-select, carrying the picked
+    /// character's identity (name; class/realm/paragon when the detail block was voiced).</summary>
+    public event Action<CharSelectIdentity>? CharacterConfirmed;
 
     public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
     {
         _path = path; _equippedOnly = equippedOnly;
         _pos = startPos;   // non-zero to skip old log data (e.g. after a live-cache clear)
+        _charSel.VisitStarted += () =>
+        {
+            // Player is back at character-select: drop the prior character's accumulated gear so the next
+            // character starts clean, and signal the host to persist/re-identify.
+            _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+            _seg = new GearParser(); _currentPanel = null;
+            CharacterSelectDetected?.Invoke();
+        };
+        _charSel.Confirmed += id => CharacterConfirmed?.Invoke(id);
     }
 
     public void Start(int pollMs = 500)
@@ -104,23 +115,15 @@ public sealed class LogWatcher : IDisposable
                 if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
                 { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; }
 
-                // Character-select roster ("Name | Level (Paragon) (Tier)"). Only a CONTIGUOUS block of >=2
-                // such lines counts as character-select — a lone roster-shaped line in town (another player's
-                // nameplate) is ignored, so it can never bind a character or wipe gear. When the block is
-                // confirmed, drop the prior character's accumulated gear and signal the host to re-identify.
-                var rg = _rosterGate.Feed(lines[i]);
-                if (rg.Matched)
-                {
-                    if (rg.EnteredCharSelect)
-                    {
-                        _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
-                        _seg = new GearParser(); _currentPanel = null;
-                    }
-                    foreach (var l in rg.Commit) _roster.Feed(l);
-                    if (rg.EnteredCharSelect) CharacterSelectDetected?.Invoke();
-                    if (rg.Commit.Count > 0) changed = true;   // emit so the host sees the updated roster
-                    continue;
-                }
+                // Character-select screen tracking (visit start → gear wipe + CharacterSelectDetected;
+                // world entry → CharacterConfirmed with the picked name/class). Identity comes ONLY from
+                // this screen — the in-game "Name | 70 (208) (VII)" lines are OTHER PLAYERS' nameplates.
+                bool wasCharSel = _charSel.InCharSelect;
+                _charSel.Feed(lines[i]);
+                if (wasCharSel || _charSel.InCharSelect) changed = true;   // emit so the host sees Seen/identity progress
+
+                // Player-nameplate lines (incl. clan-tagged "<Tag> Name | …") are never gear and never identity.
+                if (RosterParser.ParseLine(lines[i]) != null) continue;
 
                 if (PanelMarkers.TryGetValue(rawLine, out var panel))
                 {
@@ -158,7 +161,7 @@ public sealed class LogWatcher : IDisposable
                 // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
                 if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
                 if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
-                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = _roster.Entries };
+                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = OwnRoster(_charSel) };
                 Updated?.Invoke(Build);
             }
         }
@@ -288,6 +291,13 @@ public sealed class LogWatcher : IDisposable
         System.Text.RegularExpressions.Regex.Replace((slot).ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim(),
         @"\s*\d+$", "").Trim();
 
+    // The player's OWN characters, as seen on the character-select screen (detail blocks carry the class).
+    static List<RosterEntry> OwnRoster(CharSelectParser cs) =>
+        cs.Seen.Select(s => new RosterEntry
+        {
+            Name = s.Name, Class = s.Class, Level = s.Level ?? 0, Paragon = s.Paragon ?? 0, Tier = s.Realm ?? "",
+        }).ToList();
+
     public void Dispose() => _timer?.Dispose();
 
     /// <summary>One-shot parse of an entire log file into a LiveBuild (used by the CLI / tests).</summary>
@@ -296,20 +306,20 @@ public sealed class LogWatcher : IDisposable
         var seg = new GearParser();
         var ch = new CharacterParser();
         var sk = new SkillParser();
-        var roster = new RosterParser();
-        var rosterGate = new RosterGate();
+        var charSel = new CharSelectParser();
         // Use a list (not a dict) so items appear in FILE ORDER — re-scans of the same item
         // append a newer entry after the older one, letting LatestPerSlot correctly pick the
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
         // slot:rawname key was first inserted earliest in the log.
         var ordered = new List<Item>();
+        charSel.VisitStarted += () => ordered.Clear();   // back at character-select: prior character's gear is stale (matches Poll)
         var allLines = File.ReadAllLines(path);
         for (int i = 0; i < allLines.Length; i++)
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
             if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
-            var rg = rosterGate.Feed(allLines[i]);
-            if (rg.Matched) { foreach (var l in rg.Commit) roster.Feed(l); continue; }   // roster line (gated), not gear
+            charSel.Feed(allLines[i]);
+            if (RosterParser.ParseLine(allLines[i]) != null) continue;   // player nameplate, never gear/identity
             ch.Feed(allLines[i]); sk.Feed(allLines[i]);
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
@@ -317,7 +327,7 @@ public sealed class LogWatcher : IDisposable
             if (equippedOnly && !item.Equipped) continue;
             ordered.Add(item);
         }
-        return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = roster.Entries };
+        return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = OwnRoster(charSel) };
     }
 
     /// <summary>

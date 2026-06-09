@@ -1169,33 +1169,74 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("ClassDetector: a Rogue skill implies Rogue", "Rogue", ClassDetector.Detect(rogueSkill));
 }
 
-// ---- RosterGate (>=2 contiguous roster lines => character-select; lone in-game nameplate ignored) ----
+// ---- CharSelectParser (identity from the character-select screen; verbatim shapes from a real log) ----
 {
-    // a lone roster-shaped line (an in-game player) surrounded by gameplay is NEVER committed or treated as char-select
-    var g1 = new RosterGate();
-    var r1 = g1.Feed("Stranger | 92 (340) (VII)");
-    Check("RosterGate: lone roster line is matched (not parsed as gear)", r1.Matched);
-    Check("RosterGate: lone roster line is NOT committed", r1.Commit.Count == 0);
-    Check("RosterGate: lone roster line does NOT enter char-select", !r1.EnteredCharSelect);
-    var r1b = g1.Feed("+1,540 Maximum Life [1,300 - 1,600]");   // gameplay line ends the block
-    Check("RosterGate: a gameplay line is not matched", !r1b.Matched);
+    Check("CharSelectParser: valid char name", CharSelectParser.IsValidCharName("Heoki"));
+    Check("CharSelectParser: clan-decorated name invalid", !CharSelectParser.IsValidCharName("<1p1> Vespera"));
+    Check("CharSelectParser: spaced name invalid", !CharSelectParser.IsValidCharName("My Character"));
+    Check("CharSelectParser: empty invalid", !CharSelectParser.IsValidCharName(""));
+    // the footer uses U+00A0 separators in the raw log — must still be recognized after Clean
+    Check("CharSelectParser: NBSP footer recognized",
+        CharSelectParser.IsCharSelectMarker(GearParser.Clean("R Undo Character Delete")));
 
-    // two contiguous roster lines => character-select; both committed on the 2nd, fires once
-    var g2 = new RosterGate();
-    var a = g2.Feed("Zuri | 70 (208) (VI)");
-    Check("RosterGate: 1st roster line buffered, not yet char-select", a.Matched && a.Commit.Count == 0 && !a.EnteredCharSelect);
-    var b = g2.Feed("MementoMori | 70 (220) (VII)");
-    Check("RosterGate: 2nd contiguous roster line enters char-select", b.EnteredCharSelect);
-    Eq("RosterGate: both buffered lines committed at threshold", 2, b.Commit.Count);
-    var c = g2.Feed("ThirdChar | 60 (100) (V)");
-    Check("RosterGate: a 3rd line keeps committing without re-firing char-select", c.Commit.Count == 1 && !c.EnteredCharSelect);
+    // full visit (verbatim from a real 2026-06-09 log): footer -> detail blocks (class voiced!) -> START GAME -> QUEUED
+    var cs = new CharSelectParser();
+    int visits = 0; CharSelectIdentity? confirmed = null;
+    cs.VisitStarted += () => visits++;
+    cs.Confirmed += id => confirmed = id;
+    var visit = new[]
+    {
+        "[2026-06-09T08:04:18Z]R Undo Character Delete",
+        "[2026-06-09T08:04:20Z]Heoki", "[2026-06-09T08:04:20Z]Seasonal", "[2026-06-09T08:04:20Z]186",
+        "[2026-06-09T08:04:20Z]CREATE NEW CHARACTER",
+        // the create-character class list voices bare class names — these must NOT become identities
+        "Warlock", "Paladin", "Spiritborn", "Barbarian", "Sorcerer", "Necromancer", "Druid", "Rogue",
+        "[2026-06-09T08:04:54Z]HEOKI", "[2026-06-09T08:04:54Z]Eternal", "[2026-06-09T08:04:54Z]Barbarian",
+        "[2026-06-09T08:04:54Z]Level 1", "[2026-06-09T08:04:54Z](83)", "[2026-06-09T08:04:54Z]Normal",
+        "[2026-06-09T08:04:54Z]R Undo Character Delete      S Change Campaign State      D Delete Character      C Change Difficulty",
+        "[2026-06-09T08:05:16Z]HEOKI", "[2026-06-09T08:05:16Z]Seasonal", "[2026-06-09T08:05:16Z]Rogue",
+        "[2026-06-09T08:05:16Z]Paragon 186", "[2026-06-09T08:05:16Z]Torment XI",
+        "[2026-06-09T08:05:16Z]R Undo Character Delete      D Delete Character      C Change Difficulty",
+        "[2026-06-09T08:05:17Z]START GAME",
+        "[2026-06-09T08:05:22Z]QUEUED FOR GAME - START GAME PENDING...",
+    };
+    foreach (var l in visit) cs.Feed(l);
+    Eq("CharSelectParser: one visit", 1, visits);
+    Check("CharSelectParser: confirmed an identity on world entry", confirmed != null);
+    Eq("CharSelectParser: confirmed name", "HEOKI", confirmed!.Name);
+    Eq("CharSelectParser: confirmed CLASS (last highlighted before START GAME)", "Rogue", confirmed.Class);
+    Eq("CharSelectParser: confirmed paragon", 186, confirmed.Paragon);
+    Eq("CharSelectParser: confirmed realm", "Seasonal", confirmed.Realm);
+    Eq("CharSelectParser: both highlighted characters recorded", 2, cs.Seen.Count);
+    Check("CharSelectParser: Barbarian detail block captured too",
+        cs.Seen.Any(s => s.Class == "Barbarian" && s.Level == 1));
+    Check("CharSelectParser: create-character class list produced no identities",
+        cs.Seen.All(s => s.Name.Equals("HEOKI", StringComparison.OrdinalIgnoreCase)));
+    Check("CharSelectParser: gate closed after entering world", !cs.InCharSelect);
 
-    // interleaving breaks contiguity: roster, gameplay, roster => never reaches the threshold
-    var g3 = new RosterGate();
-    g3.Feed("Stranger | 92 (340) (VII)");
-    g3.Feed("Torment VII");                       // non-roster => resets
-    var r3 = g3.Feed("Another | 80 (250) (IV)");
-    Check("RosterGate: interleaved roster lines never enter char-select", !r3.EnteredCharSelect && r3.Commit.Count == 0);
+    // entering without highlighting (real 2026-06-05 23:19 visit): list rows only -> name confirmed, class null
+    var cs2 = new CharSelectParser();
+    CharSelectIdentity? c2 = null; cs2.Confirmed += id => c2 = id;
+    foreach (var l in new[]
+    {
+        "[2026-06-05T23:18:51Z]R Undo Character Delete",
+        "[2026-06-05T23:19:18Z]START GAME",
+        "[2026-06-05T23:19:19Z]Heoki", "[2026-06-05T23:19:19Z]Seasonal", "[2026-06-05T23:19:19Z]171",
+        "[2026-06-05T23:19:23Z]QUEUED FOR GAME - START GAME PENDING...",
+    }) cs2.Feed(l);
+    Check("CharSelectParser: list-row fallback confirms the name", c2 != null && c2.Name == "Heoki");
+    Check("CharSelectParser: list-row fallback has no class", c2!.Class == null);
+
+    // in-game nameplates never start a visit or confirm anything
+    var cs3 = new CharSelectParser();
+    int v3 = 0; cs3.VisitStarted += () => v3++;
+    foreach (var l in new[]
+    {
+        "[2026-06-05T15:39:17Z]Basaba | 70 (234) (VII)",
+        "[2026-06-05T15:39:19Z]&lt;Muld&gt; Sverren | 70 (211) (VII)",
+        "[2026-06-05T15:39:19Z]Forzajuve | 70 (131) (VII)",
+    }) cs3.Feed(l);
+    Check("CharSelectParser: nameplates never open a char-select visit", v3 == 0 && !cs3.InCharSelect);
 }
 
 // ---- ProfileStore ----
@@ -1239,21 +1280,35 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("ProfileStore: second migration is a no-op (profiles exist)", store2.MigrateLegacy(legacy) == null);
 }
 
-// ---- LogWatcher captures the character-select roster (and excludes roster lines from gear) ----
+// ---- LogWatcher end-to-end: identity from char-select; nameplates are noise; gear survives town ----
 {
-    var rosterLog = Path.Combine(Path.GetTempPath(), "d4s_roster_test_" + Guid.NewGuid().ToString("N") + ".log");
-    File.WriteAllLines(rosterLog, new[]
+    var idLog = Path.Combine(Path.GetTempPath(), "d4s_identity_test_" + Guid.NewGuid().ToString("N") + ".log");
+    File.WriteAllLines(idLog, new[]
     {
         "=== d4scanner tts shim attached ===",
-        "Zuri | 70 (208) (VI)",
-        "MementoMori | 70 (220) (VII)",
-        "Torment VII",
+        // character select: highlight the Rogue, enter the world
+        "R Undo Character Delete",
+        "HEOKI", "Seasonal", "Rogue", "Paragon 186", "Torment XI",
+        "R Undo Character Delete      D Delete Character      C Change Difficulty",
+        "START GAME",
+        "QUEUED FOR GAME - START GAME PENDING...",
+        // in town: other players' nameplates stream by (incl. clan-tagged, contiguous pairs)
+        "Basaba | 70 (234) (VII)",
+        "&lt;Muld&gt; Sverren | 70 (211) (VII)",
+        "Forzajuve | 70 (131) (VII)",
+        // then the player hovers an equipped item
+        "Helm", "EQUIPPED", "ARCHON SPELLBLADE", "Legendary Helm", "780 Item Power",
+        "+1,540 Maximum Life [1,300 - 1,600]", "Right mouse button",
     });
-    var lb = LogWatcher.BuildFromFile(rosterLog, equippedOnly: false);
-    Eq("LogWatcher: roster captured from log", 2, lb.Roster.Count);
-    Eq("LogWatcher: roster name by paragon", "MementoMori", lb.Roster.First(e => e.Paragon == 220).Name);
-    Check("LogWatcher: roster lines are not parsed as gear", !lb.Gear.Any(g => g.Name.Contains("|")));
-    try { File.Delete(rosterLog); } catch { }
+    var lb = LogWatcher.BuildFromFile(idLog, equippedOnly: false);
+    Eq("LogWatcher: own roster = chars seen at char-select (not nameplates)", 1, lb.Roster.Count);
+    Eq("LogWatcher: own roster carries the CLASS", "Rogue", lb.Roster[0].Class);
+    Eq("LogWatcher: own roster name", "HEOKI", lb.Roster[0].Name);
+    Check("LogWatcher: nameplates are not in the roster", !lb.Roster.Any(e => e.Name.Contains("Basaba") || e.Name.Contains("Sverren")));
+    Check("LogWatcher: nameplates are not parsed as gear", !lb.Gear.Any(g => g.Name.Contains("|")));
+    Check("LogWatcher: gear scanned AFTER town nameplates survives (no bogus wipe)",
+        lb.Gear.Any(g => g.Name.Contains("ARCHON", StringComparison.OrdinalIgnoreCase)));
+    try { File.Delete(idLog); } catch { }
 }
 
 // ---- report ----

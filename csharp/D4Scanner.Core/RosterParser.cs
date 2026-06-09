@@ -3,9 +3,12 @@ using System.Text.RegularExpressions;
 namespace D4Scanner.Core;
 
 /// <summary>
-/// Parses the character-select roster the screen reader voices as "Name | Level (Paragon) (Tier)"
-/// — e.g. "MementoMori | 70 (220) (VII)". This is the ONLY place the player's character name is
-/// exposed in the TTS stream, so it anchors per-character profile separation.
+/// Recognizes PLAYER-NAMEPLATE lines — "Name | Level (Paragon) (Tier)", optionally clan-tagged
+/// ("&lt;Muld&gt; Sverren | 70 (211) (VII)"). Ground truth from a real 18MB log: these are voiced for
+/// OTHER PLAYERS throughout normal play (~5,300 lines, ~1,100 distinct names), including the player's
+/// own world nameplate. They must NEVER feed identity or gear — this parser exists so the pipeline can
+/// recognize and skip them. The player's own characters are identified by <see cref="CharSelectParser"/>
+/// (the character-select screen, where the class is voiced).
 /// </summary>
 public sealed class RosterParser
 {
