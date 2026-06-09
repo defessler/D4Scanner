@@ -2889,19 +2889,25 @@ public partial class MainWindow : Window
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        // Backdrop: a clean class-coloured radial glow — NOT a screenshot. The auto-captured portrait was
-        // unreliable (it frequently grabbed a town/world frame, not the character panel), so the photo
-        // backdrop was dropped entirely. The glow sits behind the doll rows only (row 1), never the tab
-        // strip (row 0), so it can't bleed into the tabs or the guidance rail.
+        // Backdrop: a clean class-coloured radial glow — NOT a screenshot (the auto-captured portrait was
+        // unreliable). It spans the WHOLE doll (both rows) so the bloom emanates from the centre and
+        // dissolves smoothly at every edge — confining it to one row hard-clipped its top at the tab strip.
+        // A 3-stop falloff keeps it soft; the tabs/gear sit on top so the faint tint never fights them.
         var glow = new Border
         {
             Background = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.42), Center = new Point(0.5, 0.42), RadiusX = 0.52, RadiusY = 0.74,
-                GradientStops = { new GradientStop(Color.FromArgb(0x2A, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+                GradientOrigin = new Point(0.5, 0.48), Center = new Point(0.5, 0.48), RadiusX = 0.62, RadiusY = 0.62,
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(0x34, bc.R, bc.G, bc.B), 0),
+                    new GradientStop(Color.FromArgb(0x12, bc.R, bc.G, bc.B), 0.55),
+                    new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1),
+                },
             }
         };
-        Grid.SetRow(glow, 1);
+        Grid.SetRow(glow, 0);
+        Grid.SetRowSpan(glow, 2);
         wrap.Children.Add(glow);
 
         var toggle = DollToggle();
