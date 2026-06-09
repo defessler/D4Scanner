@@ -133,13 +133,15 @@ public class LiveBuild
     public List<RosterEntry> Roster { get; set; } = new();
 }
 
-/// <summary>One character on the character-select roster, parsed from "Name | Level (Paragon) (Tier)".</summary>
+/// <summary>One of the player's OWN characters, as seen on the character-select screen (the only place
+/// the class is voiced). Tier holds the realm ("Seasonal"/"Eternal") for char-select-sourced entries.</summary>
 public sealed class RosterEntry
 {
     public string Name { get; set; } = "";
+    public string? Class { get; set; }
     public int Level { get; set; }
     public int Paragon { get; set; }
-    public string Tier { get; set; } = "";   // world-tier roman numeral, e.g. "VII"
+    public string Tier { get; set; } = "";
 }
 
 /// <summary>A tracked character: identity + its own saved live loadout. Persisted as profiles/&lt;slug&gt;.json.</summary>

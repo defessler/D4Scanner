@@ -177,7 +177,8 @@ public partial class MainWindow : Window
     ProfileStore _profiles = new(Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "profiles"));
     string? _activeSlug;
     List<RosterEntry> _roster = new();
-    List<string> _pendingChars = new();   // same-paragon collision: candidate names awaiting a manual pick
+    List<string> _pendingChars = new();   // ambiguous identity: candidate profile SLUGS awaiting a manual pick
+    string? _pendingName;                 // confirmed at char-select without a voiced class; binds once class is detected
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
@@ -499,26 +500,23 @@ public partial class MainWindow : Window
     {
         if (b.Roster is { Count: > 0 }) _roster = b.Roster;
 
-        int? ownParagon = b.Character?.ParagonLevel ?? _live.Character.ParagonLevel;
-        string? ownClass = ClassDetector.Detect(b) ?? (_activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null);
-
-        // In-game reconciliation (uses ONLY the player's own character sheet, never a roster/nameplate line):
-        // if the captured paragon+class uniquely matches a DIFFERENT saved character, switch to it. Handles the
-        // "launched in-game on a different character than last time" case without trusting any in-game line.
-        var recon = CharacterResolver.ReconcileOwn(_profiles.All(), ownParagon, ownClass);
-        if (recon != null && recon.Slug != _activeSlug)
+        // A character was confirmed at char-select without its class being voiced (entered without
+        // highlighting): bind as soon as the class shows up in the live scan (weapon or skill).
+        if (_activeSlug == null && _pendingName != null && ClassDetector.Detect(b) is string pcls)
         {
-            SwitchToProfile(recon.Slug);
+            var nm = _pendingName; _pendingName = null; _pendingChars = new();
+            BindProfile(ProfileStore.Slugify(nm + "-" + pcls), nm, pcls);
         }
-        else if (_activeSlug == null)
+
+        // In-game reconciliation (uses ONLY the player's own character sheet, never a nameplate): if the
+        // captured paragon+class uniquely matches a DIFFERENT saved character, switch to it. Handles the
+        // "launched in-game on a different character than last time" case.
+        if (_activeSlug != null || _pendingName == null)
         {
-            // Identify from the (gated) character-select roster by paragon. Unique → bind; a same-paragon
-            // collision → don't guess: surface the candidates in the picker for the user to choose.
-            var id = CharacterResolver.Resolve(_roster, ownParagon);
-            if (id.Kind == CharacterResolver.IdKind.Resolved)
-            { _pendingChars = new(); BindProfile(ProfileStore.Slugify(id.Name!), id.Name!, ClassDetector.Detect(b)); }
-            else if (id.Kind == CharacterResolver.IdKind.Ambiguous)
-            { _pendingChars = id.Candidates.ToList(); }   // ApplyCharacterUi prompts the user to pick
+            int? ownParagon = b.Character?.ParagonLevel ?? _live.Character.ParagonLevel;
+            string? ownClass = ClassDetector.Detect(b) ?? (_activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null);
+            var recon = CharacterResolver.ReconcileOwn(_profiles.All(), ownParagon, ownClass);
+            if (recon != null && recon.Slug != _activeSlug) SwitchToProfile(recon.Slug);
         }
 
         var merged = new LiveBuild
@@ -575,6 +573,7 @@ public partial class MainWindow : Window
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.CharacterSelectDetected += () => Dispatcher.Invoke(OnCharacterSelect);
+            _watcher.CharacterConfirmed += id => Dispatcher.Invoke(() => OnCharacterConfirmed(id));
             // (portrait auto-capture removed — the doll uses a class-coloured glow, not a screenshot)
             _watcher.Start();
             _live = new LiveBuild
@@ -644,24 +643,28 @@ public partial class MainWindow : Window
     // your own gear/paragon was captured, so other players can never appear here. Visible once you have 2+.
     void ApplyCharacterUi()
     {
-        // Same-paragon collision: two of your characters share the paragon the screen reader just voiced, so
-        // we can't tell which you entered — prompt instead of guessing (never picks the wrong one).
+        // Ambiguous identity: the entered name matches several saved characters (e.g. Heoki·Rogue and
+        // Heoki·Barbarian) and the class wasn't voiced — prompt instead of guessing (never picks the wrong
+        // one); it also self-resolves silently the moment the class is detected from gear/skills.
         if (_pendingChars.Count > 1)
         {
             CharBtn.Visibility = Visibility.Visible;
             CharBtn.Content = "⚠ Which character?";
             CharList.Items.Clear();
-            foreach (var name in _pendingChars)
+            foreach (var slug in _pendingChars)
             {
-                var n = name;
-                var item = new ListBoxItem { Content = TB(n, Gold, 14, false), Tag = n };
-                item.MouseLeftButtonUp += (_, _) => { CharPopup.IsOpen = false; ResolvePendingCharacter(n); };
+                var s = slug;
+                var prof = _profiles.Get(s);
+                var label = (prof?.Name ?? s) + (prof?.Class != null ? $"  ·  {prof.Class}" : "");
+                var item = new ListBoxItem { Content = TB(label, Gold, 14, false), Tag = s };
+                item.MouseLeftButtonUp += (_, _) => { CharPopup.IsOpen = false; ResolvePendingCharacter(s); };
                 CharList.Items.Add(item);
             }
             return;
         }
 
-        var saved = _profiles.All();
+        // hide legacy/junk profiles (invalid char names) — they're absorbed into the first real bind
+        var saved = _profiles.All().Where(p => CharSelectParser.IsValidCharName(p.Name)).ToList();
         if (saved.Count <= 1) { CharBtn.Visibility = Visibility.Collapsed; CharPopup.IsOpen = false; return; }
 
         var active = saved.FirstOrDefault(p => p.Slug == _activeSlug);
@@ -886,15 +889,37 @@ public partial class MainWindow : Window
         else BindTargetToActiveProfile();   // no stored build for this character → adopt the current one
     }
 
-    // Character-select roster voiced: the player left the game to switch characters. Save the current
-    // loadout + build binding, then re-arm auto-identification so the next character is bound from its paragon.
+    // Character-select screen appeared: the player left the game to switch characters. Save the current
+    // loadout + build binding, then re-arm identification for whichever character they enter with next.
     void OnCharacterSelect()
     {
         PersistActiveProfile();
         BindTargetToActiveProfile();
-        _activeSlug = null;                       // unidentified → auto-resolve re-enabled
-        _pendingChars = new();                    // drop any stale disambiguation prompt
+        _activeSlug = null;                       // unidentified → identity comes from the next confirm
+        _pendingChars = new(); _pendingName = null;
         _live = new LiveBuild { Roster = _roster };
+        Render();
+    }
+
+    // The player entered the world from character-select. The identity is read straight off that screen —
+    // name always; class when the detail block was voiced (i.e. they highlighted the character first).
+    void OnCharacterConfirmed(CharSelectIdentity id)
+    {
+        if (!CharSelectParser.IsValidCharName(id.Name)) return;   // defensive: never bind a malformed name
+        _pendingChars = new(); _pendingName = null;
+
+        if (id.Class is string cls)
+        {
+            BindProfile(ProfileStore.Slugify(id.Name + "-" + cls), id.Name, cls);
+        }
+        else
+        {
+            // No class voiced (entered without highlighting). A unique saved profile with this name wins;
+            // several (e.g. Heoki·Rogue + Heoki·Barbarian) → prompt, and self-resolve once class is detected.
+            var matches = _profiles.All().Where(p => string.Equals(p.Name, id.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count == 1) BindProfile(matches[0].Slug, matches[0].Name, matches[0].Class);
+            else { _pendingName = id.Name; if (matches.Count > 1) _pendingChars = matches.Select(m => m.Slug).ToList(); }
+        }
         Render();
     }
 
@@ -904,6 +929,19 @@ public partial class MainWindow : Window
     {
         _activeSlug = slug;
         var stored = _profiles.Get(slug);
+        // First bind of a real (name,class) profile: absorb a legacy/junk profile's loadout as the base
+        // (pre-charselect-identity profiles like "My Character" hold the user's actual gear) and drop it.
+        if (stored == null)
+        {
+            var legacy = _profiles.All().FirstOrDefault(p =>
+                !CharSelectParser.IsValidCharName(p.Name) && (cls == null || p.Class == null || p.Class == cls));
+            if (legacy != null)
+            {
+                stored = new CharacterProfile { Slug = slug, Live = legacy.Live, TargetPath = legacy.TargetPath, TargetSource = legacy.TargetSource };
+                foreach (var junk in _profiles.All().Where(p => !CharSelectParser.IsValidCharName(p.Name)))
+                    _profiles.Delete(junk.Slug);
+            }
+        }
         if (stored != null)
             _live = new LiveBuild
             {
@@ -939,12 +977,13 @@ public partial class MainWindow : Window
         Render();
     }
 
-    // The user picked a character from the same-paragon disambiguation prompt — bind it (creating the profile).
-    void ResolvePendingCharacter(string name)
+    // The user picked a profile from the disambiguation prompt — bind it.
+    void ResolvePendingCharacter(string slug)
     {
-        _pendingChars = new();
-        BindProfile(ProfileStore.Slugify(name), name, ClassDetector.Detect(_live));
-        Toast("Set character to " + name);
+        _pendingChars = new(); _pendingName = null;
+        var prof = _profiles.Get(slug);
+        BindProfile(slug, prof?.Name ?? slug, prof?.Class);
+        Toast("Set character to " + (prof?.Name ?? slug) + (prof?.Class != null ? $" ({prof.Class})" : ""));
         Render();
     }
 
