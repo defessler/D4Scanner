@@ -102,6 +102,17 @@ public partial class MainWindow : Window
         return head;
     }
 
+    // the actual equipped weapon's type label (Bow / Sword / Dagger / Crossbow …) from the live build, by name
+    string? LiveWeaponType(string liveName)
+    {
+        var t = EffectiveLive().Gear.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, liveName))?.ItemType;
+        return string.IsNullOrWhiteSpace(t) ? null : char.ToUpperInvariant(t![0]) + t![1..];
+    }
+
+    static readonly string[] WeaponItemKeywords =
+        { "bow", "crossbow", "sword", "dagger", "mace", "axe", "staff", "scythe", "polearm", "spear", "wand", "glaive", "quarterstaff", "blade" };
+    static bool IsWeaponItem(string? t) => !string.IsNullOrEmpty(t) && WeaponItemKeywords.Any(k => t!.ToLowerInvariant().Contains(k));
+
     // Quiet EMPTY-slot ghost (game-icons.net geometry). Deliberately NOT the rarity tint and smaller than
     // real art, so an unresolved/still-extracting slot reads as a placeholder — not a failed-to-load blob.
     // The rarity colour lives on the IconBox border ring only.
@@ -896,8 +907,13 @@ public partial class MainWindow : Window
         string BaseLabel(int gi)
         {
             var g = gearGroups[gi];
-            if (SlotKey(g.Name) == "weapon" && _target != null && gi < _target.Gear.Count
-                && WeaponTypeLabel(_target.Gear[gi].ItemId) is string wl) return wl;
+            if (SlotKey(g.Name) == "weapon")
+            {
+                // My Gear / All view: label a weapon by the ACTUAL equipped weapon's type (a Bow reads "Bow",
+                // never "Crossbow"). Target view / empty slot falls back to the build's wanted weapon type.
+                if (_dollView is "mine" or "all" && g.LiveItems.Count > 0 && LiveWeaponType(g.LiveItems[0].Name) is string lt) return lt;
+                if (_target != null && gi < _target.Gear.Count && WeaponTypeLabel(_target.Gear[gi].ItemId) is string wl) return wl;
+            }
             return g.Name;
         }
         var baseLabels = Enumerable.Range(0, gearGroups.Count).Select(BaseLabel).ToList();
@@ -926,15 +942,35 @@ public partial class MainWindow : Window
         {
             var sk = SlotKey(u.Slot ?? "");
             if (sk.Length == 0 || !synthesizedUniques.Add(u.Name)) continue;   // skip if no slot or already added
-            string slotLabel = string.IsNullOrEmpty(u.Slot) ? u.Name : char.ToUpperInvariant(u.Slot![0]) + u.Slot[1..];
             var eq = liveNow.Gear.FirstOrDefault(it => DiffEngine.PhraseMatch(u.Name, it.Name))   // prefer exact unique match
                   ?? liveNow.Gear.FirstOrDefault(it => DiffEngine.SlotBaseName(it.Slot) == DiffEngine.SlotBaseName(u.Slot ?? "")
                          && !assignedLiveNames.Contains(it.Name)     // don't re-use a weapon already shown on a gear slot
                          && !synthesizedUniques.Any(n => !n.Equals(u.Name, StringComparison.OrdinalIgnoreCase) && DiffEngine.PhraseMatch(n, it.Name)));
+            string slotLabel = string.IsNullOrEmpty(u.Slot) ? u.Name : char.ToUpperInvariant(u.Slot![0]) + u.Slot[1..];
+            // a weapon unique reads by its real type ("Dagger"), never the generic "Weapon" slot name
+            if (sk == "weapon" && ((eq != null ? LiveWeaponType(eq.Name) : null) ?? WeaponTypeLabel(u.ItemId)) is string wt) slotLabel = wt;
             bool have = liveNow.Gear.Any(it => DiffEngine.PhraseMatch(u.Name, it.Name));
             var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
             if (eq != null) grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
             sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
+        }
+
+        // My Gear / All: surface EVERY equipped weapon as its own tile, labelled by its real type — including
+        // extras the build's weapon slots didn't claim — so all of the player's weapons show accurately.
+        if (_dollView is "mine" or "all")
+        {
+            var shownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sec in sections)
+                if (sec.Gear != null)
+                    foreach (var li in sec.Gear.LiveItems) shownNames.Add(li.Name);
+            foreach (var w in liveNow.Gear.Where(it => IsWeaponItem(it.ItemType)))
+            {
+                if (shownNames.Any(n => DiffEngine.PhraseMatch(n, w.Name))) continue;   // already shown on some tile
+                var grp = new Group { Name = w.ItemType ?? "Weapon", Kind = "gear", Total = 0, Matched = 0 };
+                grp.LiveItems.Add(new GearLiveItem { Name = w.Name, Rarity = w.Rarity, ItemPower = w.ItemPower, IsUnique = w.IsUnique, IsAncestral = w.IsAncestral, Aspect = w.Aspect });
+                string lbl = string.IsNullOrWhiteSpace(w.ItemType) ? "Weapon" : char.ToUpperInvariant(w.ItemType![0]) + w.ItemType![1..];
+                sections.Add(new Section { Key = "wpn:" + DiffEngine.Normalize(w.Name), Label = lbl, Matched = 0, Total = 0, Gear = grp });
+            }
         }
 
         foreach (var c in r.Categories)
@@ -3590,10 +3626,10 @@ public partial class MainWindow : Window
         return g;
     }
 
-    // ---- overview "Build Progress": a progress bar for EVERY requirement the build wants, grouped by
-    //      category (affixes by slot, aspects, unique powers, runes/sockets, skills, paragon, mercenary).
-    //      Valued affixes use the real rolled value + roll-% (with the threshold tick); presence items
-    //      (uniques/aspects/skills/glyphs) use a have/missing bar. ----
+    // ---- overview "Build Progress": an OVERALL progress bar per requirement the build wants. Gear affixes
+    //      are aggregated across all slots (one row per distinct affix → "Maximum Life 3/4"), not broken out
+    //      per slot. Aspects/uniques use have/missing bars; a one-slot affix still shows its real rolled value.
+    //      Skills/paragon/mercenary are neutral "from build" rows (not screen-reader-detectable). ----
     UIElement BuildProgressPanel(DiffReport r)
     {
         var sp = new StackPanel();
@@ -3620,13 +3656,40 @@ public partial class MainWindow : Window
             if (!tracked)
                 sp.Children.Add(TB("shown from the build · not detectable from the screen reader", Faint, 10.5, false, new Thickness(2, 0, 0, 3)));
 
-            foreach (var g in c.Groups)
+            if (c.Id == "gear")
             {
-                // gear slots get a slot sub-label; multi-group categories (paragon boards) get their group name
-                if ((c.Id == "gear" || c.Groups.Count > 1) && !string.IsNullOrEmpty(g.Name))
-                    sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Faint, 10.5, true, new Thickness(2, 6, 0, 1)));
-                foreach (var i in g.Items) sp.Children.Add(ProgressRow(i, tracked));
-                if (g.WantSockets.Count > 0) sp.Children.Add(SocketProgressRow(g));   // runes / sockets in this slot
+                // OVERALL view: aggregate every affix ACROSS all slots into one row per distinct affix, so the
+                // panel reads as overall progress (e.g. "Maximum Life 3/4") rather than a slot-by-slot breakdown.
+                var agg = new Dictionary<string, (int met, int under, int total, ReqItem sample)>(StringComparer.OrdinalIgnoreCase);
+                var order = new List<string>();
+                foreach (var g in c.Groups)
+                    foreach (var i in g.Items)
+                    {
+                        var key = i.Label.Trim();
+                        if (!agg.TryGetValue(key, out var v)) { v = (0, 0, 0, i); order.Add(key); }
+                        v.total++;
+                        if (i.Status == "met") v.met++; else if (i.Status == "under") v.under++;
+                        agg[key] = v;
+                    }
+                foreach (var key in order.OrderByDescending(k => agg[k].total).ThenBy(k => k, StringComparer.OrdinalIgnoreCase))
+                {
+                    var v = agg[key];
+                    sp.Children.Add(AggregateRow(key, v.met, v.under, v.total, v.sample));
+                }
+                // sockets / runes rolled up across all slots
+                int sockTotal = c.Groups.Count(g => g.WantSockets.Count > 0);
+                if (sockTotal > 0)
+                    sp.Children.Add(AggregateRow("Sockets / runes", c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone), 0, sockTotal, null));
+            }
+            else
+            {
+                foreach (var g in c.Groups)
+                {
+                    // keep meaningful sub-groups (paragon BOARDS / GLYPHS) — these aren't gear slots
+                    if (c.Groups.Count > 1 && !string.IsNullOrEmpty(g.Name))
+                        sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Faint, 10.5, true, new Thickness(2, 6, 0, 1)));
+                    foreach (var i in g.Items) sp.Children.Add(ProgressRow(i, tracked));
+                }
             }
         }
 
@@ -3647,6 +3710,31 @@ public partial class MainWindow : Window
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(196) });   // 2 bar
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });   // 3 value
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // 4 spacer
+        return row;
+    }
+
+    // an aggregated requirement (one affix rolled up across every slot that wants it): met/total + a bar.
+    // Falls back to the single instance's real rolled value + roll-% when the affix is wanted on just one slot.
+    UIElement AggregateRow(string name, int met, int under, int total, ReqItem? sample)
+    {
+        string status = met >= total ? "met" : (met + under) > 0 ? "under" : "missing";
+        var (glyph, col) = Look(status);
+        double pct = total > 0 ? 100.0 * (met + 0.5 * under) / total : 0;   // under-rolled counts as half
+
+        var row = ProgressRowGrid();
+        var mark = TB(glyph, col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB(name, status == "met" ? Soft : Ink, 12.5, false); lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
+        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+        bool single = total == 1 && sample?.RollPct != null;
+        var bar = RollBar(single ? sample!.RollPct!.Value : pct, col, 188, 11, single ? _minRollPct : (double?)null);
+        bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
+        string vtext = single
+            ? ((sample!.Val ?? "") + $"   {Math.Round(sample.RollPct!.Value)}%").Trim()   // real value for a one-slot affix
+            : $"{met}/{total}" + (under > 0 ? $"  (+{under} low)" : "");
+        var val = TB(vtext, status == "missing" ? Soft : col, 12, status != "missing");
+        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
+        Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
 

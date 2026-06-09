@@ -129,6 +129,13 @@ public static class DiffEngine
         return false;
     }
 
+    static readonly string[] WeaponKeywords =
+        { "crossbow", "bow", "sword", "dagger", "mace", "axe", "staff", "scythe", "polearm", "spear", "wand", "glaive", "quarterstaff", "blade" };
+    /// <summary>True when the type/itemId names any recognised weapon (vs. armor/jewellery).</summary>
+    static bool IsWeaponType(string? s) => !string.IsNullOrEmpty(s) && WeaponKeywords.Any(k => s.ToLowerInvariant().Contains(k));
+    /// <summary>True for ranged weapons (bow / crossbow). Used to keep melee weapons out of ranged slots.</summary>
+    static bool IsRangedWeapon(string? s) => !string.IsNullOrEmpty(s) && s.ToLowerInvariant() is var t && (t.Contains("crossbow") || t.Contains("bow"));
+
     /// <summary>Human-readable weapon type from ItemId.</summary>
     public static string? WeaponTypeFromItemId(string? itemId) {
         if (string.IsNullOrEmpty(itemId)) return null;
@@ -166,6 +173,12 @@ public static class DiffEngine
                     for (int i = 0; i < liveIts.Count; i++)
                     {
                         if (taken[i]) continue;
+                        // Weapon-class gate: a melee weapon (sword/dagger/…) must never fill a ranged slot
+                        // (crossbow/bow) or vice-versa. Without this, a crossbow slot with no live crossbow
+                        // borrows the player's melee dagger by affix-count — the exact bug being fixed.
+                        if (kv.Key == "weapon" && IsWeaponType(target.Gear[idx].ItemId) && IsWeaponType(liveIts[i].ItemType)
+                            && IsRangedWeapon(liveIts[i].ItemType) != IsRangedWeapon(target.Gear[idx].ItemId))
+                            continue;
                         int score = aff.Count(a => liveIts[i].Affixes.Any(x => PhraseMatch(a.Name, x.Text)));
                         // Type-affinity bonus: when the target slot has an ItemId encoding a weapon type (e.g.
                         // "2HCrossbow_Legendary_..."), strongly prefer a live item whose ItemType matches.
