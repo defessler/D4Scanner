@@ -495,6 +495,7 @@ public partial class MainWindow : Window
             Gear      = MergeGear(_live.Gear, b.Gear),
             Inventory = b.Inventory,
             Character = b.Character?.Any == true ? b.Character : _live.Character,   // keep captured attributes across OCR-only updates
+            Skills    = b.Skills.Count > 0 ? b.Skills : _live.Skills,
         };
         var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, merged);
         _live = merged;
@@ -548,6 +549,7 @@ public partial class MainWindow : Window
                 Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
                 Inventory = _watcher.Build.Inventory,
                 Character = _watcher.Build.Character?.Any == true ? _watcher.Build.Character : _live.Character,
+                Skills    = _watcher.Build.Skills.Count > 0 ? _watcher.Build.Skills : _live.Skills,
             };
         }
         _captureEngine?.Dispose(); _captureEngine = null;
@@ -801,6 +803,11 @@ public partial class MainWindow : Window
         "paragon" => "Paragon", "aspects" => "Aspects", "mercenary" => "Mercenary", _ => id,
     };
 
+    // Categories that can't be tracked from the screen reader — hidden from progress + excluded from the % so
+    // permanently-unmatchable requirements don't cap the build below 100%. (Paragon's net effect is shown
+    // separately in the doll centre from the captured character sheet; skills are handled per the research.)
+    static bool IsUntrackableCat(string id) => id is "paragon" or "mercenary";   // skills ARE trackable (skill-tree ranks)
+
     // Render the whole window to a PNG without showing it — for headless inspection of the live UI.
     internal void HeadlessRender(string outPng, int w = 1300, int h = 2100)
     {
@@ -876,11 +883,16 @@ public partial class MainWindow : Window
         }
         var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
         UpdateBuildNamePlaceholder();
-        OverallPct.Text = r.Pct + "%";
-
-        OverallCount.Text = $"{r.Matched} / {r.Total} met  ·  {_live.Gear.Count} equipped items"
-            + (r.Under > 0 ? $"  ·  ⚠ {r.Under} under-rolled" : "");
-        OverallBar.Value = r.Pct;
+        // Only count requirements we can actually detect from the screen reader. Skills / paragon boards+glyphs /
+        // mercenary aren't trackable, so counting them as "missing" would permanently cap the build below 100%.
+        // They're hidden everywhere; the % reflects trackable gear/affix/aspect/unique progress.
+        var tCats = r.Categories.Where(c => !IsUntrackableCat(c.Id)).ToList();
+        int tMatched = tCats.Sum(c => c.Matched), tTotal = tCats.Sum(c => c.Total), tUnder = tCats.Sum(c => c.Under);
+        int tPct = tTotal > 0 ? (int)Math.Round(100.0 * tMatched / tTotal) : 0;
+        OverallPct.Text = tPct + "%";
+        OverallCount.Text = $"{tMatched} / {tTotal} met  ·  {_live.Gear.Count} equipped items"
+            + (tUnder > 0 ? $"  ·  ⚠ {tUnder} under-rolled" : "");
+        OverallBar.Value = tPct;
 
         if (_rawView)
         {
@@ -1010,7 +1022,7 @@ public partial class MainWindow : Window
         // glanceable layout: the paper doll (visual anchor) beside the guidance rail (do-this-next + activities)
         // so the core signal sits above the fold. On narrow windows the two columns stack instead.
         if (ActualWidth > 50) _narrow = ActualWidth < TwoColMin;
-        var doll = PaperDoll(sections, r.TargetClass, r.Pct);
+        var doll = PaperDoll(sections, r.TargetClass, tPct);
         ((FrameworkElement)doll).VerticalAlignment = VerticalAlignment.Top;
         var rail = new StackPanel();
         var guide = GuidancePanel(r); if (guide != null) rail.Children.Add(guide);
@@ -2873,6 +2885,15 @@ public partial class MainWindow : Window
             center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
             foreach (var s in shownCats) center.Children.Add(CatCell(s));
         }
+        // Paragon's NET EFFECT (captured live): total attributes + level, in the doll centre where the
+        // character stands — their stat block. Only on "My Gear"/"All" (your character), not the Target view.
+        var pc = EffectiveLive().Character;
+        if (_dollView is "mine" or "all" && pc.Any)
+        {
+            center.Margin = new Thickness(20, 2, 20, 0); center.MinWidth = 168;
+            if (center.Children.Count > 0) center.Children.Add(new Border { Height = 12 });
+            center.Children.Add(DollParagonBlock(pc));
+        }
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
@@ -3642,13 +3663,17 @@ public partial class MainWindow : Window
     {
         var sp = new StackPanel();
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        var tot = TB($"{r.Matched} / {r.Total} met" + (r.Under > 0 ? $"   ·   ⚠ {r.Under} under-rolled" : ""), Soft, 12.5, false);
+        var tCats = r.Categories.Where(c => !IsUntrackableCat(c.Id)).ToList();
+        int tm = tCats.Sum(c => c.Matched), tt = tCats.Sum(c => c.Total), tu = tCats.Sum(c => c.Under);
+        var tot = TB($"{tm} / {tt} met" + (tu > 0 ? $"   ·   ⚠ {tu} under-rolled" : ""), Soft, 12.5, false);
         tot.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(tot, Dock.Right); hdr.Children.Add(tot);
         hdr.Children.Add(TBs("BUILD PROGRESS", Gold, 15, true));
         sp.Children.Add(hdr);
         sp.Children.Add(new Border { Height = 1, Background = B("#33D4A730"), Margin = new Thickness(0, 0, 0, 2) });
 
-        foreach (var c in r.Categories.Where(c => c.Total > 0))
+        // Only trackable categories. Skills / paragon boards+glyphs / mercenary aren't screen-reader-detectable
+        // and are hidden (paragon's net effect shows in the doll centre from the captured character sheet).
+        foreach (var c in r.Categories.Where(c => c.Total > 0 && !IsUntrackableCat(c.Id)))
         {
             // category roll-up: name + matched/total + a small bar
             var ch = new DockPanel { Margin = new Thickness(0, 13, 0, 3) };
@@ -3658,47 +3683,46 @@ public partial class MainWindow : Window
             ch.Children.Add(TBs(c.Name.ToUpperInvariant(), Gold, 12.5, true));
             sp.Children.Add(ch);
 
-            // skills / paragon / mercenary can't be read from the screen reader, so show them from the build
-            // as neutral reference rows rather than alarming red "missing".
-            bool tracked = c.Id is not ("skills" or "paragon" or "mercenary");
-            // Paragon: we CAN capture the net effect — total attributes + paragon level from the character sheet.
-            if (c.Id == "paragon") AddParagonLive(sp);
-            if (!tracked)
-                sp.Children.Add(TB("individual boards / glyphs shown from the build · not detectable from the screen reader", Faint, 10.5, false, new Thickness(2, 0, 0, 3)));
-
             if (c.Id == "gear")
             {
                 // OVERALL view: aggregate every affix ACROSS all slots into one row per distinct affix, so the
                 // panel reads as overall progress (e.g. "Maximum Life 3/4") rather than a slot-by-slot breakdown.
-                var agg = new Dictionary<string, (int met, int under, int total, ReqItem sample)>(StringComparer.OrdinalIgnoreCase);
+                var agg = new Dictionary<string, (int met, int under, int total, List<string> vals)>(StringComparer.OrdinalIgnoreCase);
                 var order = new List<string>();
                 foreach (var g in c.Groups)
                     foreach (var i in g.Items)
                     {
                         var key = i.Label.Trim();
-                        if (!agg.TryGetValue(key, out var v)) { v = (0, 0, 0, i); order.Add(key); }
+                        if (!agg.TryGetValue(key, out var v)) { v = (0, 0, 0, new List<string>()); order.Add(key); }
                         v.total++;
                         if (i.Status == "met") v.met++; else if (i.Status == "under") v.under++;
+                        // collect the REAL rolled value for every slot you actually have this affix on
+                        if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val))
+                            v.vals.Add(i.Val + (i.RollPct != null ? $" ({Math.Round(i.RollPct.Value)}%)" : ""));
                         agg[key] = v;
                     }
                 foreach (var key in order.OrderByDescending(k => agg[k].total).ThenBy(k => k, StringComparer.OrdinalIgnoreCase))
                 {
                     var v = agg[key];
-                    sp.Children.Add(AggregateRow(key, v.met, v.under, v.total, v.sample));
+                    sp.Children.Add(AggregateRow(key, v.met, v.under, v.total, v.vals));
                 }
                 // sockets / runes rolled up across all slots
                 int sockTotal = c.Groups.Count(g => g.WantSockets.Count > 0);
                 if (sockTotal > 0)
-                    sp.Children.Add(AggregateRow("Sockets / runes", c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone), 0, sockTotal, null));
+                {
+                    int sockDone = c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone);
+                    sp.Children.Add(AggregateRow("Sockets / runes", sockDone, 0, sockTotal,
+                        sockDone > 0 ? new List<string> { $"{sockDone}/{sockTotal} filled" } : new List<string>()));
+                }
             }
-            else
+            else   // aspects / uniques / skills — all trackable (untrackable categories are filtered out above)
             {
                 foreach (var g in c.Groups)
                 {
-                    // keep meaningful sub-groups (paragon BOARDS / GLYPHS) — these aren't gear slots
+                    // keep meaningful sub-groups (ACTIVE SKILLS / KEY PASSIVES) — these aren't gear slots
                     if (c.Groups.Count > 1 && !string.IsNullOrEmpty(g.Name))
                         sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Faint, 10.5, true, new Thickness(2, 6, 0, 1)));
-                    foreach (var i in g.Items) sp.Children.Add(ProgressRow(i, tracked));
+                    foreach (var i in g.Items) sp.Children.Add(ProgressRow(i));
                 }
             }
         }
@@ -3710,37 +3734,33 @@ public partial class MainWindow : Window
         };
     }
 
-    // Paragon's NET EFFECT, captured live from the character sheet: total attributes + paragon level. These
-    // totals already include everything paragon grants (the per-node board bonuses can't be summed reliably).
-    void AddParagonLive(StackPanel sp)
+    // Compact paragon stat block for the doll centre: level in the header, then total attributes. These
+    // totals (captured from the character sheet) already include everything paragon grants.
+    UIElement DollParagonBlock(LiveCharacter c)
     {
-        var c = EffectiveLive().Character;
-        if (!c.Any)
+        var sp = new StackPanel { MinWidth = 150 };
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 5) };
+        if (c.ParagonLevel is int lvl) { var lv = TBs(lvl.ToString(), Gold, 13.5, true); lv.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(lv, Dock.Right); hdr.Children.Add(lv); }
+        hdr.Children.Add(TBs("PARAGON", Faint, 11, true));
+        sp.Children.Add(hdr);
+        void Stat(string label, int? v) { if (v is int x) sp.Children.Add(DollStatRow(label, x.ToString("#,0"))); }
+        Stat("Strength", c.Strength);
+        Stat("Dexterity", c.Dexterity);
+        Stat("Intelligence", c.Intelligence);
+        Stat("Willpower", c.Willpower);
+        return new Border
         {
-            sp.Children.Add(TB("Open D4's character sheet (press C) with the screen reader running to capture your total attributes + paragon level.",
-                Faint, 10.5, false, new Thickness(2, 1, 0, 4)));
-            return;
-        }
-        sp.Children.Add(TBs("YOUR CHARACTER  ·  captured live", Steel, 10.5, true, new Thickness(2, 2, 0, 3)));
-        if (c.ParagonLevel is int lvl) sp.Children.Add(AttrRow("Paragon level", lvl.ToString(), Gold));
-        if (c.Strength is int s)     sp.Children.Add(AttrRow("Strength", s.ToString("#,0"), Ink));
-        if (c.Dexterity is int d)    sp.Children.Add(AttrRow("Dexterity", d.ToString("#,0"), Ink));
-        if (c.Intelligence is int it) sp.Children.Add(AttrRow("Intelligence", it.ToString("#,0"), Ink));
-        if (c.Willpower is int w)    sp.Children.Add(AttrRow("Willpower", w.ToString("#,0"), Ink));
+            Background = B("#1B1A23"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5), Padding = new Thickness(13, 9, 13, 10), Child = sp,
+        };
     }
 
-    // a captured-attribute row: ◆ + label + value (no bar — attributes have no target to progress toward)
-    UIElement AttrRow(string label, string value, Brush valCol)
+    UIElement DollStatRow(string label, string value)
     {
-        var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var mark = TB("◆", Green, 11, false); mark.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(mark, 0); row.Children.Add(mark);
-        var lbl = TB(label, Soft, 12.5, false); lbl.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        var v = TBs(value, valCol, 12.5, true); v.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(v, 2); row.Children.Add(v);
-        return row;
+        var dp = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
+        var v = TBs(value, Ink, 12.5, true); v.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(v, Dock.Right); dp.Children.Add(v);
+        var lbl = TB(label, Soft, 11.5, false); lbl.VerticalAlignment = VerticalAlignment.Center; dp.Children.Add(lbl);
+        return dp;
     }
 
     // shared progress row: mark | label | bar | value | (spacer). Fixed widths keep label→bar→value grouped
@@ -3749,16 +3769,16 @@ public partial class MainWindow : Window
     {
         var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });    // 0 mark
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(320) });   // 1 label
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(196) });   // 2 bar
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });   // 3 value
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });   // 1 label
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });   // 2 bar
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(260) });   // 3 value (real rolled values)
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // 4 spacer
         return row;
     }
 
-    // an aggregated requirement (one affix rolled up across every slot that wants it): met/total + a bar.
-    // Falls back to the single instance's real rolled value + roll-% when the affix is wanted on just one slot.
-    UIElement AggregateRow(string name, int met, int under, int total, ReqItem? sample)
+    // an aggregated requirement (one affix rolled up across every slot that wants it): a bar for how many
+    // slots have it met + the REAL rolled values of the slots you have it on (e.g. "+1,185 (81%) · +972 (96%)").
+    UIElement AggregateRow(string name, int met, int under, int total, List<string> vals)
     {
         string status = met >= total ? "met" : (met + under) > 0 ? "under" : "missing";
         var (glyph, col) = Look(status);
@@ -3767,16 +3787,14 @@ public partial class MainWindow : Window
         var row = ProgressRowGrid();
         var mark = TB(glyph, col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(mark, 0); row.Children.Add(mark);
-        var lbl = TB(name, status == "met" ? Soft : Ink, 12.5, false); lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
+        var lbl = TB(name + (total > 1 ? $"   ×{total}" : ""), status == "met" ? Soft : Ink, 12.5, false);
+        lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        bool single = total == 1 && sample?.RollPct != null;
-        var bar = RollBar(single ? sample!.RollPct!.Value : pct, col, 188, 11, single ? _minRollPct : (double?)null);
-        bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
-        string vtext = single
-            ? ((sample!.Val ?? "") + $"   {Math.Round(sample.RollPct!.Value)}%").Trim()   // real value for a one-slot affix
-            : $"{met}/{total}" + (under > 0 ? $"  (+{under} low)" : "");
+        var bar = RollBar(pct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        Grid.SetColumn(bar, 2); row.Children.Add(bar);
+        string vtext = vals.Count > 0 ? string.Join("  ·  ", vals) : "missing";
         var val = TB(vtext, status == "missing" ? Soft : col, 12, status != "missing");
-        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
+        val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
@@ -3796,15 +3814,16 @@ public partial class MainWindow : Window
         lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
 
-        var bar = RollBar(pct, col, 188, 11, valued ? _minRollPct : (double?)null);
+        var bar = RollBar(pct, col, 158, 11, valued ? _minRollPct : (double?)null);
         bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
         string vtext = !tracked ? "from build"
             : valued ? ((i.Val ?? "") + $"   {Math.Round(i.RollPct!.Value)}%" + (i.Status == "under" && i.Need != null ? "   " + i.Need : "")).Trim()
-            : i.Status == "met" ? (i.Have ?? "equipped") : i.Status == "under" ? "partial" : (i.Have != null ? "have: " + i.Have : "missing");
+            : i.Status == "met" ? (i.Have ?? "equipped")
+            : i.Status == "under" ? (i.Have != null ? i.Have + (i.Need != null ? "  ·  " + i.Need : "") : "partial")
+            : (i.Have != null ? "have: " + i.Have : "missing");
         var val = TB(vtext, !tracked ? Faint : i.Status == "missing" ? Soft : col, 12, tracked && i.Status != "missing");
-        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center;
-        val.TextAlignment = TextAlignment.Right; val.TextWrapping = TextWrapping.Wrap;
+        val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
@@ -3820,7 +3839,7 @@ public partial class MainWindow : Window
         var lbl = TB("Sockets:  " + string.Join("  ·  ", g.WantSockets), Ink, 12.5, false);
         lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        var bar = RollBar(done ? 100 : 0, col, 188, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        var bar = RollBar(done ? 100 : 0, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
         var val = TB(g.SocketStatus ?? (done ? "filled" : "empty"), done ? col : Soft, 12, done);
         val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;

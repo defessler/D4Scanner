@@ -333,9 +333,18 @@ public static class DiffEngine
             var sitems = target.Skills.Select(t =>
             {
                 var hit = live.Skills.FirstOrDefault(s => PhraseMatch(t.Name, s.Name));
-                bool done = hit != null && (t.Rank == null || (hit.Rank ?? 0) >= t.Rank);
-                string label = t.Name + (t.Rank != null ? " " + (hit?.Rank ?? 0) + "/" + t.Rank : "");
-                return new ReqItem { Label = label, Done = done, Source = done ? "vision" : null };
+                int have = hit?.Rank ?? 0;
+                int want = t.Rank ?? 1;
+                bool done = hit != null && have >= want;
+                return new ReqItem
+                {
+                    Label = t.Name, Done = done,
+                    Status = done ? "met" : hit != null ? "under" : "missing",
+                    Have = hit != null ? $"{have} pts" : null,
+                    Need = t.Rank != null ? $"wants {want}" : null,
+                    Val = hit != null ? have.ToString() : null,
+                    Source = done ? "tts" : null,
+                };
             }).ToList();
             skillGroups.Add(MakeGroup("Active Skills", sitems));
         }
@@ -343,9 +352,14 @@ public static class DiffEngine
         {
             var kitems = target.KeyPassives.Select(name =>
             {
-                bool done = live.Skills.Any(s => s.IsKeyPassive && PhraseMatch(name, s.Name)) ||
-                            live.Skills.Any(s => PhraseMatch(name, s.Name));
-                return new ReqItem { Label = name, Done = done, Source = done ? "vision" : null };
+                var hit = live.Skills.FirstOrDefault(s => PhraseMatch(name, s.Name));
+                bool done = hit != null;
+                return new ReqItem
+                {
+                    Label = name, Done = done, Status = done ? "met" : "missing",
+                    Have = hit?.Rank != null ? $"{hit.Rank} pts" : (done ? "selected" : null),
+                    Source = done ? "tts" : null,
+                };
             }).ToList();
             skillGroups.Add(MakeGroup("Key Passives", kitems));
         }

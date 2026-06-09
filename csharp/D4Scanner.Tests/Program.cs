@@ -986,6 +986,31 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("CharacterParser: gold line ignored", 316, cp3.Character.Strength);
 }
 
+// ---- SkillParser: skill/passive name + rank from the skill tree ----
+{
+    var sp = new SkillParser();
+    string[] lines =
+    {
+        "[2026-06-09T05:43:37Z]Dance of Knives", "[2026-06-09T05:43:37Z]RANK 20/15", "[2026-06-09T05:43:37Z](Item Contribution: 5)", "[2026-06-09T05:43:37Z]Core",
+        "[2026-06-09T05:43:37Z]Unhindered characters can move through enemies.", "[2026-06-09T05:43:37Z]Concealment", "[2026-06-09T05:43:37Z]RANK 17/15",
+        "[2026-06-09T05:43:37Z]Smoke Grenade", "[2026-06-09T05:43:37Z]RANK 11/15",
+    };
+    foreach (var l in lines) sp.Feed(l);
+    var sk = sp.Skills;
+    Eq("SkillParser: captured 3 skills", 3, sk.Count);
+    Eq("SkillParser: Dance of Knives rank", 20, sk.First(s => s.Name == "Dance of Knives").Rank);
+    Eq("SkillParser: Concealment rank", 17, sk.First(s => s.Name == "Concealment").Rank);
+    Check("SkillParser: prose line before RANK isn't mis-captured as a skill",
+        !sk.Any(s => s.Name.StartsWith("Unhindered")));
+
+    // re-hover updates the rank (dedup by name), and a bare RANK with no preceding name is ignored
+    var sp2 = new SkillParser();
+    sp2.Feed("[2026-06-09T05:43:37Z]Concealment"); sp2.Feed("[2026-06-09T05:43:37Z]RANK 5/15");
+    sp2.Feed("[2026-06-09T05:43:37Z]Concealment"); sp2.Feed("[2026-06-09T05:43:37Z]RANK 17/15");
+    Eq("SkillParser: dedup keeps latest rank", 1, sp2.Skills.Count);
+    Eq("SkillParser: latest rank wins", 17, sp2.Skills[0].Rank);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
