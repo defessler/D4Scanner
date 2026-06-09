@@ -179,6 +179,8 @@ public partial class MainWindow : Window
     List<RosterEntry> _roster = new();
     List<string> _pendingChars = new();   // ambiguous identity: candidate profile SLUGS awaiting a manual pick
     string? _pendingName;                 // confirmed at char-select without a voiced class; binds once class is detected
+    bool _confirmSeen;                    // a char-select confirm happened this session: identity is authoritative,
+                                          // so the paragon-based reconciler (launched-in-game fallback) stays out
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
@@ -509,9 +511,11 @@ public partial class MainWindow : Window
         }
 
         // In-game reconciliation (uses ONLY the player's own character sheet, never a nameplate): if the
-        // captured paragon+class uniquely matches a DIFFERENT saved character, switch to it. Handles the
-        // "launched in-game on a different character than last time" case.
-        if (_activeSlug != null || _pendingName == null)
+        // captured paragon+class uniquely matches a DIFFERENT saved character, switch to it. STRICTLY the
+        // "launched mid-game, char-select never seen" fallback — once a char-select confirm has happened
+        // this session, that identity is authoritative and must not be second-guessed (live-verified: stale
+        // sheet data after a switch would otherwise flip identity back to the character just left).
+        if (!_confirmSeen && _pendingName == null)
         {
             int? ownParagon = b.Character?.ParagonLevel ?? _live.Character.ParagonLevel;
             string? ownClass = ClassDetector.Detect(b) ?? (_activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null);
@@ -669,7 +673,8 @@ public partial class MainWindow : Window
 
         var active = saved.FirstOrDefault(p => p.Slug == _activeSlug);
         CharBtn.Visibility = Visibility.Visible;
-        CharBtn.Content = active != null ? "◆ " + active.Name : "Character: ?";
+        // class shown too — same-name characters (Heoki·Rogue / Heoki·Barbarian) are otherwise indistinguishable
+        CharBtn.Content = active != null ? "◆ " + active.Name + (active.Class != null ? " · " + active.Class : "") : "Character: ?";
 
         CharList.Items.Clear();
         foreach (var p in saved.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
@@ -907,10 +912,11 @@ public partial class MainWindow : Window
     {
         if (!CharSelectParser.IsValidCharName(id.Name)) return;   // defensive: never bind a malformed name
         _pendingChars = new(); _pendingName = null;
+        _confirmSeen = true;   // identity now authoritative — paragon reconciler stands down
 
         if (id.Class is string cls)
         {
-            BindProfile(ProfileStore.Slugify(id.Name + "-" + cls), id.Name, cls);
+            BindProfile(ProfileStore.Slugify(id.Name + "-" + cls), id.Name, cls, id.Paragon);
         }
         else
         {
@@ -925,7 +931,7 @@ public partial class MainWindow : Window
 
     // Bind the active character to a profile (creating it if new). Merges freshly-scanned gear OVER the
     // profile's stored loadout so partial scans fill in from last-known state.
-    void BindProfile(string slug, string name, string? cls)
+    void BindProfile(string slug, string name, string? cls, int? paragon = null)
     {
         _activeSlug = slug;
         var stored = _profiles.Get(slug);
@@ -954,7 +960,7 @@ public partial class MainWindow : Window
         var prof = stored ?? new CharacterProfile { Slug = slug };
         prof.Name = name; if (cls != null) prof.Class = cls;
         prof.Live = _live; prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
-        if (_live.Character?.ParagonLevel is int pl) prof.Paragon = pl;
+        if ((_live.Character?.ParagonLevel ?? paragon) is int pl) prof.Paragon = pl;   // char-sheet first, else the char-select read
         _profiles.Save(prof);
         _profiles.ActiveSlug = slug;
         ApplyProfileTarget(stored);   // load this character's build (or adopt the current one)
