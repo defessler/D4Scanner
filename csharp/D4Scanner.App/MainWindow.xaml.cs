@@ -624,32 +624,24 @@ public partial class MainWindow : Window
     }
 
     // Active-character picker: shows the detected character and lets the user switch (manual override).
-    // Visible once more than one character is known (saved profile or roster entry); auto-detection handles
-    // the single-character case silently.
+    // Lists ONLY characters you've actually played (saved profiles) — never raw roster names, since the
+    // character-select roster format also matches other players seen in game. A profile only exists once
+    // your own gear/paragon was captured, so other players can never appear here. Visible once you have 2+.
     void ApplyCharacterUi()
     {
         var saved = _profiles.All();
-        // union of saved profiles and roster names not yet saved, keyed by slug
-        var bySlug = new Dictionary<string, (string name, string? cls, int? para)>(StringComparer.Ordinal);
-        foreach (var p in saved) bySlug[p.Slug] = (p.Name, p.Class, p.Paragon);
-        foreach (var e in _roster)
-        {
-            var slug = ProfileStore.Slugify(e.Name);
-            if (!bySlug.ContainsKey(slug)) bySlug[slug] = (e.Name, null, e.Paragon);
-        }
+        if (saved.Count <= 1) { CharBtn.Visibility = Visibility.Collapsed; CharPopup.IsOpen = false; return; }
 
-        if (bySlug.Count <= 1) { CharBtn.Visibility = Visibility.Collapsed; CharPopup.IsOpen = false; return; }
-
-        var active = _activeSlug != null && bySlug.TryGetValue(_activeSlug, out var a) ? a.name : null;
+        var active = saved.FirstOrDefault(p => p.Slug == _activeSlug);
         CharBtn.Visibility = Visibility.Visible;
-        CharBtn.Content = active != null ? "◆ " + active : "Character: ?";
+        CharBtn.Content = active != null ? "◆ " + active.Name : "Character: ?";
 
         CharList.Items.Clear();
-        foreach (var (slug, info) in bySlug.OrderBy(kv => kv.Value.name, StringComparer.OrdinalIgnoreCase))
+        foreach (var p in saved.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
         {
-            var label = info.name + (info.cls != null ? $"  ·  {info.cls}" : "") + (info.para is int pl ? $"  ·  P{pl}" : "");
-            var item = new ListBoxItem { Content = TB(label, Ink, 14, false), Tag = slug, IsSelected = slug == _activeSlug };
-            var captured = slug;
+            var label = p.Name + (p.Class != null ? $"  ·  {p.Class}" : "") + (p.Paragon is int pl ? $"  ·  P{pl}" : "");
+            var item = new ListBoxItem { Content = TB(label, Ink, 14, false), Tag = p.Slug, IsSelected = p.Slug == _activeSlug };
+            var captured = p.Slug;
             item.MouseLeftButtonUp += (_, _) => { CharPopup.IsOpen = false; SwitchToProfile(captured); };
             CharList.Items.Add(item);
         }
@@ -3113,35 +3105,12 @@ public partial class MainWindow : Window
         dollStack.Children.Add(grid);
         if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
 
-        // wrap is a 2-row Grid so the character portrait backdrop bleeds behind the tab bar row too;
-        // the toggle buttons sit on top (opaque) while the portrait fades through beneath them. The
-        // portrait is masked with a RadialGradientBrush so it emanates from the character's centre and
-        // dissolves to transparent at every edge (restored from the pre-v0.9.4 atmospheric design).
-        var bc = ((SolidColorBrush)ClassColor(className)).Color;
+        // Stack the view toggle (tabs) above the paper doll. (The class-coloured radial bloom backdrop was
+        // removed: it hard-clipped at the panel edge and couldn't be masked cleanly across the doll's
+        // varying width — a clean dark panel reads better than a clipped glow.)
         var wrap = new Grid { Margin = new Thickness(0, 0, 0, 8) };
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        // Backdrop: a clean class-coloured radial glow — NOT a screenshot (the auto-captured portrait was
-        // unreliable). It spans the WHOLE doll (both rows) so the bloom emanates from the centre and
-        // dissolves smoothly at every edge — confining it to one row hard-clipped its top at the tab strip.
-        // A 3-stop falloff keeps it soft; the tabs/gear sit on top so the faint tint never fights them.
-        var glow = new Border
-        {
-            Background = new RadialGradientBrush
-            {
-                GradientOrigin = new Point(0.5, 0.48), Center = new Point(0.5, 0.48), RadiusX = 0.62, RadiusY = 0.62,
-                GradientStops =
-                {
-                    new GradientStop(Color.FromArgb(0x34, bc.R, bc.G, bc.B), 0),
-                    new GradientStop(Color.FromArgb(0x12, bc.R, bc.G, bc.B), 0.55),
-                    new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1),
-                },
-            }
-        };
-        Grid.SetRow(glow, 0);
-        Grid.SetRowSpan(glow, 2);
-        wrap.Children.Add(glow);
 
         var toggle = DollToggle();
         Grid.SetRow(toggle, 0);
@@ -3995,12 +3964,11 @@ public partial class MainWindow : Window
         var bar = RollBar(p.ProgressPct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
-        // value column: progress toward the combined goal — "have X / wants Y" when both are known
+        // value column: progress toward the combined goal as bare "have / wants" numbers (e.g. "1,000 / 1,500")
         string vtext =
-            p.HaveAny && p.WantsKnown ? $"have {p.Fmt(p.HaveTotal)}  /  wants {p.Fmt(p.WantsTotal)}"
-          : p.HaveAny                 ? $"have {p.Fmt(p.HaveTotal)}"
-          : p.WantsKnown && p.WantsTotal > 0 ? $"wants {p.Fmt(p.WantsTotal)}"
-          : p.Status == "missing"     ? "missing"
+            p.WantsKnown && p.WantsTotal > 0 ? $"{p.Fmt(p.HaveTotal)} / {p.Fmt(p.WantsTotal)}"
+          : p.HaveAny                        ? p.Fmt(p.HaveTotal)
+          : p.Status == "missing"            ? "missing"
           : "";
         if (vtext.Length > 0)
         {
