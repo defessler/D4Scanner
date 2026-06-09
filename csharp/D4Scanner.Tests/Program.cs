@@ -1058,6 +1058,48 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("AffixAggregate: missing affix has no haveTotal", !miss[0].HaveAny);
 }
 
+// ---- UpgradeScorer (All Items scored upgrade list) ----
+{
+    var upTarget = new TargetBuild { Gear =
+    {
+        new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life", Min = 1000 }, new TargetAffix { Name = "Dexterity" } } },
+        new TargetGear { Slot = "Ring", Affixes = { new TargetAffix { Name = "Critical Strike Chance" }, new TargetAffix { Name = "Maximum Life", Min = 1000 } } },
+    } };
+
+    var weights = UpgradeScorer.GoalWeights(upTarget);
+    Eq("GoalWeights: Maximum Life wanted on 2 slots", 2, weights["Maximum Life"]);
+    Eq("GoalWeights: Dexterity wanted on 1 slot", 1, weights["Dexterity"]);
+    Eq("GoalWeights: Critical Strike Chance wanted on 1 slot", 1, weights["Critical Strike Chance"]);
+
+    // equipped helm has only Maximum Life met (no Dexterity) -> the bar to beat for the helm slot is 1
+    var equippedHelm = new Item { Name = "Old Helm", Slot = "Helm", Equipped = true, Affixes = { new Affix { Text = "Maximum Life", Value = 1200 } } };
+    var upLive = new LiveBuild { Gear = { equippedHelm } };
+
+    var helm3 = new Item { Name = "Helm3", Slot = "Helm", ItemPower = 800, Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1500 }, new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Critical Strike Chance", Value = 5 } } };
+    var helm2 = new Item { Name = "Helm2", Slot = "Helm", ItemPower = 800, Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1500 }, new Affix { Text = "Dexterity", Value = 60 } } };
+    var helm1 = new Item { Name = "Helm1", Slot = "Helm", ItemPower = 800, Affixes = {
+        new Affix { Text = "Maximum Life", Value = 800 }, new Affix { Text = "Dexterity", Value = 60 } } };   // Max Life under 1000
+    var ringJunk = new Item { Name = "RingJunk", Slot = "Ring", ItemPower = 800, Affixes = { new Affix { Text = "Strength", Value = 100 } } };
+    var candidates = new List<Item> { ringJunk, helm1, helm2, helm3 };   // deliberately unsorted
+
+    var scored = UpgradeScorer.Score(upTarget, upLive, candidates, 80);
+    Eq("UpgradeScorer: 4 items scored", 4, scored.Count);
+    Eq("UpgradeScorer: rank 1 is Helm3 (met 2, highest goal)", "Helm3", scored[0].Item.Name);
+    Eq("UpgradeScorer: rank 2 is Helm2 (met 2, lower goal)", "Helm2", scored[1].Item.Name);
+    Eq("UpgradeScorer: rank 3 is Helm1 (met 1)", "Helm1", scored[2].Item.Name);
+    Eq("UpgradeScorer: rank 4 is RingJunk (met 0)", "RingJunk", scored[3].Item.Name);
+
+    Eq("UpgradeScorer: Helm3 slot met", 2, scored[0].SlotMet);
+    Eq("UpgradeScorer: Helm3 goal score (life 2 + dex 1 + crit 1)", 4.0, scored[0].GoalScore);
+    Check("UpgradeScorer: Helm3 is an upgrade (2 > equipped 1)", scored[0].IsUpgrade);
+    Check("UpgradeScorer: Helm2 is an upgrade (2 > equipped 1)", scored[1].IsUpgrade);
+    Check("UpgradeScorer: Helm1 is NOT an upgrade (1 == equipped 1)", !scored[2].IsUpgrade);
+    Check("UpgradeScorer: RingJunk is NOT an upgrade (0 met)", !scored[3].IsUpgrade);
+    Eq("UpgradeScorer: Helm3 equipped-met bar", 1, scored[0].EquippedMet);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
