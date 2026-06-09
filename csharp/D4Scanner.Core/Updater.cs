@@ -28,9 +28,11 @@ public static class Updater
 
     // ---- version helpers ----
 
-    /// <summary>Returns the running assembly's version as "vX.Y.Z" to match GitHub tag_name.</summary>
+    /// <summary>Returns the running app's version as "vX.Y.Z" to match GitHub tag_name. Reads the ENTRY
+    /// (App) assembly — Updater lives in Core, whose own assembly version is unset (defaults to 1.0.0),
+    /// so GetExecutingAssembly() here would report a bogus v1.0.0 in non-CI builds.</summary>
     public static string RunningVersion() =>
-        "v" + (System.Reflection.Assembly.GetExecutingAssembly()
+        "v" + ((System.Reflection.Assembly.GetEntryAssembly() ?? System.Reflection.Assembly.GetExecutingAssembly())
                .GetName().Version?.ToString(3) ?? "0.0.0");
 
     public static bool IsNewer(string latest, string running)

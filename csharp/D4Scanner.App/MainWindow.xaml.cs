@@ -21,7 +21,7 @@ public partial class MainWindow : Window
                           Green = B("#4FB05A"),
                           Amber = B("#D4A730"),     // D4 amber — stat values and highlights ONLY
                           Miss = B("#CC3030"),      // red for missing/error
-                          Card = B("#16151A"),      // near-black with very slight purple-grey (D4 panels)
+                          Card = B("#1C1B22"),      // panel surface — one notch above bg (#16151A) for elevation
                           CardHi = B("#1E1D24"),    // slightly lighter panel hover
                           Line = B("#252430"),      // dark separator
                           Edge = B("#383540"),      // dark border
@@ -32,10 +32,11 @@ public partial class MainWindow : Window
                           GoldHi = B("#F0C04A"),    // bright gold for active state
                           TileSel = B("#22202C");   // subtle purple-dark selected tile
     // item-rarity colors (tuned to match D4's in-game slot coloring)
-    static readonly Brush RMagic  = B("#4A8FE0"), RRare   = B("#D4A730"), RLegend = B("#E8711A"),
+    // Rare must NOT equal the amber UI accent (#D4A730) — loot must read apart from chrome; legendary reconciled to one hex.
+    static readonly Brush RMagic  = B("#4A8FE0"), RRare   = B("#ECE07C"), RLegend = B("#E08A3C"),
                           RUnique = B("#C4935A"), RMythic = B("#C92B2B"), RAncestral = B("#66D0F8");
     static readonly FontFamily Serif = new(new Uri("pack://application:,,,/"), "./Assets/Fonts/#Cinzel");
-    const double UI = 1.55;   // intentional large-but-clean scale for the rendered body
+    const double UI = 1.3;   // body scale — denser than the old 1.55 large-print, still comfortably readable
 
     static Brush RarityBrush(string? rarity)
     {
@@ -101,13 +102,17 @@ public partial class MainWindow : Window
         return head;
     }
 
-    // a tinted slot silhouette (game-icons.net geometry, 0..512 box, auto-scaled in a Viewbox)
+    // Quiet EMPTY-slot ghost (game-icons.net geometry). Deliberately NOT the rarity tint and smaller than
+    // real art, so an unresolved/still-extracting slot reads as a placeholder — not a failed-to-load blob.
+    // The rarity colour lives on the IconBox border ring only.
+    static readonly Brush SlotGhost = B("#666A665E");   // ~40% alpha dim neutral
     static FrameworkElement? SlotIcon(string key, Brush tint, double size)
     {
         if (!Icons.Geom.TryGetValue(key, out var d)) return null;
         Geometry g; try { g = Geometry.Parse(d); } catch { return null; }
-        var path = new System.Windows.Shapes.Path { Data = g, Fill = tint };
-        return new Viewbox { Width = size, Height = size, Child = path, VerticalAlignment = VerticalAlignment.Center };
+        var path = new System.Windows.Shapes.Path { Data = g, Fill = SlotGhost };
+        double s = size * 0.62;   // ghost sits smaller than full-bleed real art
+        return new Viewbox { Width = s, Height = s, Child = path, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     }
 
     // real D4 item art (runtime-fetched, cached) for a named item; null until it's downloaded
@@ -163,7 +168,8 @@ public partial class MainWindow : Window
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
     bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
     bool _shimNeedsUpgrade;                // cached at StartWatching; cleared when user installs this session
-    const double TwoColMin = 1080;         // below this width the overview reflows to a single column
+    const double TwoColMin = 1200;         // below this width the overview reflows to a single column so the
+                                           // guidance rail never starves below a comfortable width (doll ~672 + rail ~400 + chrome)
     string? _classFilter;                  // active class chip in the search dropdown
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
@@ -504,13 +510,7 @@ public partial class MainWindow : Window
             _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
-            _watcher.CharacterPanelDetected += () =>
-                Task.Delay(800).ContinueWith(_ => Dispatcher.Invoke(() =>
-                {
-                    // Auto-capture portrait after a short delay so the panel finishes animating
-                    var err = CaptureCharacterPortrait();
-                    if (err == null) { Render(); AppLog("portrait auto-captured from character panel"); }
-                }));
+            // (portrait auto-capture removed — the doll uses a class-coloured glow, not a screenshot)
             _watcher.Start();
             _live = new LiveBuild
             {
@@ -776,6 +776,8 @@ public partial class MainWindow : Window
         _uiReady = true;
         _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
         ReloadTarget();
+        var renderLog = System.Environment.GetEnvironmentVariable("D4_RENDER_LOG");   // render-test seam: load gear from a fixture log
+        if (!string.IsNullOrWhiteSpace(renderLog) && File.Exists(renderLog)) _log = renderLog;
         try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
         // render-test seams (env-gated, no effect in normal use): exercise states the harness can't click to
         var seed = System.Environment.GetEnvironmentVariable("D4_RENDER_STATE");
@@ -785,6 +787,28 @@ public partial class MainWindow : Window
         else if (seed == "raw") _rawView = true;
         Render();
         if (seed == "help" || System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
+        try
+        {
+            if (seed == "all") ShowInventoryModal();
+            else if (seed == "settings") ShowSettings();
+        }
+        catch { /* modal seeding is render-test-only; never block a render */ }
+
+        // render-test seam: synchronously warm real game-data icons so a headless render shows actual art
+        // (in the live app extraction is async + re-renders on the Changed event). Env-gated; no-op in normal use.
+        if (System.Environment.GetEnvironmentVariable("D4_RENDER_WARMICONS") == "1")
+        {
+            try
+            {
+                GameDataIcons.GameDir = CaptureSetup.GameDir();
+                foreach (var u in _target?.Uniques ?? new()) GameDataIcons.Get(u.Image);
+                foreach (var g in _target?.Gear ?? new()) GameDataIcons.Get(g.Image);
+                foreach (var it in _live.Gear) GameDataIcons.Get(BaseIconIndex.HandleForType(it.ItemType, it.Slot));
+                System.Threading.Thread.Sleep(12000);   // let the single extraction worker drain
+                Render();
+            }
+            catch { /* render-test only */ }
+        }
 
         var content = (FrameworkElement)Content;
         var size = new Size(w, h);
@@ -1176,26 +1200,6 @@ public partial class MainWindow : Window
         timer.Start();
     }
 
-    // character portrait: look for character.png / character.jpg in the d4scanner dir so the user can
-    // place a screenshot there and have it appear in the doll center behind their class emblem.
-    Image? LoadCharacterImage()
-    {
-        var dir = Path.GetDirectoryName(TargetLoader.DefaultLogPath()) ?? "";
-        foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".webp" })
-        {
-            var p = Path.Combine(dir, "character" + ext);
-            if (!File.Exists(p)) continue;
-            try
-            {
-                var bi = new BitmapImage();
-                bi.BeginInit(); bi.UriSource = new Uri(p); bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit();
-                return new Image { Source = bi };
-            }
-            catch { }
-        }
-        return null;
-    }
-
     // a small clickable text link (caller wires MouseLeftButtonUp)
     TextBlock MakeLink(string text, Brush color)
     {
@@ -1203,6 +1207,35 @@ public partial class MainWindow : Window
         t.Cursor = System.Windows.Input.Cursors.Hand;
         t.VerticalAlignment = VerticalAlignment.Center;
         return t;
+    }
+
+    // Wrap a TextBox into a proper search field: a vector magnifier glyph (no OS emoji → no tofu) + a
+    // placeholder that hides once typing starts, so an empty filter reads as an input, not a dead black box.
+    Grid SearchField(TextBox box, string placeholder)
+    {
+        box.Background = B("#101015"); box.Foreground = Ink; box.CaretBrush = Gold;
+        box.BorderBrush = EdgeHi; box.BorderThickness = new Thickness(1);
+        box.Padding = new Thickness(30, 0, 10, 0); box.Height = 32; box.FontSize = 12.5;
+        box.VerticalContentAlignment = VerticalAlignment.Center;
+
+        var mag = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M5,5 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0 M7.4,7.4 L10.6,10.6"),
+            Stroke = Faint, StrokeThickness = 1.4,
+            StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(11, 0, 0, 0), IsHitTestVisible = false,
+        };
+        var ph = TB(placeholder, Faint, 12.5, false);
+        ph.HorizontalAlignment = HorizontalAlignment.Left; ph.VerticalAlignment = VerticalAlignment.Center;
+        ph.Margin = new Thickness(31, 0, 0, 0); ph.IsHitTestVisible = false;
+        ph.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Visible : Visibility.Collapsed;
+        box.TextChanged += (_, _) => ph.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Visible : Visibility.Collapsed;
+
+        var g = new Grid { Margin = box.Margin };
+        box.Margin = new Thickness(0);
+        g.Children.Add(box); g.Children.Add(mag); g.Children.Add(ph);
+        return g;
     }
 
     // body zoom (Ctrl +/-/0): a LayoutTransform on the scrollable body, so the header/status stay fixed
@@ -1648,25 +1681,8 @@ public partial class MainWindow : Window
             ocrStatusLbl.Text = ""; SaveSettings(); StartWatching();
         };
 
-        // character portrait capture
-        sp.Children.Add(TBs("Character portrait", Ink, 13, true, new Thickness(0, 0, 0, 4)));
-        var portDesc = TB("Open your character panel in D4 (press C) then click Capture. The portrait appears behind the paper doll.", Soft, 11.5, false);
-        portDesc.TextWrapping = TextWrapping.Wrap; portDesc.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(portDesc);
-        var portRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var portStatus = TB("", Soft, 11.5, false); portStatus.VerticalAlignment = VerticalAlignment.Center;
-        DockPanel.SetDock(portStatus, Dock.Left); portRow.Children.Add(portStatus);
-        var portBtn = new Button { Content = "Capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 5, 14, 5), HorizontalAlignment = HorizontalAlignment.Right };
-        portBtn.Click += (_, _) =>
-        {
-            portBtn.IsEnabled = false; portBtn.Content = "…";
-            var err = CaptureCharacterPortrait();
-            portBtn.Content = err == null ? "✓" : "Capture";
-            portStatus.Text = err ?? "Saved";
-            portStatus.Foreground = err == null ? Green : Miss;
-            portBtn.IsEnabled = true;
-            if (err == null) Render();
-        };
-        portRow.Children.Add(portBtn); sp.Children.Add(portRow);
+        // (Character-portrait capture removed: the doll uses a clean class-coloured glow, not a screenshot,
+        //  because the auto-captured frame was unreliable. See PaperDoll().)
 
         // ── DISPLAY section ───────────────────────────────────────────────────
         Section("DISPLAY");
@@ -1676,7 +1692,7 @@ public partial class MainWindow : Window
         var thrDesc = TB("Affixes whose roll falls below this % of their range are flagged ⚠ under-rolled.", Soft, 11.5, false);
         thrDesc.TextWrapping = TextWrapping.Wrap; thrDesc.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(thrDesc);
         var thrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var thrLbl = TBs(((int)_minRollPct) + "%", Crimson, 13.5, true);
+        var thrLbl = TBs(((int)_minRollPct) + "%", Gold, 13.5, true);   // neutral readout — crimson is for errors only
         thrLbl.VerticalAlignment = VerticalAlignment.Center; thrLbl.MinWidth = 38; thrLbl.TextAlignment = TextAlignment.Right;
         DockPanel.SetDock(thrLbl, Dock.Right); thrRow.Children.Add(thrLbl);
         var thrSlider = new System.Windows.Controls.Slider { Minimum = 0, Maximum = 100, Value = _minRollPct, TickFrequency = 5, IsSnapToTickEnabled = true, VerticalAlignment = VerticalAlignment.Center };
@@ -1696,7 +1712,7 @@ public partial class MainWindow : Window
         DockPanel.SetDock(openAppLogBtn, Dock.Left); logRow.Children.Add(openAppLogBtn);
         sp.Children.Add(logRow);
         var diagRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var diagBtn = new Button { Content = "🩺 Diagnose capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
+        var diagBtn = new Button { Content = "Diagnose capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
         diagBtn.Click += (_, _) => ShowTtsDiagnostics();
         DockPanel.SetDock(diagBtn, Dock.Left); diagRow.Children.Add(diagBtn);
         var diagHint = TB("See exactly what TTS parsed, how each item was classified, and why anything was dropped.", Faint, 11, false);
@@ -1829,8 +1845,8 @@ public partial class MainWindow : Window
         xb.MouseLeave += (_, _) => xb.Background = System.Windows.Media.Brushes.Transparent;
         DockPanel.SetDock(xb, Dock.Right); hd.Children.Add(xb);
         var titleSp = new StackPanel { Orientation = Orientation.Horizontal };
-        titleSp.Children.Add(TB("🩺 ", Gold, 16, true));
-        titleSp.Children.Add(TBs("TTS capture diagnostics", Ink, 17, true));
+        titleSp.Children.Add(TBs("◆ ", Gold, 15, true));   // themed diamond, not an OS emoji (no glyph in the UI font)
+        titleSp.Children.Add(TBs("TTS capture diagnostics", Gold, 17, true));
         hd.Children.Add(titleSp);
         sp.Children.Add(hd);
 
@@ -2115,7 +2131,7 @@ public partial class MainWindow : Window
         }
 
         sp.Children.Add(TB("Search", Faint, 10.5, true, new Thickness(2, 0, 0, 3)));
-        sp.Children.Add(searchBox);
+        sp.Children.Add(SearchField(searchBox, "Search items by name, affix, or rune…"));
         sp.Children.Add(tagBox);
         sp.Children.Add(affixPopup);
         sp.Children.Add(chipBar);
@@ -2159,7 +2175,7 @@ public partial class MainWindow : Window
             var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
             var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
             details.Children.Add(TB(slotLbl + (eq ? "  ●" : "  ○"), Faint, 10, false));
-            var nameBlock = TB(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;
+            var nameBlock = TBs(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;   // serif (Cinzel) — D4 item-name cue
             details.Children.Add(nameBlock);
             if (item.ItemPower > 0)
                 details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
@@ -2260,54 +2276,18 @@ public partial class MainWindow : Window
 
         var panel = new Border
         {
-            Background = B("#0D0D10"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+            Background = B("#131217"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1.4),
             CornerRadius = new CornerRadius(8), Padding = new Thickness(22, 18, 22, 20),
             MaxWidth = 1060, MaxHeight = 700,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             Child = sp, ClipToBounds = true,
+            // drop shadow so the modal clearly lifts off the dimmed page (near-black on near-black otherwise)
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 44, ShadowDepth = 0, Opacity = 0.7, Color = Colors.Black },
         };
         overlay.Children.Add(panel);
         RootLayer.Children.Add(overlay);
     }
 
-    // ---- character portrait capture ----
-    // Uses WGC (works in exclusive fullscreen) with PrintWindow as the internal fallback.
-    // CaptureCharacterPortrait() is synchronous (called from a button click), so it runs
-    // GrabAsync() synchronously via GetAwaiter().GetResult() — this is safe because the
-    // button handler is on the UI thread and the async path only blocks briefly.
-
-    string? CaptureCharacterPortrait()
-    {
-        var d4 = System.Diagnostics.Process.GetProcessesByName("Diablo IV").FirstOrDefault();
-        if (d4 == null || d4.MainWindowHandle == IntPtr.Zero)
-            return "Diablo IV is not running. Launch the game and open the character panel (C key), then try again.";
-
-        System.Drawing.Bitmap? bmp;
-        try { bmp = D4Scanner.App.Capture.WindowsGraphicsCapture.GrabAsync().GetAwaiter().GetResult(); }
-        catch { bmp = null; }
-
-        if (bmp == null)
-            return "Capture failed. Make sure D4 is not minimized and try again.";
-
-        using (bmp)
-        {
-            int w = bmp.Width, h = bmp.Height;
-            if (w < 100 || h < 100) return "D4 window is too small to capture.";
-            // D4 character panel: the model stands in the centre-left third of the screen.
-            // Relative coords tested against 1080p and 1440p: model occupies roughly
-            // x = 13-40% of width, y = 5-91% of height.
-            int cropW = Math.Max(200, w * 28 / 100);
-            int cropH = Math.Max(400, h * 87 / 100);
-            int cropX = Math.Max(0, w * 13 / 100);
-            int cropY = Math.Max(0, h *  5 / 100);
-            cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
-            using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
-                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            var dest = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "character.png");
-            crop.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
-        }
-        return null;
-    }
 
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
@@ -2344,6 +2324,24 @@ public partial class MainWindow : Window
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
         "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "RE-TEMPER" or "IMPROVE" => Amber, _ => Ink,
     };
+
+    // Verb chip: meaningful action verbs (FIND/EQUIP/IMPRINT/TEMPER/…) get a filled colour pill; the
+    // ubiquitous low-signal "GET" (VerbColor → Ink) renders as a quiet ghost/outline chip so it never
+    // shouts louder than the verbs that actually matter. Centralised so the rail + hero stay consistent.
+    Border VerbChip(string verb, double fontSize, Thickness pad, double minW = 66)
+    {
+        var vc = VerbColor(verb);
+        bool ghost = ReferenceEquals(vc, Ink);   // "GET" → quiet, but still clearly readable (not invisible)
+        var txt = TB(verb, ghost ? B("#BEB9AF") : B("#0C0C0F"), fontSize, true); txt.TextAlignment = TextAlignment.Center;
+        return new Border
+        {
+            Background = ghost ? B("#272631") : vc,           // subtle filled surface a step above the panel
+            BorderBrush = ghost ? EdgeHi : System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(ghost ? 1 : 0),
+            CornerRadius = new CornerRadius(3), Padding = pad, MinWidth = minW,   // fixed-ish width so labels align
+            VerticalAlignment = VerticalAlignment.Center, Child = txt,
+        };
+    }
 
     // First-run setup card: two steps with live checkmarks.
     // Step 2 presents OCR and TTS as distinct choices with clear trade-offs.
@@ -2517,22 +2515,26 @@ public partial class MainWindow : Window
     // to do next is unmistakable. Clicking focuses that slot/category.
     FrameworkElement HeroCard(GuideStep a)
     {
-        var inner = new StackPanel();
-        inner.Children.Add(TBs("DO THIS FIRST", VerbColor(a.Verb), 9.5, true, new Thickness(0, 0, 0, 5)));
+        var inner = new StackPanel { Margin = new Thickness(13, 11, 14, 12) };
+        inner.Children.Add(TBs("DO THIS FIRST", Gold, 9.5, true, new Thickness(0, 0, 0, 5)));
         var hl = TB(a.Headline ?? a.Text, Ink, 16, true); hl.TextWrapping = TextWrapping.Wrap; inner.Children.Add(hl);
 
         var sub = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
         if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); sub.Children.Add(d); }
-        var vt = TB(a.Verb, B("#0C0C0F"), 10, true); vt.TextAlignment = TextAlignment.Center;
-        var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(8, 2, 8, 3), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), Child = vt };
+        var vb = VerbChip(a.Verb, 10, new Thickness(8, 2, 8, 3), 62); vb.Margin = new Thickness(0, 0, 10, 0);
         DockPanel.SetDock(vb, Dock.Left); sub.Children.Add(vb);
         var tx = TB(a.Text, Soft, 12, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap; sub.Children.Add(tx);
         inner.Children.Add(sub);
 
+        // cool elevated surface (clearly raised above the step list) with a full-height gold priority spine
+        var body = new DockPanel();
+        var accentBar = new Border { Width = 4, Background = Gold };   // DockPanel stretches it to full card height
+        DockPanel.SetDock(accentBar, Dock.Left); body.Children.Add(accentBar);
+        body.Children.Add(inner);
         var card = new Border
         {
-            Background = B("#1A1416"), BorderBrush = B("#7A3338"), BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(5),
-            Padding = new Thickness(14, 11, 14, 12), Margin = new Thickness(0, 0, 0, 12), Child = inner,
+            Background = B("#262533"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5),
+            Margin = new Thickness(0, 0, 0, 12), Child = body, ClipToBounds = true,
         };
         if (a.FocusKey is string fk)
         {
@@ -2581,9 +2583,8 @@ public partial class MainWindow : Window
     // one Do-Next row: verb chip + text + detail; click to jump to that slot/category (shared by DO NEXT + Next Steps)
     FrameworkElement StepRow(GuideStep a)
     {
-        var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2), Background = System.Windows.Media.Brushes.Transparent };
-        var vt = TB(a.Verb, B("#0C0C0F"), 9.5, true); vt.TextAlignment = TextAlignment.Center;
-        var vb = new Border { Background = VerbColor(a.Verb), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), MinWidth = 62, VerticalAlignment = VerticalAlignment.Center, Child = vt };
+        var row = new DockPanel { Margin = new Thickness(0, 1, 0, 1), Background = System.Windows.Media.Brushes.Transparent };
+        var vb = VerbChip(a.Verb, 9.5, new Thickness(7, 2, 7, 2), 58); vb.Margin = new Thickness(0, 0, 10, 0);
         DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
         if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
         var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap;
@@ -2622,7 +2623,7 @@ public partial class MainWindow : Window
         {
             var search = new TextBox { Text = _stepsSearch, Margin = new Thickness(0, 0, 0, 10) };
             search.TextChanged += (_, _) => { _stepsSearch = search.Text; _stepsPage = 0; RefreshSteps(all); };
-            root.Children.Add(search);
+            root.Children.Add(SearchField(search, "Search steps…"));
 
             var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
             void Chip(int? tier, string label)
@@ -2789,19 +2790,23 @@ public partial class MainWindow : Window
         PlaceWeapons(new[] { "weapon", "offhand" });
         foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
 
-        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(20, 2, 20, 0), MinWidth = 160 };
+        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
 
-        // Center column holds the BUILD category cells. The character portrait is rendered as a
-        // radial-masked backdrop behind the entire doll (see the wrap Grid below) — not as a framed
-        // thumbnail here — so it emanates from the character and dissolves smoothly at every edge.
+        // Center column holds the BUILD category cells (uniques without a doll slot). When there are none
+        // it collapses to zero width so the armor (left) and jewelry (right) columns pull together instead
+        // of leaving a hollow channel down the middle of the doll.
 
         // skills/paragon/mercenary hidden for now; uniques shown only if any have no doll slot
         bool allUniquesMapped = _target == null || _target.Uniques.All(u => SlotKey(u.Slot ?? "").Length > 0);
         var shownCats = cats.Where(s => s.Total > 0
             && s.Cat?.Id != "skills" && s.Cat?.Id != "paragon" && s.Cat?.Id != "mercenary"
             && (s.Cat?.Id != "uniques" || !allUniquesMapped)).ToList();
-        if (shownCats.Count > 0) center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
-        foreach (var s in shownCats) center.Children.Add(CatCell(s));
+        if (shownCats.Count > 0)
+        {
+            center.Margin = new Thickness(20, 2, 20, 0); center.MinWidth = 160;
+            center.Children.Add(TBs("BUILD", Faint, 11, true, new Thickness(2, 0, 0, 6)));
+            foreach (var s in shownCats) center.Children.Add(CatCell(s));
+        }
 
         Grid.SetColumn(left, 0); grid.Children.Add(left);
         Grid.SetColumn(center, 1); grid.Children.Add(center);
@@ -2820,42 +2825,20 @@ public partial class MainWindow : Window
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         wrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var backdropPortrait = LoadCharacterImage();
-        if (backdropPortrait != null)
+        // Backdrop: a clean class-coloured radial glow — NOT a screenshot. The auto-captured portrait was
+        // unreliable (it frequently grabbed a town/world frame, not the character panel), so the photo
+        // backdrop was dropped entirely. The glow sits behind the doll rows only (row 1), never the tab
+        // strip (row 0), so it can't bleed into the tabs or the guidance rail.
+        var glow = new Border
         {
-            // UniformToFill fills the entire container so the opacity mask has edge content to fade.
-            backdropPortrait.Stretch = Stretch.UniformToFill;
-            backdropPortrait.HorizontalAlignment = HorizontalAlignment.Center;
-            backdropPortrait.VerticalAlignment   = VerticalAlignment.Center;
-            backdropPortrait.Opacity = 0.55;
-            // Gradient centre at the character torso so all four edges dissolve smoothly rather than cut off.
-            var mask = new RadialGradientBrush
+            Background = new RadialGradientBrush
             {
-                GradientOrigin = new Point(0.5, 0.50), Center = new Point(0.5, 0.50), RadiusX = 0.58, RadiusY = 0.68,
-            };
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.26));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x90, 0, 0, 0), 0.52));
-            mask.GradientStops.Add(new GradientStop(Color.FromArgb(0x20, 0, 0, 0), 0.76));
-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
-            backdropPortrait.OpacityMask = mask;
-            Grid.SetRowSpan(backdropPortrait, 2);
-            wrap.Children.Add(backdropPortrait);
-        }
-        else
-        {
-            // No portrait captured yet: a soft class-coloured radial glow keeps the centre alive.
-            var glow = new Border
-            {
-                Background = new RadialGradientBrush
-                {
-                    GradientOrigin = new Point(0.5, 0.45), Center = new Point(0.5, 0.45), RadiusX = 0.5, RadiusY = 0.72,
-                    GradientStops = { new GradientStop(Color.FromArgb(0x30, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
-                }
-            };
-            Grid.SetRowSpan(glow, 2);
-            wrap.Children.Add(glow);
-        }
+                GradientOrigin = new Point(0.5, 0.42), Center = new Point(0.5, 0.42), RadiusX = 0.52, RadiusY = 0.74,
+                GradientStops = { new GradientStop(Color.FromArgb(0x2A, bc.R, bc.G, bc.B), 0), new GradientStop(Color.FromArgb(0x00, bc.R, bc.G, bc.B), 1) },
+            }
+        };
+        Grid.SetRow(glow, 1);
+        wrap.Children.Add(glow);
 
         var toggle = DollToggle();
         Grid.SetRow(toggle, 0);
@@ -3039,26 +3022,39 @@ public partial class MainWindow : Window
         const double artW = 34, artH = 50;   // inset: 10px margin each side so placeholder sits inside the frame
         var grid = new Grid { Width = boxW, Height = boxH };
 
-        // dark base + diagonal rarity-colored overlay (top-right → bottom-left, matching D4's slot shading)
+        // Resolve real art up-front: an unresolved (still-extracting / no-handle) tile renders as a QUIET
+        // empty-slot placeholder — dim neutral ring, no rarity glow — so a cold-start doll isn't a wall of
+        // bright rarity rings around empty boxes. Rarity colour returns to the ring once the art lands.
+        var realArt = RealIcon(iconName, artW, artH, wid, wimg);
+        bool resolved = realArt != null;
+
         grid.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
-        var overlay = new LinearGradientBrush { StartPoint = new Point(1, 0), EndPoint = new Point(0.1, 1) };
-        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, frameRc.R, frameRc.G, frameRc.B), 0));
-        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x28, frameRc.R, frameRc.G, frameRc.B), 0.35));
-        overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, frameRc.R, frameRc.G, frameRc.B), 1));
-        grid.Children.Add(new Border { Background = overlay, CornerRadius = new CornerRadius(4) });
+        if (resolved)
+        {
+            // dark base + diagonal rarity-colored overlay (top-right → bottom-left, matching D4's slot shading)
+            var overlay = new LinearGradientBrush { StartPoint = new Point(1, 0), EndPoint = new Point(0.1, 1) };
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, frameRc.R, frameRc.G, frameRc.B), 0));
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x28, frameRc.R, frameRc.G, frameRc.B), 0.35));
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, frameRc.R, frameRc.G, frameRc.B), 1));
+            grid.Children.Add(new Border { Background = overlay, CornerRadius = new CornerRadius(4) });
+        }
 
-        // rarity border ring (primary color)
-        grid.Children.Add(new Border { BorderBrush = frameBrush, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+        // border ring: full rarity colour when art is resolved; dim neutral while the tile is a ghost
+        grid.Children.Add(new Border
+        {
+            BorderBrush = resolved ? frameBrush : (Brush)Edge,
+            BorderThickness = new Thickness(resolved ? 1.6 : 1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1),
+        });
 
-        // ancestral inner shimmer ring
-        if (ancestral)
+        // ancestral inner shimmer ring (only once real art is showing)
+        if (ancestral && resolved)
             grid.Children.Add(new Border
             {
                 BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x66, 0xD0, 0xF8)),
                 BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3),
             });
 
-        var icon = SlotOrItemIcon(iconName, SlotKey(s.Label), rcol, artW, artH, wid, wimg);
+        var icon = realArt ?? SlotIcon(SlotKey(s.Label), rcol, Math.Max(artW, artH)) ?? (FrameworkElement)TB("", rcol, 1, false);
         icon.HorizontalAlignment = HorizontalAlignment.Center; icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
 

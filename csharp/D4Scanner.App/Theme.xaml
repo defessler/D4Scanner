@@ -178,6 +178,43 @@
     </Setter>
   </Style>
 
+  <!-- ============ CheckBox (themed — replaces the stock white Win32 box) ============ -->
+  <Style TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <StackPanel Orientation="Horizontal" Background="Transparent">
+            <Border x:Name="box" Width="17" Height="17" CornerRadius="3" VerticalAlignment="Center"
+                    Background="#0C0C0F" BorderBrush="{StaticResource Edge}" BorderThickness="1">
+              <Path x:Name="check" Data="M3,7.5 L7,11.5 L13,3.5" Stroke="#11100D" StrokeThickness="2.2"
+                    Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+            </Border>
+            <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center"/>
+          </StackPanel>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="box" Property="Background" Value="{StaticResource Accent}"/>
+              <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource AccentHi}"/>
+              <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource EdgeHi}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.42"/>
+              <Setter TargetName="box" Property="Background" Value="#141318"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- ============ ListBox (autocomplete / dropdowns) ============ -->
   <Style TargetType="ListBox">
     <Setter Property="Background" Value="Transparent"/>
@@ -235,13 +272,13 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ProgressBar">
-          <Border CornerRadius="3" Background="#1A1B20" BorderBrush="#0A0A0C" BorderThickness="1" ClipToBounds="True">
+          <Border CornerRadius="3" Background="#2B2A35" BorderBrush="#0A0A0C" BorderThickness="1" ClipToBounds="True">
             <Grid>
               <Border x:Name="PART_Track"/>
               <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="2">
                 <Border.Background>
                   <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#B22F2F" Offset="0"/><GradientStop Color="#E85C5C" Offset="1"/>
+                    <GradientStop Color="#7A5E10" Offset="0"/><GradientStop Color="#D4A730" Offset="1"/>
                   </LinearGradientBrush>
                 </Border.Background>
               </Border>
