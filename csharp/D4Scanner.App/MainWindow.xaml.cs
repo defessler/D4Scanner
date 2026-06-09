@@ -3819,7 +3819,7 @@ public partial class MainWindow : Window
 
         string vtext = !tracked ? "from build"
             : valued ? ((i.Val ?? "") + $"   {Math.Round(i.RollPct!.Value)}%" + (i.Status == "under" && i.Need != null ? "   " + i.Need : "")).Trim()
-            : i.Status == "met" ? (i.Have ?? "equipped")
+            : i.Status == "met" ? (i.Have != null ? i.Have + (i.Need != null ? "  ·  " + i.Need : "") : "equipped")
             : i.Status == "under" ? (i.Have != null ? i.Have + (i.Need != null ? "  ·  " + i.Need : "") : "partial")
             : (i.Have != null ? "have: " + i.Have : "missing");
         var val = TB(vtext, !tracked ? Faint : i.Status == "missing" ? Soft : col, 12, tracked && i.Status != "missing");

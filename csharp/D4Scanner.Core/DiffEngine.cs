@@ -341,7 +341,7 @@ public static class DiffEngine
                     Label = t.Name, Done = done,
                     Status = done ? "met" : hit != null ? "under" : "missing",
                     Have = hit != null ? $"{have} pts" : null,
-                    Need = t.Rank != null ? $"wants {want}" : null,
+                    Need = $"wants {want}",   // want = t.Rank ?? 1 — D4 actives are 1 base point (gear adds the rest)
                     Val = hit != null ? have.ToString() : null,
                     Source = done ? "tts" : null,
                 };
