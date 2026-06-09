@@ -177,6 +177,7 @@ public partial class MainWindow : Window
     ProfileStore _profiles = new(Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "profiles"));
     string? _activeSlug;
     List<RosterEntry> _roster = new();
+    List<string> _pendingChars = new();   // same-paragon collision: candidate names awaiting a manual pick
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
@@ -498,12 +499,26 @@ public partial class MainWindow : Window
     {
         if (b.Roster is { Count: > 0 }) _roster = b.Roster;
 
-        // Auto-identify the active character while unidentified: match the captured paragon to the roster.
-        // _activeSlug stays set once bound (and after a manual switch) until the next character-select.
-        if (_activeSlug == null)
+        int? ownParagon = b.Character?.ParagonLevel ?? _live.Character.ParagonLevel;
+        string? ownClass = ClassDetector.Detect(b) ?? (_activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null);
+
+        // In-game reconciliation (uses ONLY the player's own character sheet, never a roster/nameplate line):
+        // if the captured paragon+class uniquely matches a DIFFERENT saved character, switch to it. Handles the
+        // "launched in-game on a different character than last time" case without trusting any in-game line.
+        var recon = CharacterResolver.ReconcileOwn(_profiles.All(), ownParagon, ownClass);
+        if (recon != null && recon.Slug != _activeSlug)
         {
-            var entry = CharacterResolver.ByParagon(_roster, b.Character?.ParagonLevel ?? _live.Character.ParagonLevel);
-            if (entry != null) BindProfile(ProfileStore.Slugify(entry.Name), entry.Name, ClassDetector.Detect(b));
+            SwitchToProfile(recon.Slug);
+        }
+        else if (_activeSlug == null)
+        {
+            // Identify from the (gated) character-select roster by paragon. Unique → bind; a same-paragon
+            // collision → don't guess: surface the candidates in the picker for the user to choose.
+            var id = CharacterResolver.Resolve(_roster, ownParagon);
+            if (id.Kind == CharacterResolver.IdKind.Resolved)
+            { _pendingChars = new(); BindProfile(ProfileStore.Slugify(id.Name!), id.Name!, ClassDetector.Detect(b)); }
+            else if (id.Kind == CharacterResolver.IdKind.Ambiguous)
+            { _pendingChars = id.Candidates.ToList(); }   // ApplyCharacterUi prompts the user to pick
         }
 
         var merged = new LiveBuild
@@ -629,6 +644,23 @@ public partial class MainWindow : Window
     // your own gear/paragon was captured, so other players can never appear here. Visible once you have 2+.
     void ApplyCharacterUi()
     {
+        // Same-paragon collision: two of your characters share the paragon the screen reader just voiced, so
+        // we can't tell which you entered — prompt instead of guessing (never picks the wrong one).
+        if (_pendingChars.Count > 1)
+        {
+            CharBtn.Visibility = Visibility.Visible;
+            CharBtn.Content = "⚠ Which character?";
+            CharList.Items.Clear();
+            foreach (var name in _pendingChars)
+            {
+                var n = name;
+                var item = new ListBoxItem { Content = TB(n, Gold, 14, false), Tag = n };
+                item.MouseLeftButtonUp += (_, _) => { CharPopup.IsOpen = false; ResolvePendingCharacter(n); };
+                CharList.Items.Add(item);
+            }
+            return;
+        }
+
         var saved = _profiles.All();
         if (saved.Count <= 1) { CharBtn.Visibility = Visibility.Collapsed; CharPopup.IsOpen = false; return; }
 
@@ -861,6 +893,7 @@ public partial class MainWindow : Window
         PersistActiveProfile();
         BindTargetToActiveProfile();
         _activeSlug = null;                       // unidentified → auto-resolve re-enabled
+        _pendingChars = new();                    // drop any stale disambiguation prompt
         _live = new LiveBuild { Roster = _roster };
         Render();
     }
@@ -895,6 +928,7 @@ public partial class MainWindow : Window
         if (slug == _activeSlug) return;
         PersistActiveProfile();
         BindTargetToActiveProfile();
+        _pendingChars = new();
         var prof = _profiles.Get(slug);
         _activeSlug = slug;
         _live = prof?.Live ?? new LiveBuild();
@@ -902,6 +936,15 @@ public partial class MainWindow : Window
         _profiles.ActiveSlug = slug;
         ApplyProfileTarget(prof);
         Toast("Switched to " + (prof?.Name ?? slug));
+        Render();
+    }
+
+    // The user picked a character from the same-paragon disambiguation prompt — bind it (creating the profile).
+    void ResolvePendingCharacter(string name)
+    {
+        _pendingChars = new();
+        BindProfile(ProfileStore.Slugify(name), name, ClassDetector.Detect(_live));
+        Toast("Set character to " + name);
         Render();
     }
 
