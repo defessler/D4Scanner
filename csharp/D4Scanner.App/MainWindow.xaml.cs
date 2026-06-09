@@ -1000,6 +1000,9 @@ public partial class MainWindow : Window
             Body.Children.Add(cols);
         }
 
+        // full per-requirement progress: a bar for every affix / aspect / unique / rune / skill / paragon glyph
+        Body.Children.Add(BuildProgressPanel(r));
+
         // compare deck (in the space freed by the two-column layout): pinned slots, each a FULL side-by-side
         // compare. A header lets you clear all at once; each panel can be unpinned or focused.
         var pinnedSecs = _pinned.ToList()
@@ -3585,6 +3588,113 @@ public partial class MainWindow : Window
                 Margin = new Thickness(w * t / 100.0 - 1, -2.5, 0, 0), Opacity = 0.85,
             });
         return g;
+    }
+
+    // ---- overview "Build Progress": a progress bar for EVERY requirement the build wants, grouped by
+    //      category (affixes by slot, aspects, unique powers, runes/sockets, skills, paragon, mercenary).
+    //      Valued affixes use the real rolled value + roll-% (with the threshold tick); presence items
+    //      (uniques/aspects/skills/glyphs) use a have/missing bar. ----
+    UIElement BuildProgressPanel(DiffReport r)
+    {
+        var sp = new StackPanel();
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var tot = TB($"{r.Matched} / {r.Total} met" + (r.Under > 0 ? $"   ·   ⚠ {r.Under} under-rolled" : ""), Soft, 12.5, false);
+        tot.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(tot, Dock.Right); hdr.Children.Add(tot);
+        hdr.Children.Add(TBs("BUILD PROGRESS", Gold, 15, true));
+        sp.Children.Add(hdr);
+        sp.Children.Add(new Border { Height = 1, Background = B("#33D4A730"), Margin = new Thickness(0, 0, 0, 2) });
+
+        foreach (var c in r.Categories.Where(c => c.Total > 0))
+        {
+            // category roll-up: name + matched/total + a small bar
+            var ch = new DockPanel { Margin = new Thickness(0, 13, 0, 3) };
+            var col = c.Pct >= 100 ? (c.Under > 0 ? Amber : Green) : Steel;
+            var cb = (FrameworkElement)MiniBar(c.Pct, col); cb.Margin = new Thickness(12, 2, 0, 0); DockPanel.SetDock(cb, Dock.Right); ch.Children.Add(cb);
+            var cc = TB($"{c.Matched}/{c.Total}", Soft, 12, false); cc.VerticalAlignment = VerticalAlignment.Center; cc.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(cc, Dock.Right); ch.Children.Add(cc);
+            ch.Children.Add(TBs(c.Name.ToUpperInvariant(), Gold, 12.5, true));
+            sp.Children.Add(ch);
+
+            // skills / paragon / mercenary can't be read from the screen reader, so show them from the build
+            // as neutral reference rows rather than alarming red "missing".
+            bool tracked = c.Id is not ("skills" or "paragon" or "mercenary");
+            if (!tracked)
+                sp.Children.Add(TB("shown from the build · not detectable from the screen reader", Faint, 10.5, false, new Thickness(2, 0, 0, 3)));
+
+            foreach (var g in c.Groups)
+            {
+                // gear slots get a slot sub-label; multi-group categories (paragon boards) get their group name
+                if ((c.Id == "gear" || c.Groups.Count > 1) && !string.IsNullOrEmpty(g.Name))
+                    sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Faint, 10.5, true, new Thickness(2, 6, 0, 1)));
+                foreach (var i in g.Items) sp.Children.Add(ProgressRow(i, tracked));
+                if (g.WantSockets.Count > 0) sp.Children.Add(SocketProgressRow(g));   // runes / sockets in this slot
+            }
+        }
+
+        return new Border
+        {
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5), Padding = new Thickness(22, 16, 22, 18), Margin = new Thickness(0, 8, 0, 8), Child = sp,
+        };
+    }
+
+    // shared progress row: mark | label | bar | value | (spacer). Fixed widths keep label→bar→value grouped
+    // together and the bars vertically aligned, with a trailing star spacer absorbing the wide panel's slack.
+    Grid ProgressRowGrid()
+    {
+        var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });    // 0 mark
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(320) });   // 1 label
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(196) });   // 2 bar
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });   // 3 value
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // 4 spacer
+        return row;
+    }
+
+    // one requirement → status mark + label + progress bar + real value (or have/missing for presence items)
+    UIElement ProgressRow(ReqItem i, bool tracked = true)
+    {
+        var (glyph, col) = Look(i.Status);
+        if (!tracked) { glyph = "◇"; col = Faint; }            // untrackable category (skills/paragon/merc) — neutral
+        bool valued = tracked && i.RollPct != null;            // affix with a measurable roll
+        double pct = !tracked ? 0 : valued ? i.RollPct!.Value : i.Status == "met" ? 100 : i.Status == "under" ? 55 : 0;
+
+        var row = ProgressRowGrid();
+        var mark = TB(glyph, col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB(i.Label + (i.Tempered ? "   · tempered" : ""), i.Status == "met" ? Soft : Ink, 12.5, false);
+        lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
+        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+
+        var bar = RollBar(pct, col, 188, 11, valued ? _minRollPct : (double?)null);
+        bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
+
+        string vtext = !tracked ? "from build"
+            : valued ? ((i.Val ?? "") + $"   {Math.Round(i.RollPct!.Value)}%" + (i.Status == "under" && i.Need != null ? "   " + i.Need : "")).Trim()
+            : i.Status == "met" ? (i.Have ?? "equipped") : i.Status == "under" ? "partial" : (i.Have != null ? "have: " + i.Have : "missing");
+        var val = TB(vtext, !tracked ? Faint : i.Status == "missing" ? Soft : col, 12, tracked && i.Status != "missing");
+        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center;
+        val.TextAlignment = TextAlignment.Right; val.TextWrapping = TextWrapping.Wrap;
+        Grid.SetColumn(val, 3); row.Children.Add(val);
+        return row;
+    }
+
+    // socket/rune fill progress for a gear slot (runes, gems — and S8 seals/charms when socketed)
+    UIElement SocketProgressRow(Group g)
+    {
+        bool done = g.SocketsDone;
+        var col = done ? Green : Amber;
+        var row = ProgressRowGrid();
+        var mark = TB(done ? "◆" : "◇", col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB("Sockets:  " + string.Join("  ·  ", g.WantSockets), Ink, 12.5, false);
+        lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
+        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+        var bar = RollBar(done ? 100 : 0, col, 188, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        Grid.SetColumn(bar, 2); row.Children.Add(bar);
+        var val = TB(g.SocketStatus ?? (done ? "filled" : "empty"), done ? col : Soft, 12, done);
+        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
+        Grid.SetColumn(val, 3); row.Children.Add(val);
+        return row;
     }
 
     // ---- game-styled skills & paragon ----
