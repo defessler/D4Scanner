@@ -253,6 +253,10 @@ public class ReqItem
     public string? Need { get; set; }         // threshold description, e.g. "≥ 80%" or "≥ 1500"
     public string? Have { get; set; }         // what you have instead (uniques)
     public bool Tempered { get; set; }        // this affix is a tempered (manually-forged) affix
+    public double? ValueNum { get; set; }     // your rolled magnitude (numeric), for summing across pieces
+    public double? TargetNum { get; set; }    // the magnitude the build wants on this piece (Min or threshold value); null if not derivable
+    public bool IsMultiplier { get; set; }    // affix is an "x" multiplier (unit hint for aggregation)
+    public bool IsPercent { get; set; }       // affix value is a percentage (unit hint for aggregation)
 }
 
 public class GearLiveItem

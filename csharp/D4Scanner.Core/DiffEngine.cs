@@ -210,12 +210,17 @@ public static class DiffEngine
                         if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
                     }
                     var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
+                    // absolute target is known even when the piece is missing the affix
+                    if (aff.Min != null) req.TargetNum = aff.Min.Value;
                     if (match == null) { req.Status = "missing"; req.Done = false; }
                     else
                     {
                         req.Done = true;            // you have the affix (presence)
                         req.Source = "tts";
                         req.Val = FmtVal(match);
+                        req.ValueNum = match.Value;
+                        req.IsMultiplier = match.IsMultiplier;
+                        req.IsPercent = match.IsPercent;
                         var pct = RollPct(match);
                         req.RollPct = pct;
                         // threshold: explicit absolute min > explicit minPercent > global gate
@@ -232,6 +237,7 @@ public static class DiffEngine
                             if (match.Min != null && match.Max != null && match.Max.Value > match.Min.Value)
                             {
                                 double need = match.Min.Value + thr / 100.0 * (match.Max.Value - match.Min.Value);
+                                req.TargetNum = need;
                                 req.Need = "≥ " + need.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
                             }
                             else req.Need = null;

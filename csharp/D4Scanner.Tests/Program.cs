@@ -1011,6 +1011,53 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("SkillParser: latest rank wins", 17, sp2.Skills[0].Rank);
 }
 
+// ---- AffixAggregate (Gear & Affixes overview roll-up) ----
+{
+    Group G(params ReqItem[] items) => new Group { Kind = "gear", Items = items.ToList() };
+    var cat = new Category
+    {
+        Id = "gear",
+        Groups = new()
+        {
+            // Helm: Max Life met (+1500, want +1000); DoT mult met (x50%, want x30%)
+            G(new ReqItem { Label = "Maximum Life", Status = "met", Done = true, ValueNum = 1500, TargetNum = 1000 },
+              new ReqItem { Label = "Damage Over Time Multiplier", Status = "met", Done = true, ValueNum = 50, TargetNum = 30, IsMultiplier = true, IsPercent = true }),
+            // Chest: Max Life under (+800, want +1000, 40% roll); DoT mult missing (no range -> no target)
+            G(new ReqItem { Label = "Maximum Life", Status = "under", Done = true, ValueNum = 800, TargetNum = 1000, RollPct = 40 },
+              new ReqItem { Label = "Damage Over Time Multiplier", Status = "missing", Done = false }),
+        },
+    };
+    var agg = AffixAggregate.ForGear(cat);
+    Eq("AffixAggregate: 2 distinct affixes", 2, agg.Count);
+
+    var life = agg.First(a => a.Name == "Maximum Life");
+    Eq("AffixAggregate: life target pieces", 2, life.TargetPieces);
+    Eq("AffixAggregate: life have pieces (met+under)", 2, life.HavePieces);
+    Eq("AffixAggregate: life met pieces", 1, life.MetPieces);
+    Eq("AffixAggregate: life under pieces", 1, life.UnderPieces);
+    Eq("AffixAggregate: life haveTotal sum", 2300.0, life.HaveTotal);
+    Eq("AffixAggregate: life wantsTotal sum", 2000.0, life.WantsTotal);
+    Check("AffixAggregate: life wants fully known", life.WantsKnown);
+    Eq("AffixAggregate: life status under (not all met)", "under", life.Status);
+    Eq("AffixAggregate: life progress (have/wants) clamps to 100", 100.0, life.ProgressPct);
+
+    var dot = agg.First(a => a.Name == "Damage Over Time Multiplier");
+    Eq("AffixAggregate: dot have pieces", 1, dot.HavePieces);
+    Eq("AffixAggregate: dot haveTotal", 50.0, dot.HaveTotal);
+    Check("AffixAggregate: dot wants NOT fully known (a piece lacks a derivable target)", !dot.WantsKnown);
+    Eq("AffixAggregate: dot multiplier prefix", "x", dot.Prefix);
+    Eq("AffixAggregate: dot percent suffix", "%", dot.Suffix);
+    Eq("AffixAggregate: dot fmt", "x50%", dot.Fmt(dot.HaveTotal));
+    Eq("AffixAggregate: dot progress is quality-based (met 100, missing 0 -> 50)", 50.0, dot.ProgressPct);
+
+    // a fully-missing affix reads as missing with zero progress
+    var miss = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
+        { G(new ReqItem { Label = "All Damage Multiplier", Status = "missing", Done = false }) } });
+    Eq("AffixAggregate: missing affix status", "missing", miss[0].Status);
+    Eq("AffixAggregate: missing affix progress 0", 0.0, miss[0].ProgressPct);
+    Check("AffixAggregate: missing affix has no haveTotal", !miss[0].HaveAny);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
