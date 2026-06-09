@@ -128,6 +128,29 @@ public class LiveBuild
     public List<Item> Seals { get; set; } = new();
     /// <summary>Rune items seen in stash/bags.</summary>
     public List<Item> Runes { get; set; } = new();
+    /// <summary>Characters voiced on the character-select screen ("Name | Level (Paragon) (Tier)").
+    /// The only place the player's character NAME is exposed — anchors per-character profiles.</summary>
+    public List<RosterEntry> Roster { get; set; } = new();
+}
+
+/// <summary>One character on the character-select roster, parsed from "Name | Level (Paragon) (Tier)".</summary>
+public sealed class RosterEntry
+{
+    public string Name { get; set; } = "";
+    public int Level { get; set; }
+    public int Paragon { get; set; }
+    public string Tier { get; set; } = "";   // world-tier roman numeral, e.g. "VII"
+}
+
+/// <summary>A tracked character: identity + its own saved live loadout. Persisted as profiles/&lt;slug&gt;.json.</summary>
+public sealed class CharacterProfile
+{
+    public string Slug { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Class { get; set; }            // best-effort, detected from gear (display only)
+    public int? Paragon { get; set; }             // last-seen paragon level (for roster matching/display)
+    public long LastSeenUtcTicks { get; set; }
+    public LiveBuild Live { get; set; } = new();
 }
 
 // ---- target build (mirrors schema/target.schema.json) ----

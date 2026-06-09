@@ -1100,6 +1100,103 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("UpgradeScorer: Helm3 equipped-met bar", 1, scored[0].EquippedMet);
 }
 
+// ---- RosterParser + CharacterResolver (multi-character identity) ----
+{
+    var e1 = RosterParser.ParseLine("[2026-06-05T23:20:06Z]MementoMori | 70 (220) (VII)");
+    Check("RosterParser: parses a roster line", e1 != null);
+    Eq("RosterParser: name", "MementoMori", e1!.Name);
+    Eq("RosterParser: level", 70, e1.Level);
+    Eq("RosterParser: paragon", 220, e1.Paragon);
+    Eq("RosterParser: tier", "VII", e1.Tier);
+
+    var e2 = RosterParser.ParseLine("Memento Mori | 65 (208) (VI)");
+    Eq("RosterParser: name with a space", "Memento Mori", e2!.Name);
+    Eq("RosterParser: paragon (spaced name)", 208, e2.Paragon);
+
+    Check("RosterParser: non-roster prose is null", RosterParser.ParseLine("Torment VII") == null);
+    Check("RosterParser: a plain item name is null", RosterParser.ParseLine("FROSTBITTEN MAMMALBANE BOW") == null);
+
+    var rp = new RosterParser();
+    rp.Feed("Zuri | 70 (208) (VI)");
+    rp.Feed("MementoMori | 70 (220) (VII)");
+    Eq("RosterParser: two characters captured", 2, rp.Entries.Count);
+    rp.Feed("Zuri | 70 (210) (VII)");   // re-voiced with a new paragon
+    Eq("RosterParser: re-voiced character updates in place (no dup)", 2, rp.Entries.Count);
+    Eq("RosterParser: updated paragon", 210, rp.Entries.First(e => e.Name == "Zuri").Paragon);
+
+    var roster = rp.Entries;
+    Eq("CharacterResolver: paragon 220 -> MementoMori", "MementoMori", CharacterResolver.ByParagon(roster, 220)!.Name);
+    Eq("CharacterResolver: paragon 210 -> Zuri", "Zuri", CharacterResolver.ByParagon(roster, 210)!.Name);
+    Check("CharacterResolver: unknown paragon -> null", CharacterResolver.ByParagon(roster, 999) == null);
+    Check("CharacterResolver: null paragon -> null", CharacterResolver.ByParagon(roster, null) == null);
+    var dup = new List<RosterEntry> { new() { Name = "A", Paragon = 50 }, new() { Name = "B", Paragon = 50 } };
+    Check("CharacterResolver: ambiguous paragon -> null", CharacterResolver.ByParagon(dup, 50) == null);
+}
+
+// ---- ClassDetector ----
+{
+    var bowGuy = new LiveBuild { Gear = { new Item { Name = "Some Bow", ItemType = "Bow", Slot = "ranged" } } };
+    Eq("ClassDetector: a bow implies Rogue", "Rogue", ClassDetector.FromGear(bowGuy));
+    var plain = new LiveBuild { Gear = { new Item { Name = "Helm", ItemType = "Helm", Slot = "helm" } } };
+    Check("ClassDetector: non-class-locked gear -> null", ClassDetector.FromGear(plain) == null);
+}
+
+// ---- ProfileStore ----
+{
+    var root = Path.Combine(Path.GetTempPath(), "d4scanner-test-" + Guid.NewGuid().ToString("N"));
+    var store = new ProfileStore(root);
+
+    Eq("ProfileStore: empty to start", 0, store.All().Count);
+    Eq("ProfileStore: Slugify", "memento-mori", ProfileStore.Slugify("Memento Mori!"));
+
+    var prof = new CharacterProfile { Name = "Zuri", Paragon = 208, Live = new LiveBuild { Gear = { new Item { Name = "Helm", Slot = "helm" } } } };
+    store.Save(prof);
+    Eq("ProfileStore: slug auto-filled on save", "zuri", prof.Slug);
+    var got = store.Get("zuri");
+    Check("ProfileStore: round-trips", got != null);
+    Eq("ProfileStore: round-trip name", "Zuri", got!.Name);
+    Eq("ProfileStore: round-trip gear", 1, got.Live.Gear.Count);
+
+    store.ActiveSlug = "zuri";
+    Eq("ProfileStore: active pointer persists", "zuri", store.ActiveSlug);
+
+    store.Save(new CharacterProfile { Name = "Bob", LastSeenUtcTicks = DateTime.UtcNow.Ticks + 1000 });
+    Eq("ProfileStore: two profiles", 2, store.All().Count);
+    Eq("ProfileStore: most-recent first", "Bob", store.All()[0].Name);
+
+    // legacy migration: a fresh store with a legacy live.json and no profiles
+    var root2 = Path.Combine(Path.GetTempPath(), "d4scanner-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root2);
+    var legacy = Path.Combine(root2, "live.json");
+    File.WriteAllText(legacy, System.Text.Json.JsonSerializer.Serialize(
+        new LiveBuild { Gear = { new Item { Name = "Old Helm", Slot = "helm" } }, Character = new LiveCharacter { ParagonLevel = 150 } },
+        D4Scanner.Core.Json.Opts));
+    var store2 = new ProfileStore(Path.Combine(root2, "profiles"));
+    var migrated = store2.MigrateLegacy(legacy);
+    Check("ProfileStore: legacy migrated", migrated != null);
+    Eq("ProfileStore: migrated gear preserved", 1, migrated!.Live.Gear.Count);
+    Eq("ProfileStore: migrated paragon captured", 150, migrated.Paragon);
+    Eq("ProfileStore: migration sets active", migrated.Slug, store2.ActiveSlug);
+    Check("ProfileStore: second migration is a no-op (profiles exist)", store2.MigrateLegacy(legacy) == null);
+}
+
+// ---- LogWatcher captures the character-select roster (and excludes roster lines from gear) ----
+{
+    var rosterLog = Path.Combine(Path.GetTempPath(), "d4s_roster_test_" + Guid.NewGuid().ToString("N") + ".log");
+    File.WriteAllLines(rosterLog, new[]
+    {
+        "=== d4scanner tts shim attached ===",
+        "Zuri | 70 (208) (VI)",
+        "MementoMori | 70 (220) (VII)",
+        "Torment VII",
+    });
+    var lb = LogWatcher.BuildFromFile(rosterLog, equippedOnly: false);
+    Eq("LogWatcher: roster captured from log", 2, lb.Roster.Count);
+    Eq("LogWatcher: roster name by paragon", "MementoMori", lb.Roster.First(e => e.Paragon == 220).Name);
+    Check("LogWatcher: roster lines are not parsed as gear", !lb.Gear.Any(g => g.Name.Contains("|")));
+    try { File.Delete(rosterLog); } catch { }
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

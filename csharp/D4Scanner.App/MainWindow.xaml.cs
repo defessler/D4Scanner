@@ -172,6 +172,11 @@ public partial class MainWindow : Window
     System.Threading.Timer? _targetPoll;
     TargetBuild? _target;
     LiveBuild _live = new();
+    // Per-character separation: each character has its own saved loadout. _activeSlug == null means
+    // "unidentified" — auto-identification (roster + paragon) is armed and will bind the next character.
+    ProfileStore _profiles = new(Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "profiles"));
+    string? _activeSlug;
+    List<RosterEntry> _roster = new();
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
@@ -271,6 +276,7 @@ public partial class MainWindow : Window
         AcList.PreviewKeyDown += AcList_PreviewKeyDown;
         AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
+        CharBtn.Click += (_, _) => { ApplyCharacterUi(); CharPopup.IsOpen = !CharPopup.IsOpen; };
 
         Loaded += (_, _) =>
         {
@@ -490,12 +496,23 @@ public partial class MainWindow : Window
     // live gear changed: swap it in, re-render, and surface what was newly equipped.
     void OnLiveUpdate(LiveBuild b)
     {
+        if (b.Roster is { Count: > 0 }) _roster = b.Roster;
+
+        // Auto-identify the active character while unidentified: match the captured paragon to the roster.
+        // _activeSlug stays set once bound (and after a manual switch) until the next character-select.
+        if (_activeSlug == null)
+        {
+            var entry = CharacterResolver.ByParagon(_roster, b.Character?.ParagonLevel ?? _live.Character.ParagonLevel);
+            if (entry != null) BindProfile(ProfileStore.Slugify(entry.Name), entry.Name, ClassDetector.FromGear(b));
+        }
+
         var merged = new LiveBuild
         {
             Gear      = MergeGear(_live.Gear, b.Gear),
             Inventory = b.Inventory,
             Character = b.Character?.Any == true ? b.Character : _live.Character,   // keep captured attributes across OCR-only updates
             Skills    = b.Skills.Count > 0 ? b.Skills : _live.Skills,
+            Roster    = _roster,
         };
         var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, merged);
         _live = merged;
@@ -542,6 +559,7 @@ public partial class MainWindow : Window
             _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
+            _watcher.CharacterSelectDetected += () => Dispatcher.Invoke(OnCharacterSelect);
             // (portrait auto-capture removed — the doll uses a class-coloured glow, not a screenshot)
             _watcher.Start();
             _live = new LiveBuild
@@ -602,6 +620,38 @@ public partial class MainWindow : Window
             var item = new ListBoxItem { Content = TB(p, Ink, 14, false), Tag = p, IsSelected = p == _target.Profile };
             item.MouseLeftButtonUp += async (_, _) => { ProfilePopup.IsOpen = false; await SwitchProfile(p); };
             ProfileList.Items.Add(item);
+        }
+    }
+
+    // Active-character picker: shows the detected character and lets the user switch (manual override).
+    // Visible once more than one character is known (saved profile or roster entry); auto-detection handles
+    // the single-character case silently.
+    void ApplyCharacterUi()
+    {
+        var saved = _profiles.All();
+        // union of saved profiles and roster names not yet saved, keyed by slug
+        var bySlug = new Dictionary<string, (string name, string? cls, int? para)>(StringComparer.Ordinal);
+        foreach (var p in saved) bySlug[p.Slug] = (p.Name, p.Class, p.Paragon);
+        foreach (var e in _roster)
+        {
+            var slug = ProfileStore.Slugify(e.Name);
+            if (!bySlug.ContainsKey(slug)) bySlug[slug] = (e.Name, null, e.Paragon);
+        }
+
+        if (bySlug.Count <= 1) { CharBtn.Visibility = Visibility.Collapsed; CharPopup.IsOpen = false; return; }
+
+        var active = _activeSlug != null && bySlug.TryGetValue(_activeSlug, out var a) ? a.name : null;
+        CharBtn.Visibility = Visibility.Visible;
+        CharBtn.Content = active != null ? "◆ " + active : "Character: ?";
+
+        CharList.Items.Clear();
+        foreach (var (slug, info) in bySlug.OrderBy(kv => kv.Value.name, StringComparer.OrdinalIgnoreCase))
+        {
+            var label = info.name + (info.cls != null ? $"  ·  {info.cls}" : "") + (info.para is int pl ? $"  ·  P{pl}" : "");
+            var item = new ListBoxItem { Content = TB(label, Ink, 14, false), Tag = slug, IsSelected = slug == _activeSlug };
+            var captured = slug;
+            item.MouseLeftButtonUp += (_, _) => { CharPopup.IsOpen = false; SwitchToProfile(captured); };
+            CharList.Items.Add(item);
         }
     }
 
@@ -730,7 +780,19 @@ public partial class MainWindow : Window
     string LivePath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "live.json");
     void LoadLive()
     {
-        // Try live.json first (persisted gear state from last session)
+        // Per-character profiles are authoritative. On first run they don't exist yet, so import the
+        // legacy single-character live.json into a default profile (preserves the user's loadout).
+        try
+        {
+            _profiles.MigrateLegacy(LivePath);
+            _activeSlug = _profiles.ActiveSlug;
+            var prof = _profiles.Get(_activeSlug);
+            if (prof != null) { _live = prof.Live; _roster = _live.Roster ?? new(); return; }
+        }
+        catch { }
+
+        // Fallback: legacy live.json (e.g. profiles dir unwritable). LogWatcher re-reads the log and is
+        // authoritative for the current session regardless.
         try
         {
             if (File.Exists(LivePath))
@@ -740,16 +802,76 @@ public partial class MainWindow : Window
             }
         }
         catch { }
-
-        // Note: .jsonl fast-startup removed. The .jsonl is append-only across ALL sessions
-        // and seeded stale gear from previous sessions while skipping current log entries.
-        // LogWatcher re-reads from the beginning and is authoritative.
     }
     void SaveLive()
     {
         if (_live.Gear.Count == 0) return;   // never overwrite good persisted data with empty
+        // legacy mirror (kept so a downgrade / external reader still finds the active loadout)
         try { File.WriteAllText(LivePath, JsonSerializer.Serialize(_live, D4Scanner.Core.Json.Opts)); }
         catch { }
+        PersistActiveProfile();
+    }
+
+    // ---- multi-character profile management ----
+
+    // Fold the active character's current loadout (+ detected class/paragon) back to its profile file.
+    void PersistActiveProfile()
+    {
+        if (_activeSlug == null || _live.Gear.Count == 0) return;
+        var prof = _profiles.Get(_activeSlug) ?? new CharacterProfile { Slug = _activeSlug };
+        prof.Live = _live;
+        prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
+        if (_live.Character?.ParagonLevel is int pl) prof.Paragon = pl;
+        var cls = ClassDetector.FromGear(_live); if (cls != null) prof.Class = cls;
+        _profiles.Save(prof);
+        _profiles.ActiveSlug = _activeSlug;
+    }
+
+    // Character-select roster voiced: the player left the game to switch characters. Save the current
+    // loadout, then re-arm auto-identification so the next character is bound from its paragon.
+    void OnCharacterSelect()
+    {
+        PersistActiveProfile();
+        _activeSlug = null;                       // unidentified → auto-resolve re-enabled
+        _live = new LiveBuild { Roster = _roster };
+        Render();
+    }
+
+    // Bind the active character to a profile (creating it if new). Merges freshly-scanned gear OVER the
+    // profile's stored loadout so partial scans fill in from last-known state.
+    void BindProfile(string slug, string name, string? cls)
+    {
+        _activeSlug = slug;
+        var stored = _profiles.Get(slug);
+        if (stored != null)
+            _live = new LiveBuild
+            {
+                Gear      = MergeGear(stored.Live.Gear, _live.Gear),   // stored as base, fresh scan wins
+                Inventory = _live.Inventory.Count > 0 ? _live.Inventory : stored.Live.Inventory,
+                Character = _live.Character?.Any == true ? _live.Character : stored.Live.Character,
+                Skills    = _live.Skills.Count > 0 ? _live.Skills : stored.Live.Skills,
+                Roster    = _roster,
+            };
+        var prof = stored ?? new CharacterProfile { Slug = slug };
+        prof.Name = name; if (cls != null) prof.Class = cls;
+        prof.Live = _live; prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
+        if (_live.Character?.ParagonLevel is int pl) prof.Paragon = pl;
+        _profiles.Save(prof);
+        _profiles.ActiveSlug = slug;
+    }
+
+    // Manual character switch from the header picker: persist current, load the chosen profile wholesale.
+    void SwitchToProfile(string slug)
+    {
+        if (slug == _activeSlug) return;
+        PersistActiveProfile();
+        var prof = _profiles.Get(slug);
+        _activeSlug = slug;
+        _live = prof?.Live ?? new LiveBuild();
+        _live.Roster = _roster;
+        _profiles.ActiveSlug = slug;
+        Toast("Switched to " + (prof?.Name ?? slug));
+        Render();
     }
 
     // Merge fresh scan results into the persisted live state. Tts items win over Ocr items per slot:
@@ -869,6 +991,7 @@ public partial class MainWindow : Window
     {
         InstallCaptureBtn.Visibility = Visibility.Collapsed;   // setup via Settings only
         OpenSrcBtn.Visibility = SourceUrl() != null ? Visibility.Visible : Visibility.Collapsed;
+        ApplyCharacterUi();   // keep the active-character picker in sync
         if (_target == null)
         {
             UpdateBuildNamePlaceholder();
@@ -2433,6 +2556,7 @@ public partial class MainWindow : Window
             if (AcPopup.IsOpen) { AcPopup.IsOpen = false; UrlBox.Focus(); }
             else if (BuildsPopup.IsOpen) BuildsPopup.IsOpen = false;
             else if (ProfilePopup.IsOpen) ProfilePopup.IsOpen = false;
+            else if (CharPopup.IsOpen) CharPopup.IsOpen = false;
             else if (_focusKey != null) { _focusKey = null; Render(); }
             else if (_pinned.Count > 0) { _pinned.Clear(); Render(); Toast("Cleared pins"); }
             else if (_stepsView || _rawView) GoOverview();
