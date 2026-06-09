@@ -14,6 +14,8 @@ public sealed class LogWatcher : IDisposable
     GearParser _seg = new();
     readonly CharacterParser _char = new();   // total attributes + paragon level from the character sheet
     readonly SkillParser _skills = new();     // selected skills/passives + ranks from the skill tree
+    readonly RosterParser _roster = new();    // character-select roster — the only source of the character NAME
+    bool _lastWasRoster;                       // debounce: clear accumulation once per character-select visit
     readonly Dictionary<string, Item> _items = new();
     readonly Dictionary<string, Item> _inv = new();
     // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
@@ -58,6 +60,9 @@ public sealed class LogWatcher : IDisposable
     /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
     /// Subscribe to auto-capture the portrait without requiring a manual button click.</summary>
     public event Action? CharacterPanelDetected;
+    /// <summary>Fires when the character-select roster is voiced — i.e. the player left the game to switch
+    /// characters. Subscribe to persist the current character's loadout and re-arm auto-identification.</summary>
+    public event Action? CharacterSelectDetected;
 
     public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
     {
@@ -98,6 +103,24 @@ public sealed class LogWatcher : IDisposable
                 // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
                 if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
                 { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; }
+
+                // Character-select roster ("Name | Level (Paragon) (Tier)"): the player has left the game to
+                // switch characters. Drop the prior character's accumulated gear so the next character starts
+                // clean, and signal the host to persist/re-identify. Debounced to once per roster block.
+                if (_roster.Feed(lines[i]) != null)
+                {
+                    if (!_lastWasRoster)
+                    {
+                        _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+                        _seg = new GearParser(); _currentPanel = null;
+                        CharacterSelectDetected?.Invoke();
+                    }
+                    _lastWasRoster = true;
+                    changed = true;   // emit so the host sees the updated roster
+                    continue;
+                }
+                if (rawLine.Trim().Length > 0) _lastWasRoster = false;
+
                 if (PanelMarkers.TryGetValue(rawLine, out var panel))
                 {
                     var prev = _currentPanel;
@@ -134,7 +157,7 @@ public sealed class LogWatcher : IDisposable
                 // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
                 if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
                 if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
-                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills };
+                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = _roster.Entries };
                 Updated?.Invoke(Build);
             }
         }
@@ -272,6 +295,7 @@ public sealed class LogWatcher : IDisposable
         var seg = new GearParser();
         var ch = new CharacterParser();
         var sk = new SkillParser();
+        var roster = new RosterParser();
         // Use a list (not a dict) so items appear in FILE ORDER — re-scans of the same item
         // append a newer entry after the older one, letting LatestPerSlot correctly pick the
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
@@ -282,6 +306,7 @@ public sealed class LogWatcher : IDisposable
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
             if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
+            if (roster.Feed(allLines[i]) != null) continue;   // character-select roster line, not gear
             ch.Feed(allLines[i]); sk.Feed(allLines[i]);
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
@@ -289,7 +314,7 @@ public sealed class LogWatcher : IDisposable
             if (equippedOnly && !item.Equipped) continue;
             ordered.Add(item);
         }
-        return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills };
+        return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = roster.Entries };
     }
 
     /// <summary>
