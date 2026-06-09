@@ -15,7 +15,7 @@ public sealed class LogWatcher : IDisposable
     readonly CharacterParser _char = new();   // total attributes + paragon level from the character sheet
     readonly SkillParser _skills = new();     // selected skills/passives + ranks from the skill tree
     readonly RosterParser _roster = new();    // character-select roster — the only source of the character NAME
-    bool _lastWasRoster;                       // debounce: clear accumulation once per character-select visit
+    readonly RosterGate _rosterGate = new();  // only treat >=2 contiguous roster lines as char-select (ignore lone in-game nameplates)
     readonly Dictionary<string, Item> _items = new();
     readonly Dictionary<string, Item> _inv = new();
     // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
@@ -104,22 +104,23 @@ public sealed class LogWatcher : IDisposable
                 if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
                 { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; }
 
-                // Character-select roster ("Name | Level (Paragon) (Tier)"): the player has left the game to
-                // switch characters. Drop the prior character's accumulated gear so the next character starts
-                // clean, and signal the host to persist/re-identify. Debounced to once per roster block.
-                if (_roster.Feed(lines[i]) != null)
+                // Character-select roster ("Name | Level (Paragon) (Tier)"). Only a CONTIGUOUS block of >=2
+                // such lines counts as character-select — a lone roster-shaped line in town (another player's
+                // nameplate) is ignored, so it can never bind a character or wipe gear. When the block is
+                // confirmed, drop the prior character's accumulated gear and signal the host to re-identify.
+                var rg = _rosterGate.Feed(lines[i]);
+                if (rg.Matched)
                 {
-                    if (!_lastWasRoster)
+                    if (rg.EnteredCharSelect)
                     {
                         _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
                         _seg = new GearParser(); _currentPanel = null;
-                        CharacterSelectDetected?.Invoke();
                     }
-                    _lastWasRoster = true;
-                    changed = true;   // emit so the host sees the updated roster
+                    foreach (var l in rg.Commit) _roster.Feed(l);
+                    if (rg.EnteredCharSelect) CharacterSelectDetected?.Invoke();
+                    if (rg.Commit.Count > 0) changed = true;   // emit so the host sees the updated roster
                     continue;
                 }
-                if (rawLine.Trim().Length > 0) _lastWasRoster = false;
 
                 if (PanelMarkers.TryGetValue(rawLine, out var panel))
                 {
@@ -296,6 +297,7 @@ public sealed class LogWatcher : IDisposable
         var ch = new CharacterParser();
         var sk = new SkillParser();
         var roster = new RosterParser();
+        var rosterGate = new RosterGate();
         // Use a list (not a dict) so items appear in FILE ORDER — re-scans of the same item
         // append a newer entry after the older one, letting LatestPerSlot correctly pick the
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
@@ -306,7 +308,8 @@ public sealed class LogWatcher : IDisposable
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
             if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
-            if (roster.Feed(allLines[i]) != null) continue;   // character-select roster line, not gear
+            var rg = rosterGate.Feed(allLines[i]);
+            if (rg.Matched) { foreach (var l in rg.Commit) roster.Feed(l); continue; }   // roster line (gated), not gear
             ch.Feed(allLines[i]); sk.Feed(allLines[i]);
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;

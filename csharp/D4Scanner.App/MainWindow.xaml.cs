@@ -503,7 +503,7 @@ public partial class MainWindow : Window
         if (_activeSlug == null)
         {
             var entry = CharacterResolver.ByParagon(_roster, b.Character?.ParagonLevel ?? _live.Character.ParagonLevel);
-            if (entry != null) BindProfile(ProfileStore.Slugify(entry.Name), entry.Name, ClassDetector.FromGear(b));
+            if (entry != null) BindProfile(ProfileStore.Slugify(entry.Name), entry.Name, ClassDetector.Detect(b));
         }
 
         var merged = new LiveBuild
@@ -821,7 +821,7 @@ public partial class MainWindow : Window
         prof.Live = _live;
         prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
         if (_live.Character?.ParagonLevel is int pl) prof.Paragon = pl;
-        var cls = ClassDetector.FromGear(_live); if (cls != null) prof.Class = cls;
+        var cls = ClassDetector.Detect(_live); if (cls != null) prof.Class = cls;   // re-detect each save: resolves once skills stream in (deferred)
         _profiles.Save(prof);
         _profiles.ActiveSlug = _activeSlug;
     }

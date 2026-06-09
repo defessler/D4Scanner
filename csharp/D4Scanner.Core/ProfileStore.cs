@@ -101,8 +101,11 @@ public sealed class ProfileStore
     }
 }
 
-/// <summary>Best-effort character class inference from equipped gear, for display only (the roster gives
-/// the name but not the class). Uses class-locked weapon types; returns null when nothing is conclusive.</summary>
+/// <summary>Best-effort character class inference from a captured loadout, for display + as part of the
+/// profile key. The roster gives the name but not the class, so we infer it from class-locked WEAPON types
+/// and, crucially, class-locked SKILL names — Barbarian (and Druid/Necromancer) share weapon types with
+/// other classes, so weapons alone can never identify them; their slotted skills can. Returns null when
+/// nothing is conclusive (caller keeps retrying as more of the loadout streams in).</summary>
 public static class ClassDetector
 {
     static readonly (string kw, string cls)[] WeaponClass =
@@ -113,15 +116,57 @@ public static class ClassDetector
         ("glaive", "Spiritborn"), ("quarterstaff", "Spiritborn"),
     };
 
-    public static string? FromGear(LiveBuild? live)
+    // Class-locked skill names (D4 skill names are class-exclusive). Weapons are checked first; skills
+    // catch the classes with no class-locked weapon (Barbarian especially).
+    static readonly Dictionary<string, string> SkillClass = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Whirlwind"] = "Barbarian", ["Hammer of the Ancients"] = "Barbarian", ["Death Blow"] = "Barbarian",
+        ["Rupture"] = "Barbarian", ["Upheaval"] = "Barbarian", ["Double Swing"] = "Barbarian", ["Bash"] = "Barbarian",
+        ["Flay"] = "Barbarian", ["Frenzy"] = "Barbarian", ["Rend"] = "Barbarian", ["Steel Grasp"] = "Barbarian",
+        ["Iron Maelstrom"] = "Barbarian", ["Call of the Ancients"] = "Barbarian", ["Wrath of the Berserker"] = "Barbarian",
+        ["War Cry"] = "Barbarian", ["Challenging Shout"] = "Barbarian", ["Rallying Cry"] = "Barbarian", ["Mighty Throw"] = "Barbarian",
+
+        ["Heartseeker"] = "Rogue", ["Puncture"] = "Rogue", ["Forceful Arrow"] = "Rogue", ["Invigorating Strike"] = "Rogue",
+        ["Barrage"] = "Rogue", ["Penetrating Shot"] = "Rogue", ["Rapid Fire"] = "Rogue", ["Twisting Blades"] = "Rogue",
+        ["Flurry"] = "Rogue", ["Shadow Step"] = "Rogue", ["Dash"] = "Rogue", ["Caltrops"] = "Rogue", ["Smoke Grenade"] = "Rogue",
+        ["Dark Shroud"] = "Rogue", ["Concealment"] = "Rogue", ["Rain of Arrows"] = "Rogue", ["Death Trap"] = "Rogue",
+        ["Shadow Clone"] = "Rogue", ["Dance of Knives"] = "Rogue",
+
+        ["Fireball"] = "Sorcerer", ["Frozen Orb"] = "Sorcerer", ["Ball Lightning"] = "Sorcerer", ["Chain Lightning"] = "Sorcerer",
+        ["Arc Lash"] = "Sorcerer", ["Frost Bolt"] = "Sorcerer", ["Incinerate"] = "Sorcerer", ["Ice Shards"] = "Sorcerer",
+        ["Charged Bolts"] = "Sorcerer", ["Teleport"] = "Sorcerer", ["Hydra"] = "Sorcerer", ["Blizzard"] = "Sorcerer",
+        ["Meteor"] = "Sorcerer", ["Firewall"] = "Sorcerer", ["Deep Freeze"] = "Sorcerer", ["Unstable Currents"] = "Sorcerer",
+        ["Lightning Spear"] = "Sorcerer", ["Frost Nova"] = "Sorcerer", ["Flame Shield"] = "Sorcerer",
+
+        ["Bone Spear"] = "Necromancer", ["Blood Lance"] = "Necromancer", ["Sever"] = "Necromancer", ["Bone Spirit"] = "Necromancer",
+        ["Corpse Explosion"] = "Necromancer", ["Corpse Tendrils"] = "Necromancer", ["Bone Prison"] = "Necromancer",
+        ["Blood Mist"] = "Necromancer", ["Bone Storm"] = "Necromancer", ["Army of the Dead"] = "Necromancer", ["Blood Wave"] = "Necromancer",
+        ["Raise Skeleton"] = "Necromancer", ["Decompose"] = "Necromancer", ["Hemorrhage"] = "Necromancer", ["Bone Splinters"] = "Necromancer",
+
+        ["Pulverize"] = "Druid", ["Shred"] = "Druid", ["Landslide"] = "Druid", ["Tornado"] = "Druid", ["Lightning Storm"] = "Druid",
+        ["Earth Spike"] = "Druid", ["Wind Shear"] = "Druid", ["Storm Strike"] = "Druid", ["Maul"] = "Druid",
+        ["Boulder"] = "Druid", ["Trample"] = "Druid", ["Cyclone Armor"] = "Druid", ["Grizzly Rage"] = "Druid",
+        ["Hurricane"] = "Druid", ["Rabies"] = "Druid", ["Poison Creeper"] = "Druid", ["Cataclysm"] = "Druid",
+
+        ["Quill Volley"] = "Spiritborn", ["The Hunter"] = "Spiritborn", ["Soar"] = "Spiritborn", ["Crushing Hand"] = "Spiritborn",
+        ["Rock Splitter"] = "Spiritborn", ["Withering Fist"] = "Spiritborn", ["Thrash"] = "Spiritborn", ["Stinger"] = "Spiritborn",
+        ["Touch of Death"] = "Spiritborn", ["Armored Hide"] = "Spiritborn", ["Counterattack"] = "Spiritborn",
+        ["Concussive Stomp"] = "Spiritborn", ["Scourge"] = "Spiritborn", ["Ravager"] = "Spiritborn",
+    };
+
+    public static string? Detect(LiveBuild? live)
     {
         if (live == null) return null;
+        // 1) class-locked weapon type
         foreach (var it in live.Gear)
         {
             var hay = ((it.ItemType ?? "") + " " + (it.Slot ?? "")).ToLowerInvariant();
             foreach (var (kw, cls) in WeaponClass)
                 if (hay.Contains(kw)) return cls;
         }
+        // 2) class-locked slotted skill (the only signal for Barbarian, which has no class-locked weapon)
+        foreach (var sk in live.Skills)
+            if (sk.Name is { Length: > 0 } n && SkillClass.TryGetValue(n.Trim(), out var c)) return c;
         return null;
     }
 }

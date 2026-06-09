@@ -1133,12 +1133,47 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("CharacterResolver: ambiguous paragon -> null", CharacterResolver.ByParagon(dup, 50) == null);
 }
 
-// ---- ClassDetector ----
+// ---- ClassDetector (weapon + skill inference) ----
 {
     var bowGuy = new LiveBuild { Gear = { new Item { Name = "Some Bow", ItemType = "Bow", Slot = "ranged" } } };
-    Eq("ClassDetector: a bow implies Rogue", "Rogue", ClassDetector.FromGear(bowGuy));
+    Eq("ClassDetector: a bow implies Rogue", "Rogue", ClassDetector.Detect(bowGuy));
     var plain = new LiveBuild { Gear = { new Item { Name = "Helm", ItemType = "Helm", Slot = "helm" } } };
-    Check("ClassDetector: non-class-locked gear -> null", ClassDetector.FromGear(plain) == null);
+    Check("ClassDetector: non-class-locked gear -> null", ClassDetector.Detect(plain) == null);
+    // Barbarian has NO class-locked weapon — only its skills identify it
+    var barb = new LiveBuild { Gear = { new Item { Name = "Some Sword", ItemType = "Sword", Slot = "weapon" } },
+        Skills = { new LiveSkill { Name = "Whirlwind", Rank = 5 } } };
+    Eq("ClassDetector: a Barbarian skill implies Barbarian (despite a shared-weapon sword)", "Barbarian", ClassDetector.Detect(barb));
+    var rogueSkill = new LiveBuild { Skills = { new LiveSkill { Name = "Dance of Knives", Rank = 20 } } };
+    Eq("ClassDetector: a Rogue skill implies Rogue", "Rogue", ClassDetector.Detect(rogueSkill));
+}
+
+// ---- RosterGate (>=2 contiguous roster lines => character-select; lone in-game nameplate ignored) ----
+{
+    // a lone roster-shaped line (an in-game player) surrounded by gameplay is NEVER committed or treated as char-select
+    var g1 = new RosterGate();
+    var r1 = g1.Feed("Stranger | 92 (340) (VII)");
+    Check("RosterGate: lone roster line is matched (not parsed as gear)", r1.Matched);
+    Check("RosterGate: lone roster line is NOT committed", r1.Commit.Count == 0);
+    Check("RosterGate: lone roster line does NOT enter char-select", !r1.EnteredCharSelect);
+    var r1b = g1.Feed("+1,540 Maximum Life [1,300 - 1,600]");   // gameplay line ends the block
+    Check("RosterGate: a gameplay line is not matched", !r1b.Matched);
+
+    // two contiguous roster lines => character-select; both committed on the 2nd, fires once
+    var g2 = new RosterGate();
+    var a = g2.Feed("Zuri | 70 (208) (VI)");
+    Check("RosterGate: 1st roster line buffered, not yet char-select", a.Matched && a.Commit.Count == 0 && !a.EnteredCharSelect);
+    var b = g2.Feed("MementoMori | 70 (220) (VII)");
+    Check("RosterGate: 2nd contiguous roster line enters char-select", b.EnteredCharSelect);
+    Eq("RosterGate: both buffered lines committed at threshold", 2, b.Commit.Count);
+    var c = g2.Feed("ThirdChar | 60 (100) (V)");
+    Check("RosterGate: a 3rd line keeps committing without re-firing char-select", c.Commit.Count == 1 && !c.EnteredCharSelect);
+
+    // interleaving breaks contiguity: roster, gameplay, roster => never reaches the threshold
+    var g3 = new RosterGate();
+    g3.Feed("Stranger | 92 (340) (VII)");
+    g3.Feed("Torment VII");                       // non-roster => resets
+    var r3 = g3.Feed("Another | 80 (250) (IV)");
+    Check("RosterGate: interleaved roster lines never enter char-select", !r3.EnteredCharSelect && r3.Commit.Count == 0);
 }
 
 // ---- ProfileStore ----
