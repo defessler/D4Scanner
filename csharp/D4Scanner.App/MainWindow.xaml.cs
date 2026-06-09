@@ -3691,33 +3691,21 @@ public partial class MainWindow : Window
             if (c.Id == "gear")
             {
                 // OVERALL view: aggregate every affix ACROSS all slots into one row per distinct affix, so the
-                // panel reads as overall progress (e.g. "Maximum Life 3/4") rather than a slot-by-slot breakdown.
-                var agg = new Dictionary<string, (int met, int under, int total, List<string> vals)>(StringComparer.OrdinalIgnoreCase);
-                var order = new List<string>();
-                foreach (var g in c.Groups)
-                    foreach (var i in g.Items)
-                    {
-                        var key = i.Label.Trim();
-                        if (!agg.TryGetValue(key, out var v)) { v = (0, 0, 0, new List<string>()); order.Add(key); }
-                        v.total++;
-                        if (i.Status == "met") v.met++; else if (i.Status == "under") v.under++;
-                        // collect the REAL rolled value for every slot you actually have this affix on
-                        if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val))
-                            v.vals.Add(i.Val + (i.RollPct != null ? $" ({Math.Round(i.RollPct.Value)}%)" : ""));
-                        agg[key] = v;
-                    }
-                foreach (var key in order.OrderByDescending(k => agg[k].total).ThenBy(k => k, StringComparer.OrdinalIgnoreCase))
-                {
-                    var v = agg[key];
-                    sp.Children.Add(AggregateRow(key, v.met, v.under, v.total, v.vals));
-                }
+                // panel reads as overall progress ("Maximum Life  3/4 pieces  ·  have +3,200 / wants +6,000")
+                // rather than a slot-by-slot breakdown. The roll-up lives in Core (AffixAggregate) for testing.
+                foreach (var p in AffixAggregate.ForGear(c))
+                    sp.Children.Add(AggregateRow(p));
                 // sockets / runes rolled up across all slots
                 int sockTotal = c.Groups.Count(g => g.WantSockets.Count > 0);
                 if (sockTotal > 0)
                 {
                     int sockDone = c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone);
-                    sp.Children.Add(AggregateRow("Sockets / runes", sockDone, 0, sockTotal,
-                        sockDone > 0 ? new List<string> { $"{sockDone}/{sockTotal} filled" } : new List<string>()));
+                    sp.Children.Add(AggregateRow(new AffixProgress
+                    {
+                        Name = "Sockets / runes", CountNoun = "filled",
+                        TargetPieces = sockTotal, HavePieces = sockDone, MetPieces = sockDone,
+                        ProgressPct = sockTotal > 0 ? 100.0 * sockDone / sockTotal : 0,
+                    }));
                 }
             }
             else   // aspects / uniques / skills — all trackable (untrackable categories are filtered out above)
@@ -3783,24 +3771,38 @@ public partial class MainWindow : Window
 
     // an aggregated requirement (one affix rolled up across every slot that wants it): a bar for how many
     // slots have it met + the REAL rolled values of the slots you have it on (e.g. "+1,185 (81%) · +972 (96%)").
-    UIElement AggregateRow(string name, int met, int under, int total, List<string> vals)
+    UIElement AggregateRow(AffixProgress p)
     {
-        string status = met >= total ? "met" : (met + under) > 0 ? "under" : "missing";
-        var (glyph, col) = Look(status);
-        double pct = total > 0 ? 100.0 * (met + 0.5 * under) / total : 0;   // under-rolled counts as half
+        var (glyph, col) = Look(p.Status);
 
         var row = ProgressRowGrid();
         var mark = TB(glyph, col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(mark, 0); row.Children.Add(mark);
-        var lbl = TB(name + (total > 1 ? $"   ×{total}" : ""), status == "met" ? Soft : Ink, 12.5, false);
-        lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
-        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        var bar = RollBar(pct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
+
+        // label column: affix name over a small "N/M pieces" completeness caption
+        var lblSp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var name = TB(p.Name, p.Status == "met" ? Soft : Ink, 12.5, false); name.TextWrapping = TextWrapping.Wrap;
+        lblSp.Children.Add(name);
+        var caption = $"{p.HavePieces}/{p.TargetPieces} {p.CountNoun}" + (p.UnderPieces > 0 ? $"  ·  {p.UnderPieces} under" : "");
+        lblSp.Children.Add(TB(caption, p.UnderPieces > 0 ? Amber : Faint, 10.5, false));
+        Grid.SetColumn(lblSp, 1); row.Children.Add(lblSp);
+
+        var bar = RollBar(p.ProgressPct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
-        string vtext = vals.Count > 0 ? string.Join("  ·  ", vals) : "missing";
-        var val = TB(vtext, status == "missing" ? Soft : col, 12, status != "missing");
-        val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
-        Grid.SetColumn(val, 3); row.Children.Add(val);
+
+        // value column: progress toward the combined goal — "have X / wants Y" when both are known
+        string vtext =
+            p.HaveAny && p.WantsKnown ? $"have {p.Fmt(p.HaveTotal)}  /  wants {p.Fmt(p.WantsTotal)}"
+          : p.HaveAny                 ? $"have {p.Fmt(p.HaveTotal)}"
+          : p.WantsKnown && p.WantsTotal > 0 ? $"wants {p.Fmt(p.WantsTotal)}"
+          : p.Status == "missing"     ? "missing"
+          : "";
+        if (vtext.Length > 0)
+        {
+            var val = TB(vtext, p.Status == "missing" ? Soft : col, 12, p.Status != "missing");
+            val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
+            Grid.SetColumn(val, 3); row.Children.Add(val);
+        }
         return row;
     }
 
