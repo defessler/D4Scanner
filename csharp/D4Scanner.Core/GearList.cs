@@ -4,7 +4,7 @@ using System.Text;
 
 namespace D4Scanner.Core;
 
-public enum GearSortMode { Slot, RecentlyAcquired, ItemPower, Name }
+public enum GearSortMode { Slot, RecentlyAcquired, ItemPower, Name, Upgrade }
 
 /// <summary>
 /// Headless helpers for the build-AGNOSTIC "All Items" table: a flat list of every captured item

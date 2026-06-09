@@ -2066,14 +2066,30 @@ public partial class MainWindow : Window
         void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; }
 
         var live = EffectiveLive();
-        var items = GearList.Build(live);                  // every captured item, de-duped by affix fingerprint
+        // ONLY non-equipped items — this list answers "what in my bags/stash should I equip?"
+        var items = GearList.Build(live).Where(i => !i.Equipped).ToList();
         var affixKeys = GearList.AffixKeys(items);
         var now = DateTime.UtcNow.Ticks;
 
-        // filter / sort state — "My Gear" stands on its own here; no target build is consulted.
+        // when a build is loaded, score every non-equipped item as a potential upgrade (best-first)
+        bool scoring = _target != null;
+        var scoreByFp = new Dictionary<string, ScoredItem>(StringComparer.Ordinal);
+        var scoreOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (scoring)
+        {
+            var ranked = UpgradeScorer.Score(_target!, live, items, _minRollPct);
+            for (int i = 0; i < ranked.Count; i++)
+            {
+                var fp = GearList.Fingerprint(ranked[i].Item);
+                scoreByFp[fp] = ranked[i];
+                scoreOrder[fp] = i;
+            }
+        }
+
+        // filter / sort state
         var selectedAffixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string search = "";
-        var sortMode = GearSortMode.RecentlyAcquired;      // default: newest hovers first
+        var sortMode = scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired;
 
         // ---- header ----
         var sp = new StackPanel { MinWidth = 760, MaxWidth = 1000 };
@@ -2081,9 +2097,12 @@ public partial class MainWindow : Window
         var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
         xb.MouseLeftButtonUp += (_, _) => Close();
         hd.Children.Add(xb);
-        hd.Children.Add(TBs($"All scanned items  ·  {items.Count}", Gold, 17, true));
+        hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
-        sp.Children.Add(TB("Your captured gear, independent of the build.  Hover to compare · click to pin · ✕ to delete.", Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
+        sp.Children.Add(TB(scoring
+            ? "Everything in your bags & stash, scored against the build — best upgrades first.  Hover to compare · click to pin · ✕ to delete."
+            : "Everything in your bags & stash (load a build to score upgrades).  Hover to compare · click to pin · ✕ to delete.",
+            Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
 
         // ---- filter / sort bar ----
         Border Chip(string label, bool on, Action click)
@@ -2105,7 +2124,11 @@ public partial class MainWindow : Window
 
         void Rebuild()
         {
-            var view = GearList.Apply(items, selectedAffixes, search, sortMode);
+            // filter (affix + search), then sort. Upgrade sort uses the precomputed best-first ranking.
+            var filtered = GearList.Apply(items, selectedAffixes, search, GearSortMode.RecentlyAcquired);
+            var view = sortMode == GearSortMode.Upgrade && scoring
+                ? filtered.OrderBy(i => scoreOrder.GetValueOrDefault(GearList.Fingerprint(i), int.MaxValue)).ToList()
+                : GearList.Sort(filtered, sortMode);
             listPanel.Children.Clear();
             foreach (var it in view) listPanel.Children.Add(BuildRow(it));
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
@@ -2117,6 +2140,7 @@ public partial class MainWindow : Window
             var sortRow = new WrapPanel();
             sortRow.Children.Add(TB("Sort", Faint, 11, false, new Thickness(0, 3, 8, 0)));
             void S(string lbl, GearSortMode m) => sortRow.Children.Add(Chip(lbl, sortMode == m, () => { sortMode = m; BuildChips(); Rebuild(); }));
+            if (scoring) S("Best upgrade", GearSortMode.Upgrade);
             S("Recently acquired", GearSortMode.RecentlyAcquired);
             S("Slot", GearSortMode.Slot);
             S("Item power", GearSortMode.ItemPower);
@@ -2217,7 +2241,6 @@ public partial class MainWindow : Window
             var rcol = RarityBrush(item.Rarity);
             var rc = ((SolidColorBrush)rcol).Color;
             bool pinned = _pinned.Contains(sec.Key);
-            bool eq = item.Equipped;
 
             // age string
             string age = item.LastScannedTicks > 0
@@ -2245,9 +2268,28 @@ public partial class MainWindow : Window
             // item details
             var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
             var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
-            details.Children.Add(TB(slotLbl + (eq ? "  ●" : "  ○"), Faint, 10, false));
+
+            // build-aware header: slot + (upgrade badge / slot-match caption) when a build is loaded
+            scoreByFp.TryGetValue(GearList.Fingerprint(item), out var score);
+            var headRow = new DockPanel();
+            if (score != null && score.IsUpgrade)
+            {
+                var badge = new Border
+                {
+                    Background = B("#1E3A24"), BorderBrush = Green, BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(8, 0, 0, 0),
+                    Child = TB("▲ UPGRADE", Green, 9, true),
+                };
+                DockPanel.SetDock(badge, Dock.Right); headRow.Children.Add(badge);
+            }
+            headRow.Children.Add(TB(slotLbl, Faint, 10, false));
+            details.Children.Add(headRow);
             var nameBlock = TBs(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;   // serif (Cinzel) — D4 item-name cue
             details.Children.Add(nameBlock);
+            if (score != null && score.SlotTarget > 0)
+                details.Children.Add(TB($"matches {score.SlotMet}/{score.SlotTarget} of this slot's affixes"
+                    + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedMet}" : ""),
+                    score.IsUpgrade ? Green : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
             if (item.ItemPower > 0)
                 details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
             // top 3 affixes

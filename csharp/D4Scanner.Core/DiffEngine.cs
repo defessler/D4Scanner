@@ -89,6 +89,23 @@ public static class DiffEngine
         return met;
     }
 
+    /// <summary>Average roll quality (0-100) of the target slot's affixes that <paramref name="item"/> actually
+    /// has (matched once each). 0 when it has none of them; affixes with no range count as a perfect 100. An
+    /// upgrade sub-tiebreak between items that meet the same number of slot affixes.</summary>
+    public static double SlotQuality(TargetGear g, Item item)
+    {
+        var pool = item.Affixes;
+        var used = new bool[pool.Count];
+        double sum = 0; int n = 0;
+        foreach (var aff in g.Affixes)
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; sum += RollPct(pool[i]) ?? 100; n++; break; }
+            }
+        return n == 0 ? 0 : sum / n;
+    }
+
     /// <summary>Does a single target affix appear on the item and meet its threshold? (first match — used for
     /// substitute/flexibility scoring where the strict per-item dedup of <see cref="ScoreSlot"/> isn't needed.)</summary>
     public static bool AffixMet(TargetAffix aff, Item item, double gate)
