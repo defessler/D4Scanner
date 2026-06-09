@@ -72,10 +72,13 @@ public sealed class LogWatcher : IDisposable
         _pos = startPos;   // non-zero to skip old log data (e.g. after a live-cache clear)
         _charSel.VisitStarted += () =>
         {
-            // Player is back at character-select: drop the prior character's accumulated gear so the next
-            // character starts clean, and signal the host to persist/re-identify.
+            // Player is back at character-select: drop EVERYTHING accumulated for the prior character —
+            // gear, character sheet, and skills. Stale sheet/skills are not just cosmetic: they describe
+            // the OLD character, and any class/paragon inference run on them after a switch would pull
+            // identity back to the character just left (verified live before this reset existed).
             _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
             _seg = new GearParser(); _currentPanel = null;
+            _char.Reset(); _skills.Reset();
             CharacterSelectDetected?.Invoke();
         };
         _charSel.Confirmed += id => CharacterConfirmed?.Invoke(id);
@@ -121,6 +124,10 @@ public sealed class LogWatcher : IDisposable
                 bool wasCharSel = _charSel.InCharSelect;
                 _charSel.Feed(lines[i]);
                 if (wasCharSel || _charSel.InCharSelect) changed = true;   // emit so the host sees Seen/identity progress
+                // Character-select text is menu narration, not gameplay — keep it out of the gear/sheet/skill
+                // parsers entirely (e.g. the detail block's own "Paragon N" line must not repopulate the sheet
+                // that the visit just reset).
+                if (_charSel.InCharSelect) continue;
 
                 // Player-nameplate lines (incl. clan-tagged "<Tag> Name | …") are never gear and never identity.
                 if (RosterParser.ParseLine(lines[i]) != null) continue;
@@ -312,13 +319,15 @@ public sealed class LogWatcher : IDisposable
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
         // slot:rawname key was first inserted earliest in the log.
         var ordered = new List<Item>();
-        charSel.VisitStarted += () => ordered.Clear();   // back at character-select: prior character's gear is stale (matches Poll)
+        // back at character-select: prior character's gear/sheet/skills are stale (matches Poll)
+        charSel.VisitStarted += () => { ordered.Clear(); ch.Reset(); sk.Reset(); };
         var allLines = File.ReadAllLines(path);
         for (int i = 0; i < allLines.Length; i++)
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
             if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
             charSel.Feed(allLines[i]);
+            if (charSel.InCharSelect) continue;   // menu narration — never gear/sheet/skills (matches Poll)
             if (RosterParser.ParseLine(allLines[i]) != null) continue;   // player nameplate, never gear/identity
             ch.Feed(allLines[i]); sk.Feed(allLines[i]);
             var item = seg.Feed(allLines[i]);

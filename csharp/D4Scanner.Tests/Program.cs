@@ -1309,6 +1309,30 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("LogWatcher: gear scanned AFTER town nameplates survives (no bogus wipe)",
         lb.Gear.Any(g => g.Name.Contains("ARCHON", StringComparison.OrdinalIgnoreCase)));
     try { File.Delete(idLog); } catch { }
+
+    // Regression (found by live verification): a char-select visit must reset the CHARACTER SHEET and
+    // SKILLS too — stale Rogue paragon/skills after switching to the Barbarian pulled identity back to
+    // the Rogue via the paragon reconciler.
+    var swLog = Path.Combine(Path.GetTempPath(), "d4s_switch_test_" + Guid.NewGuid().ToString("N") + ".log");
+    File.WriteAllLines(swLog, new[]
+    {
+        "=== d4scanner tts shim attached ===",
+        // playing the Rogue: char sheet + a skill captured
+        "Dexterity", "1,501", "Paragon 187",
+        "Dance of Knives", "RANK 20/15",
+        // back to char-select, enter with the Barbarian
+        "R Undo Character Delete",
+        "HEOKI", "Seasonal", "Barbarian", "Paragon 186", "Penitent",
+        "R Undo Character Delete      D Delete Character      C Change Difficulty",
+        "START GAME",
+        "QUEUED FOR GAME - START GAME PENDING...",
+    });
+    var sw = LogWatcher.BuildFromFile(swLog, equippedOnly: false);
+    Check("LogWatcher: char sheet reset by the char-select visit (no stale Rogue paragon)",
+        sw.Character.ParagonLevel == null && sw.Character.Dexterity == null);
+    Eq("LogWatcher: skills reset by the char-select visit", 0, sw.Skills.Count);
+    Eq("LogWatcher: the Barbarian is the (only) own-roster entry", "Barbarian", sw.Roster.Single().Class);
+    try { File.Delete(swLog); } catch { }
 }
 
 // ---- report ----
