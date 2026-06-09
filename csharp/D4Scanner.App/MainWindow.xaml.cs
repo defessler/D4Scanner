@@ -2593,26 +2593,31 @@ public partial class MainWindow : Window
     // to do next is unmistakable. Clicking focuses that slot/category.
     FrameworkElement HeroCard(GuideStep a)
     {
-        var inner = new StackPanel { Margin = new Thickness(13, 11, 14, 12) };
-        inner.Children.Add(TBs("DO THIS FIRST", Gold, 9.5, true, new Thickness(0, 0, 0, 5)));
-        var hl = TB(a.Headline ?? a.Text, Ink, 16, true); hl.TextWrapping = TextWrapping.Wrap; inner.Children.Add(hl);
+        var inner = new StackPanel { Margin = new Thickness(13, 10, 14, 11) };
+        inner.Children.Add(TBs("DO THIS FIRST", Gold, 9.5, true, new Thickness(0, 0, 0, 4)));
+        var hl = TB(a.Headline ?? a.Text, Ink, 15.5, true); inner.Children.Add(hl);
 
-        var sub = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
-        if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); sub.Children.Add(d); }
+        // action line: verb chip docked left, target text fills (wraps) — kept as a single tight row
+        var action = new DockPanel { Margin = new Thickness(0, 7, 0, 0) };
         var vb = VerbChip(a.Verb, 10, new Thickness(8, 2, 8, 3), 62); vb.Margin = new Thickness(0, 0, 10, 0);
-        DockPanel.SetDock(vb, Dock.Left); sub.Children.Add(vb);
-        var tx = TB(a.Text, Soft, 12, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap; sub.Children.Add(tx);
-        inner.Children.Add(sub);
+        vb.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(vb, Dock.Left); action.Children.Add(vb);
+        var tx = TB(a.Text, Soft, 12, false); tx.VerticalAlignment = VerticalAlignment.Center; action.Children.Add(tx);
+        inner.Children.Add(action);
+        // detail ("have: … — equip it") on its own full-width line so it never squeezes the target text
+        if (a.Detail != null) inner.Children.Add(TB(a.Detail, Soft, 11.5, false, new Thickness(0, 3, 0, 0)));
 
-        // cool elevated surface (clearly raised above the step list) with a full-height gold priority spine
-        var body = new DockPanel();
-        var accentBar = new Border { Width = 4, Background = Gold };   // DockPanel stretches it to full card height
-        DockPanel.SetDock(accentBar, Dock.Left); body.Children.Add(accentBar);
-        body.Children.Add(inner);
+        // cool elevated surface (raised above the step list) with a gold priority spine. A 2-column Grid sizes
+        // the spine to the content height exactly — no DockPanel fill that could inflate the card.
+        var body = new Grid();
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var accentBar = new Border { Background = Gold };
+        Grid.SetColumn(accentBar, 0); body.Children.Add(accentBar);
+        Grid.SetColumn(inner, 1); body.Children.Add(inner);
         var card = new Border
         {
             Background = B("#262533"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5),
-            Margin = new Thickness(0, 0, 0, 12), Child = body, ClipToBounds = true,
+            Margin = new Thickness(0, 0, 0, 12), Child = body, ClipToBounds = true, VerticalAlignment = VerticalAlignment.Top,
         };
         if (a.FocusKey is string fk)
         {
