@@ -12,6 +12,7 @@ public sealed class LogWatcher : IDisposable
     readonly string _path;
     readonly bool _equippedOnly;
     GearParser _seg = new();
+    readonly CharacterParser _char = new();   // total attributes + paragon level from the character sheet
     readonly Dictionary<string, Item> _items = new();
     readonly Dictionary<string, Item> _inv = new();
     // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
@@ -75,7 +76,7 @@ public sealed class LogWatcher : IDisposable
         {
             if (!File.Exists(_path)) return;
             long size = new FileInfo(_path).Length;
-            if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _seg = new GearParser(); }  // log cleared/rotated
+            if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _seg = new GearParser(); _char.Reset(); }  // log cleared/rotated
             if (size <= _pos) return;
 
             using var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -109,6 +110,9 @@ public sealed class LogWatcher : IDisposable
                     }
                 }
 
+                // capture total attributes + paragon level from the character sheet (independent of gear)
+                if (_char.Feed(lines[i])) changed = true;
+
                 var item = _seg.Feed(lines[i]);
                 if (item == null) continue;
                 item.Source = ItemSource.Tts;
@@ -128,7 +132,7 @@ public sealed class LogWatcher : IDisposable
                 // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
                 if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
                 if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
-                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15) };
+                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone() };
                 Updated?.Invoke(Build);
             }
         }
@@ -264,6 +268,7 @@ public sealed class LogWatcher : IDisposable
     public static LiveBuild BuildFromFile(string path, bool equippedOnly = true)
     {
         var seg = new GearParser();
+        var ch = new CharacterParser();
         // Use a list (not a dict) so items appear in FILE ORDER — re-scans of the same item
         // append a newer entry after the older one, letting LatestPerSlot correctly pick the
         // MOST RECENTLY SCANNED item per slot (via Reverse().Take(N)), not the one whose
@@ -274,13 +279,14 @@ public sealed class LogWatcher : IDisposable
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).
             if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) ordered.Clear();
+            ch.Feed(allLines[i]);
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
             ClassifyContext(item, allLines, i, allLines.Length);
             if (equippedOnly && !item.Equipped) continue;
             ordered.Add(item);
         }
-        return new LiveBuild { Gear = LatestPerSlot(ordered) };
+        return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone() };
     }
 
     /// <summary>

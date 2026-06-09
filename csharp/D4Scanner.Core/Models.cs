@@ -99,6 +99,20 @@ public class LiveParagon
     public int? GlyphLevel { get; set; }
 }
 
+/// <summary>The player's total character attributes + paragon level, captured from the character sheet.
+/// These totals already include everything paragon grants (per-node board bonuses can't be summed reliably,
+/// but the resulting attribute totals are exact).</summary>
+public class LiveCharacter
+{
+    public int? Strength { get; set; }
+    public int? Dexterity { get; set; }
+    public int? Intelligence { get; set; }
+    public int? Willpower { get; set; }
+    public int? ParagonLevel { get; set; }
+    [JsonIgnore] public bool Any => Strength.HasValue || Dexterity.HasValue || Intelligence.HasValue || Willpower.HasValue || ParagonLevel.HasValue;
+    public LiveCharacter Clone() => (LiveCharacter)MemberwiseClone();
+}
+
 public class LiveBuild
 {
     public List<Item> Gear { get; set; } = new();
@@ -106,6 +120,7 @@ public class LiveBuild
     public List<string> Aspects { get; set; } = new();
     public List<LiveSkill> Skills { get; set; } = new();
     public List<LiveParagon> Paragon { get; set; } = new();
+    public LiveCharacter Character { get; set; } = new();   // total attributes + paragon level (character sheet)
     public string? Mercenary { get; set; }
     /// <summary>Charm items seen in talisman slots.</summary>
     public List<Item> Charms { get; set; } = new();

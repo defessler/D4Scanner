@@ -956,6 +956,36 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("Apply: free-text search narrows to the razor", 1, GearList.Apply(all, null, "razor", GearSortMode.Slot).Count);
 }
 
+// ---- CharacterParser: total attributes + paragon level from the character sheet ----
+{
+    var cp = new CharacterParser();
+    string[] lines =
+    {
+        "[2026-06-09T05:43:37Z]Strength", "[2026-06-09T05:43:37Z]316",
+        "[2026-06-09T05:43:37Z]Intelligence", "[2026-06-09T05:43:37Z]307",
+        "[2026-06-09T05:43:37Z]Willpower", "[2026-06-09T05:43:37Z]162",
+        "[2026-06-09T05:43:37Z]Dexterity", "[2026-06-09T05:43:37Z]1,501",
+        "[2026-06-09T05:43:37Z]499,825,013 Gold",
+        "[2026-06-09T05:43:33Z]PARAGON 186",
+    };
+    foreach (var l in lines) cp.Feed(l);
+    Eq("CharacterParser: Strength", 316, cp.Character.Strength);
+    Eq("CharacterParser: Dexterity (comma value)", 1501, cp.Character.Dexterity);
+    Eq("CharacterParser: Intelligence", 307, cp.Character.Intelligence);
+    Eq("CharacterParser: Willpower", 162, cp.Character.Willpower);
+    Eq("CharacterParser: Paragon level", 186, cp.Character.ParagonLevel);
+
+    // label not immediately followed by a value must NOT mis-capture
+    var cp2 = new CharacterParser();
+    cp2.Feed("[2026-06-09T05:43:37Z]Dexterity"); cp2.Feed("[2026-06-09T05:43:37Z]Left mouse button"); cp2.Feed("[2026-06-09T05:43:37Z]1234");
+    Check("CharacterParser: ignores value not adjacent to label", cp2.Character.Dexterity == null);
+
+    // gold/obol numbers after stats must not overwrite an attribute
+    var cp3 = new CharacterParser();
+    cp3.Feed("[2026-06-09T05:43:37Z]Strength"); cp3.Feed("[2026-06-09T05:43:37Z]316"); cp3.Feed("[2026-06-09T05:43:37Z]499,825,013 Gold");
+    Eq("CharacterParser: gold line ignored", 316, cp3.Character.Strength);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

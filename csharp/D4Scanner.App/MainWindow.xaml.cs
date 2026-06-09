@@ -494,6 +494,7 @@ public partial class MainWindow : Window
         {
             Gear      = MergeGear(_live.Gear, b.Gear),
             Inventory = b.Inventory,
+            Character = b.Character?.Any == true ? b.Character : _live.Character,   // keep captured attributes across OCR-only updates
         };
         var added = _live.Gear.Count == 0 ? new List<string>() : NewlyEquipped(_live, merged);
         _live = merged;
@@ -546,6 +547,7 @@ public partial class MainWindow : Window
             {
                 Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
                 Inventory = _watcher.Build.Inventory,
+                Character = _watcher.Build.Character?.Any == true ? _watcher.Build.Character : _live.Character,
             };
         }
         _captureEngine?.Dispose(); _captureEngine = null;
@@ -3659,8 +3661,10 @@ public partial class MainWindow : Window
             // skills / paragon / mercenary can't be read from the screen reader, so show them from the build
             // as neutral reference rows rather than alarming red "missing".
             bool tracked = c.Id is not ("skills" or "paragon" or "mercenary");
+            // Paragon: we CAN capture the net effect — total attributes + paragon level from the character sheet.
+            if (c.Id == "paragon") AddParagonLive(sp);
             if (!tracked)
-                sp.Children.Add(TB("shown from the build · not detectable from the screen reader", Faint, 10.5, false, new Thickness(2, 0, 0, 3)));
+                sp.Children.Add(TB("individual boards / glyphs shown from the build · not detectable from the screen reader", Faint, 10.5, false, new Thickness(2, 0, 0, 3)));
 
             if (c.Id == "gear")
             {
@@ -3704,6 +3708,39 @@ public partial class MainWindow : Window
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(5), Padding = new Thickness(22, 16, 22, 18), Margin = new Thickness(0, 8, 0, 8), Child = sp,
         };
+    }
+
+    // Paragon's NET EFFECT, captured live from the character sheet: total attributes + paragon level. These
+    // totals already include everything paragon grants (the per-node board bonuses can't be summed reliably).
+    void AddParagonLive(StackPanel sp)
+    {
+        var c = EffectiveLive().Character;
+        if (!c.Any)
+        {
+            sp.Children.Add(TB("Open D4's character sheet (press C) with the screen reader running to capture your total attributes + paragon level.",
+                Faint, 10.5, false, new Thickness(2, 1, 0, 4)));
+            return;
+        }
+        sp.Children.Add(TBs("YOUR CHARACTER  ·  captured live", Steel, 10.5, true, new Thickness(2, 2, 0, 3)));
+        if (c.ParagonLevel is int lvl) sp.Children.Add(AttrRow("Paragon level", lvl.ToString(), Gold));
+        if (c.Strength is int s)     sp.Children.Add(AttrRow("Strength", s.ToString("#,0"), Ink));
+        if (c.Dexterity is int d)    sp.Children.Add(AttrRow("Dexterity", d.ToString("#,0"), Ink));
+        if (c.Intelligence is int it) sp.Children.Add(AttrRow("Intelligence", it.ToString("#,0"), Ink));
+        if (c.Willpower is int w)    sp.Children.Add(AttrRow("Willpower", w.ToString("#,0"), Ink));
+    }
+
+    // a captured-attribute row: ◆ + label + value (no bar — attributes have no target to progress toward)
+    UIElement AttrRow(string label, string value, Brush valCol)
+    {
+        var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var mark = TB("◆", Green, 11, false); mark.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(mark, 0); row.Children.Add(mark);
+        var lbl = TB(label, Soft, 12.5, false); lbl.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
+        var v = TBs(value, valCol, 12.5, true); v.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(v, 2); row.Children.Add(v);
+        return row;
     }
 
     // shared progress row: mark | label | bar | value | (spacer). Fixed widths keep label→bar→value grouped
