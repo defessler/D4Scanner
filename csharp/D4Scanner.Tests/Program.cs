@@ -1149,13 +1149,15 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("ProfileStore: empty to start", 0, store.All().Count);
     Eq("ProfileStore: Slugify", "memento-mori", ProfileStore.Slugify("Memento Mori!"));
 
-    var prof = new CharacterProfile { Name = "Zuri", Paragon = 208, Live = new LiveBuild { Gear = { new Item { Name = "Helm", Slot = "helm" } } } };
+    var prof = new CharacterProfile { Name = "Zuri", Paragon = 208, TargetPath = @"C:\builds\dance-of-knives.json", TargetSource = "dance-of-knives", Live = new LiveBuild { Gear = { new Item { Name = "Helm", Slot = "helm" } } } };
     store.Save(prof);
     Eq("ProfileStore: slug auto-filled on save", "zuri", prof.Slug);
     var got = store.Get("zuri");
     Check("ProfileStore: round-trips", got != null);
     Eq("ProfileStore: round-trip name", "Zuri", got!.Name);
     Eq("ProfileStore: round-trip gear", 1, got.Live.Gear.Count);
+    Eq("ProfileStore: round-trip target build path", @"C:\builds\dance-of-knives.json", got.TargetPath);
+    Eq("ProfileStore: round-trip target source", "dance-of-knives", got.TargetSource);
 
     store.ActiveSlug = "zuri";
     Eq("ProfileStore: active pointer persists", "zuri", store.ActiveSlug);

@@ -119,6 +119,14 @@ equipped piece's score for that slot. The All-Items modal (`ShowInventoryModal` 
 **Finally:** bump `<Version>` in `csharp/D4Scanner.App/D4Scanner.App.csproj`, commit, tag
 `vX.Y.0`, push → CI builds the release.
 
+## Addendum — per-character target builds (v0.22.0)
+
+Follow-up to Feature 1: each `CharacterProfile` also remembers the target build it compares
+against (`TargetPath` + `TargetSource`). Importing a build or switching builds binds it to the
+active character; switching characters (auto or manual) reloads that character's build, falling
+back to adopting the currently-loaded one when the character has none. Gear is no longer wiped on
+a build switch (it's the character's real loadout, independent of the goal).
+
 ## Testing
 
 - `RosterParser` — parse valid/invalid roster lines, entity decoding, multi-entry rosters.

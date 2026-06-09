@@ -550,8 +550,8 @@ public partial class MainWindow : Window
             null,
             TimeSpan.FromHours(4),     // first periodic check: 4 hours after launch
             TimeSpan.FromHours(4));    // then every 4 hours while running
-        ReloadTarget();
-        LoadLive();   // seed paper doll immediately from last-known state
+        LoadLive();      // restore the active character + its bound target path first
+        ReloadTarget();  // then load that build (LoadLive may have switched _targetPath to the character's)
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
@@ -712,10 +712,10 @@ public partial class MainWindow : Window
                 if (string.Equals(fp, _targetPath, StringComparison.OrdinalIgnoreCase)) return;
                 _targetPath = fp; _lastImportInput = null; _lastUrl = null;   // switched build: source comes from its own metadata
                 _pinned.Clear(); _focusKey = null;
-                // Invalidate persisted gear — it was for the previous build
-                _live = new LiveBuild();
-                try { if (File.Exists(LivePath)) File.Delete(LivePath); } catch { }
-                SaveSettings(); ReloadTarget(); ApplyProfileUi(); Render();
+                // Gear is the character's real loadout (not build-specific), so it is NOT wiped on a build switch.
+                SaveSettings(); ReloadTarget(); ApplyProfileUi();
+                BindTargetToActiveProfile();   // remember this build for the active character
+                Render();
                 Toast($"Switched to  {name}");
             };
             BuildsList.Items.Add(item);
@@ -759,6 +759,7 @@ public partial class MainWindow : Window
                 if (_recentSlugs.Count > 6) _recentSlugs.RemoveRange(6, _recentSlugs.Count - 6);
             }
             SaveSettings();
+            BindTargetToActiveProfile();   // this build is now the active character's target
             ApplyProfileUi();
             Render();
             Status.Text = $"imported: {t.Name}" + (t.Profile != null ? $" [{t.Profile}]" : "")
@@ -787,7 +788,13 @@ public partial class MainWindow : Window
             _profiles.MigrateLegacy(LivePath);
             _activeSlug = _profiles.ActiveSlug;
             var prof = _profiles.Get(_activeSlug);
-            if (prof != null) { _live = prof.Live; _roster = _live.Roster ?? new(); return; }
+            if (prof != null)
+            {
+                _live = prof.Live; _roster = _live.Roster ?? new();
+                // prefer the active character's bound build over the last-used global one
+                if (prof.TargetPath is string tp && File.Exists(tp)) { _targetPath = tp; _lastImportInput = prof.TargetSource; }
+                return;
+            }
         }
         catch { }
 
@@ -827,11 +834,40 @@ public partial class MainWindow : Window
         _profiles.ActiveSlug = _activeSlug;
     }
 
+    // Remember which target build the active character is comparing against, so it reloads on switch-back.
+    void BindTargetToActiveProfile()
+    {
+        if (_activeSlug == null || _targetPath == null) return;
+        var prof = _profiles.Get(_activeSlug) ?? new CharacterProfile { Slug = _activeSlug };
+        if (prof.TargetPath == _targetPath && prof.TargetSource == (_lastImportInput ?? _lastUrl)) return;   // unchanged
+        prof.TargetPath = _targetPath;
+        prof.TargetSource = _lastImportInput ?? _lastUrl;
+        prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
+        _profiles.Save(prof);
+    }
+
+    // Restore the character's bound target build (if its file still exists); otherwise claim the currently
+    // loaded build as this character's so it's remembered going forward. Does not call Render() (callers do).
+    void ApplyProfileTarget(CharacterProfile? prof)
+    {
+        if (prof?.TargetPath is string tp && File.Exists(tp))
+        {
+            if (!string.Equals(tp, _targetPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _targetPath = tp; _lastImportInput = prof.TargetSource; _lastUrl = null;
+                _pinned.Clear(); _focusKey = null;
+                SaveSettings(); ReloadTarget(); ApplyProfileUi();
+            }
+        }
+        else BindTargetToActiveProfile();   // no stored build for this character → adopt the current one
+    }
+
     // Character-select roster voiced: the player left the game to switch characters. Save the current
-    // loadout, then re-arm auto-identification so the next character is bound from its paragon.
+    // loadout + build binding, then re-arm auto-identification so the next character is bound from its paragon.
     void OnCharacterSelect()
     {
         PersistActiveProfile();
+        BindTargetToActiveProfile();
         _activeSlug = null;                       // unidentified → auto-resolve re-enabled
         _live = new LiveBuild { Roster = _roster };
         Render();
@@ -858,6 +894,7 @@ public partial class MainWindow : Window
         if (_live.Character?.ParagonLevel is int pl) prof.Paragon = pl;
         _profiles.Save(prof);
         _profiles.ActiveSlug = slug;
+        ApplyProfileTarget(stored);   // load this character's build (or adopt the current one)
     }
 
     // Manual character switch from the header picker: persist current, load the chosen profile wholesale.
@@ -865,11 +902,13 @@ public partial class MainWindow : Window
     {
         if (slug == _activeSlug) return;
         PersistActiveProfile();
+        BindTargetToActiveProfile();
         var prof = _profiles.Get(slug);
         _activeSlug = slug;
         _live = prof?.Live ?? new LiveBuild();
         _live.Roster = _roster;
         _profiles.ActiveSlug = slug;
+        ApplyProfileTarget(prof);
         Toast("Switched to " + (prof?.Name ?? slug));
         Render();
     }
