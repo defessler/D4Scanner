@@ -87,7 +87,7 @@
                   <ListBox x:Name="BuildsList" MinWidth="220" MaxHeight="380"/>
                 </Border>
               </Popup>
-              <Button x:Name="RawBtn" Content="Build details" FontSize="14" Margin="9,0,0,0"/>
+              <Button x:Name="RawBtn" Content="Build spec" FontSize="14" Margin="9,0,0,0"/>
               <Button x:Name="SettingsBtn" Content="⚙" FontSize="14" Margin="9,0,0,0" ToolTip="Settings"/>
             </StackPanel>
           </Grid>

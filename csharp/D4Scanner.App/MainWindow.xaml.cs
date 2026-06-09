@@ -106,6 +106,24 @@ public partial class MainWindow : Window
     // real art, so an unresolved/still-extracting slot reads as a placeholder — not a failed-to-load blob.
     // The rarity colour lives on the IconBox border ring only.
     static readonly Brush SlotGhost = B("#666A665E");   // ~40% alpha dim neutral
+
+    // Soft radial fade applied to real item art so the extracted glow/bloom, which is hard-cut at the PNG
+    // edge, dissolves smoothly instead of showing a rectangular clip. Opaque to ~0.82, then fades at the rim.
+    static readonly RadialGradientBrush IconBloomMask = MakeBloomMask();
+    static RadialGradientBrush MakeBloomMask()
+    {
+        var b = new RadialGradientBrush
+        {
+            GradientStops =
+            {
+                new GradientStop(Colors.Black, 0),
+                new GradientStop(Colors.Black, 0.82),
+                new GradientStop(Color.FromArgb(0x00, 0, 0, 0), 1.0),
+            },
+        };
+        b.Freeze();
+        return b;
+    }
     static FrameworkElement? SlotIcon(string key, Brush tint, double size)
     {
         if (!Icons.Geom.TryGetValue(key, out var d)) return null;
@@ -124,7 +142,8 @@ public partial class MainWindow : Window
         {
             var bi = new BitmapImage();
             bi.BeginInit(); bi.UriSource = new Uri(path); bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit();
-            return new Image { Source = bi, Width = w, Height = h, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
+            // soft radial edge-fade so the icon's hard-cropped glow/bloom dissolves smoothly (see IconBloomMask)
+            return new Image { Source = bi, Width = w, Height = h, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center, OpacityMask = IconBloomMask };
         }
         catch { return null; }
     }
@@ -197,7 +216,7 @@ public partial class MainWindow : Window
         ImportBtn.Click += async (_, _) => await DoImport();
         TargetBtn.Click += (_, _) => ShowBuilds();
         // LogBtn removed from header — log actions live in Settings
-        RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); };
+        RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build spec"; Render(); };
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
@@ -929,7 +948,6 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
-        Body.Children.Add(IconLegend());
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
         var gapKeys = sections.Where(s => s.Gear != null && s.Status != "met").Select(s => s.Key).ToList();
@@ -1533,7 +1551,7 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build details"; Render(); }
+    void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build spec"; Render(); }
 
     // keyboard-shortcut cheatsheet: a centered overlay over a dimmed backdrop, toggled by "?" / F1 / button
     void ToggleHelp()
@@ -1562,7 +1580,7 @@ public partial class MainWindow : Window
         }
         Row("Alt + O", "Overview");
         Row("Alt + N", "Next Steps");
-        Row("Alt + B", "Build details");
+        Row("Alt + B", "Build spec");
         Row("Alt + I", "Item inventory (all scanned items)");
         Row("/", "Jump to the build search box");
         Row("Ctrl  + / − / 0", "Zoom in · out · reset");
@@ -2137,8 +2155,8 @@ public partial class MainWindow : Window
         sp.Children.Add(chipBar);
         sp.Children.Add(countLbl);
 
-        // ---- item list ----
-        var scroll = new ScrollViewer { MaxHeight = 500, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        // ---- item list ---- (fills the panel's remaining height; the panel itself is bounded to the window)
+        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
         UIElement BuildRow(Item item)
         {
@@ -2272,15 +2290,22 @@ public partial class MainWindow : Window
         RebuildAffixList();
         Rebuild();
         scroll.Content = listPanel;
-        sp.Children.Add(scroll);
 
+        // Body: the header/filter block (sp) is fixed at the top; the item list scroll fills whatever height
+        // remains, so the modal never clips its last row regardless of window size. The panel height is
+        // bounded to the actual window so a short window scrolls the list instead of overflowing off-screen.
+        var body = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(sp, Dock.Top); body.Children.Add(sp);
+        body.Children.Add(scroll);
+
+        double winH = ActualHeight > 200 ? ActualHeight : 900;
         var panel = new Border
         {
             Background = B("#131217"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1.4),
             CornerRadius = new CornerRadius(8), Padding = new Thickness(22, 18, 22, 20),
-            MaxWidth = 1060, MaxHeight = 700,
+            MaxWidth = 1060, MaxHeight = winH - 90,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-            Child = sp, ClipToBounds = true,
+            Child = body, ClipToBounds = true,
             // drop shadow so the modal clearly lifts off the dimmed page (near-black on near-black otherwise)
             Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 44, ShadowDepth = 0, Opacity = 0.7, Color = Colors.Black },
         };
@@ -2305,7 +2330,7 @@ public partial class MainWindow : Window
         else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.O && _target != null) { GoOverview(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.N && _target != null) { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); e.Handled = true; }
-        else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; RawBtn.Content = _rawView ? "← Overview" : "Build details"; Render(); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; RawBtn.Content = _rawView ? "← Overview" : "Build spec"; Render(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.I) { ShowInventoryModal(); e.Handled = true; }
         else if (k == System.Windows.Input.Key.Oem2 && !UrlBox.IsFocused) { UrlBox.Focus(); UrlBox.SelectAll(); e.Handled = true; }   // "/" focuses search
         else if (k == System.Windows.Input.Key.Escape)
@@ -3025,7 +3050,7 @@ public partial class MainWindow : Window
         // Resolve real art up-front: an unresolved (still-extracting / no-handle) tile renders as a QUIET
         // empty-slot placeholder — dim neutral ring, no rarity glow — so a cold-start doll isn't a wall of
         // bright rarity rings around empty boxes. Rarity colour returns to the ring once the art lands.
-        var realArt = RealIcon(iconName, artW, artH, wid, wimg);
+        var realArt = RealIcon(iconName, artW, artH, wid, wimg);   // already carries the soft bloom edge-fade
         bool resolved = realArt != null;
 
         grid.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
@@ -3651,45 +3676,91 @@ public partial class MainWindow : Window
         }
     }
 
-    // ---- raw build details ----
+    // ---- build spec: the target build distilled to what it wants — affixes, aspects, unique powers,
+    //      paragon (boards + glyphs) and skills — independent of the player's current gear ----
     UIElement RawView()
     {
         var t = _target!;
         var sp = new StackPanel();
-        sp.Children.Add(TBs("BUILD DETAILS", Gold, 16, true, new Thickness(0, 0, 0, 2)));
+        sp.Children.Add(TBs("BUILD SPEC", Gold, 16, true, new Thickness(0, 0, 0, 2)));
         var meta = new[] { t.Class, t.Profile, t.Source }.Where(x => !string.IsNullOrEmpty(x));
         sp.Children.Add(TB(t.Name + (meta.Any() ? "   ·   " + string.Join("   ·   ", meta) : ""), Soft, 12.5, false, new Thickness(0, 0, 0, 4)));
+        sp.Children.Add(TB("Everything this build wants — independent of your current gear.", Faint, 11.5, false, new Thickness(0, 0, 0, 2)));
 
-        RawHeader(sp, "GEAR & AFFIX TARGETS");
-        foreach (var ge in t.Gear)
+        // SKILLS (+ key passives)
+        if (t.Skills.Count > 0 || t.KeyPassives.Count > 0)
         {
-            sp.Children.Add(TBs((ge.Label ?? ge.Slot).ToUpperInvariant(), Ink, 12.5, true, new Thickness(0, 9, 0, 2)));
-            if (ge.Affixes.Count == 0) sp.Children.Add(RawLine("—"));
-            foreach (var a in ge.Affixes)
+            SpecHeader(sp, "SKILLS");
+            foreach (var s in t.Skills) sp.Children.Add(SpecRow(s.Name, s.Rank != null ? $"rank {s.Rank}" : null));
+            foreach (var kp in t.KeyPassives) sp.Children.Add(SpecRow(kp, "key passive"));
+        }
+
+        // PARAGON (boards + glyphs)
+        if (t.Paragon != null && (t.Paragon.Boards.Count > 0 || t.Paragon.Glyphs.Count > 0))
+        {
+            SpecHeader(sp, "PARAGON");
+            foreach (var b in t.Paragon.Boards) sp.Children.Add(SpecRow(b, "board"));
+            foreach (var g in t.Paragon.Glyphs) sp.Children.Add(SpecRow(g.Name, g.Level != null ? $"glyph · lvl {g.Level}" : "glyph"));
+        }
+
+        // AFFIXES grouped by slot
+        if (t.Gear.Any(g => g.Affixes.Count > 0))
+        {
+            SpecHeader(sp, "AFFIXES BY SLOT");
+            foreach (var ge in t.Gear.Where(g => g.Affixes.Count > 0))
             {
-                string thr = a.MinPercent != null ? $"   ≥ {a.MinPercent}% roll" : a.Min != null ? $"   ≥ {a.Min}" : "";
-                sp.Children.Add(RawLine("◆  " + a.Name + thr));
+                sp.Children.Add(TBs((ge.Label ?? ge.Slot).ToUpperInvariant(), Soft, 11, true, new Thickness(0, 8, 0, 2)));
+                foreach (var a in ge.Affixes)
+                {
+                    var bits = new[]
+                    {
+                        a.MinPercent != null ? $"≥ {a.MinPercent}% roll" : a.Min != null ? $"≥ {a.Min}" : "",
+                        a.Tempered ? "tempered" : "",
+                    }.Where(x => x.Length > 0);
+                    sp.Children.Add(SpecRow(a.Name, string.Join("  ·  ", bits) is { Length: > 0 } d ? d : null));
+                }
             }
         }
+
+        // ASPECT POWERS
+        if (t.Aspects.Count > 0)
+        {
+            SpecHeader(sp, "ASPECT POWERS");
+            foreach (var a in t.Aspects) sp.Children.Add(SpecRow(a, null, RLegend));
+        }
+
+        // UNIQUE POWERS
         if (t.Uniques.Count > 0)
         {
-            RawHeader(sp, "UNIQUES");
+            SpecHeader(sp, "UNIQUE POWERS");
             foreach (var u in t.Uniques)
-                sp.Children.Add(RawLine("◆  " + u.Name + (u.Slot != null ? "   —   " + u.Slot : "") + (u.Mythic ? "   (Mythic)" : "")));
+                sp.Children.Add(SpecRow(u.Name,
+                    string.Join("  ·  ", new[] { u.Slot ?? "", u.Mythic ? "mythic" : "" }.Where(x => x.Length > 0)) is { Length: > 0 } d ? d : null,
+                    u.Mythic ? RMythic : RUnique));
         }
-        if (t.Aspects.Count > 0) { RawHeader(sp, "ASPECTS"); foreach (var a in t.Aspects) sp.Children.Add(RawLine("◆  " + a)); }
-        // skills/paragon intentionally omitted from the raw view for now
 
-        RawHeader(sp, "RAW JSON");
-        string json; try { json = JsonSerializer.Serialize(t, new JsonSerializerOptions { WriteIndented = true }); } catch { json = "(unavailable)"; }
-        sp.Children.Add(new TextBox
+        // MERCENARY
+        if (t.Mercenary != null && (!string.IsNullOrEmpty(t.Mercenary.Main) || !string.IsNullOrEmpty(t.Mercenary.Support)))
         {
-            Text = json, IsReadOnly = true, IsReadOnlyCaretVisible = false,
-            FontFamily = new FontFamily("Consolas, Cascadia Mono, Courier New"), FontSize = 12, Foreground = Soft,
-            Background = B("#0D0B09"), BorderBrush = Edge, BorderThickness = new Thickness(1), Padding = new Thickness(12),
-            TextWrapping = TextWrapping.NoWrap, MaxHeight = 460, Margin = new Thickness(0, 4, 0, 0),
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
+            SpecHeader(sp, "MERCENARY");
+            if (!string.IsNullOrEmpty(t.Mercenary.Main)) sp.Children.Add(SpecRow(t.Mercenary.Main!, "hired"));
+            if (!string.IsNullOrEmpty(t.Mercenary.Support)) sp.Children.Add(SpecRow(t.Mercenary.Support!, "reinforcement"));
+        }
+
+        // raw JSON is a developer artifact — only in debug mode, never in the normal spec view
+        if (_debugMode)
+        {
+            SpecHeader(sp, "RAW JSON");
+            string json; try { json = JsonSerializer.Serialize(t, new JsonSerializerOptions { WriteIndented = true }); } catch { json = "(unavailable)"; }
+            sp.Children.Add(new TextBox
+            {
+                Text = json, IsReadOnly = true, IsReadOnlyCaretVisible = false,
+                FontFamily = new FontFamily("Consolas, Cascadia Mono, Courier New"), FontSize = 12, Foreground = Soft,
+                Background = B("#0D0B09"), BorderBrush = Edge, BorderThickness = new Thickness(1), Padding = new Thickness(12),
+                TextWrapping = TextWrapping.NoWrap, MaxHeight = 460, Margin = new Thickness(0, 4, 0, 0),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            });
+        }
 
         return new Border
         {
@@ -3698,6 +3769,26 @@ public partial class MainWindow : Window
         };
     }
 
-    void RawHeader(StackPanel sp, string t) => sp.Children.Add(TBs(t, Gold, 12.5, true, new Thickness(0, 16, 0, 4)));
-    UIElement RawLine(string text) => TB(text, Soft, 12.5, false, new Thickness(14, 2, 0, 2));
+    // section header with a thin gold underline rule
+    void SpecHeader(StackPanel sp, string title)
+    {
+        sp.Children.Add(TBs(title, Gold, 13.5, true, new Thickness(0, 18, 0, 4)));
+        sp.Children.Add(new Border { Height = 1, Background = B("#33D4A730"), Margin = new Thickness(0, 0, 0, 7) });
+    }
+
+    // a spec line: ◆ marker + name (optionally rarity-coloured) with a dim detail tag docked right
+    UIElement SpecRow(string name, string? detail = null, Brush? nameCol = null)
+    {
+        var dp = new DockPanel { Margin = new Thickness(2, 2, 0, 2) };
+        if (!string.IsNullOrEmpty(detail))
+        {
+            var d = TB(detail!, Faint, 11, false); d.VerticalAlignment = VerticalAlignment.Center; d.Margin = new Thickness(10, 0, 0, 0);
+            DockPanel.SetDock(d, Dock.Right); dp.Children.Add(d);
+        }
+        var diamond = TB("◆", B("#66D4A730"), 10, false); diamond.VerticalAlignment = VerticalAlignment.Center; diamond.Margin = new Thickness(0, 0, 8, 0);
+        DockPanel.SetDock(diamond, Dock.Left); dp.Children.Add(diamond);
+        var nm = TB(name, nameCol ?? Soft, 12.5, false); nm.TextWrapping = TextWrapping.Wrap; nm.VerticalAlignment = VerticalAlignment.Center;
+        dp.Children.Add(nm);
+        return dp;
+    }
 }

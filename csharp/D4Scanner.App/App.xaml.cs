@@ -14,6 +14,21 @@ public partial class App : System.Windows.Application
     // "--render <out.png>": render the window to a PNG with no visible window, then exit.
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        // Headless render runs BEFORE the single-instance guard: it's a short-lived, windowless export, so
+        // it must not be blocked just because the real app is already running (the mutex would short-circuit it).
+        int idx = System.Array.IndexOf(e.Args, "--render");
+        if (idx >= 0 && idx + 1 < e.Args.Length)
+        {
+            // optional size: "--render <out.png> [width] [height]" — verify reflow / on-screen fit headlessly
+            int w = 1300, h = 2100;
+            if (idx + 2 < e.Args.Length && int.TryParse(e.Args[idx + 2], out var pw)) w = pw;
+            if (idx + 3 < e.Args.Length && int.TryParse(e.Args[idx + 3], out var ph)) h = ph;
+            try { new MainWindow().HeadlessRender(e.Args[idx + 1], w, h); }
+            catch (System.Exception ex) { System.Console.Error.WriteLine("render failed: " + ex); }
+            Shutdown(0);
+            return;
+        }
+
         // Single-instance guard: if another D4Scanner is already running, bring it to the front.
         _singleInstance = new System.Threading.Mutex(true, "D4Scanner.App.SingleInstance", out bool isNew);
         if (!isNew)
@@ -24,18 +39,6 @@ public partial class App : System.Windows.Application
                 ShowWindow(existing.MainWindowHandle, 9 /* SW_RESTORE */);
                 SetForegroundWindow(existing.MainWindowHandle);
             }
-            Shutdown(0);
-            return;
-        }
-        int idx = System.Array.IndexOf(e.Args, "--render");
-        if (idx >= 0 && idx + 1 < e.Args.Length)
-        {
-            // optional size: "--render <out.png> [width] [height]" — verify reflow / on-screen fit headlessly
-            int w = 1300, h = 2100;
-            if (idx + 2 < e.Args.Length && int.TryParse(e.Args[idx + 2], out var pw)) w = pw;
-            if (idx + 3 < e.Args.Length && int.TryParse(e.Args[idx + 3], out var ph)) h = ph;
-            try { new MainWindow().HeadlessRender(e.Args[idx + 1], w, h); }
-            catch (System.Exception ex) { System.Console.Error.WriteLine("render failed: " + ex); }
             Shutdown(0);
             return;
         }
