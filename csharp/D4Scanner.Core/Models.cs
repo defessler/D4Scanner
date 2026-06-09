@@ -151,6 +151,8 @@ public sealed class CharacterProfile
     public int? Paragon { get; set; }             // last-seen paragon level (for roster matching/display)
     public long LastSeenUtcTicks { get; set; }
     public LiveBuild Live { get; set; } = new();
+    public string? TargetPath { get; set; }       // the target build file this character compares against
+    public string? TargetSource { get; set; }     // the import slug/URL that produced it (for re-import / Open on Maxroll)
 }
 
 // ---- target build (mirrors schema/target.schema.json) ----
