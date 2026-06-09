@@ -1131,6 +1131,28 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("CharacterResolver: null paragon -> null", CharacterResolver.ByParagon(roster, null) == null);
     var dup = new List<RosterEntry> { new() { Name = "A", Paragon = 50 }, new() { Name = "B", Paragon = 50 } };
     Check("CharacterResolver: ambiguous paragon -> null", CharacterResolver.ByParagon(dup, 50) == null);
+
+    // Resolve(): unique => Resolved, collision => Ambiguous (prompt), none => None
+    var u = CharacterResolver.Resolve(roster, 220);
+    Eq("Resolve: unique paragon kind", CharacterResolver.IdKind.Resolved, u.Kind);
+    Eq("Resolve: unique paragon name", "MementoMori", u.Name);
+    var amb = CharacterResolver.Resolve(dup, 50);
+    Eq("Resolve: collision kind is Ambiguous", CharacterResolver.IdKind.Ambiguous, amb.Kind);
+    Eq("Resolve: collision exposes both candidates", 2, amb.Candidates.Count);
+    Eq("Resolve: no match kind is None", CharacterResolver.IdKind.None, CharacterResolver.Resolve(roster, 999).Kind);
+
+    // ReconcileOwn(): match a saved profile by the player's OWN paragon (+ class tiebreak), never a roster line
+    var profs = new List<CharacterProfile>
+    {
+        new() { Slug = "rogue1", Name = "Zuri", Class = "Rogue", Paragon = 210 },
+        new() { Slug = "barb1", Name = "Bob", Class = "Barbarian", Paragon = 300 },
+        new() { Slug = "barb2", Name = "Bill", Class = "Barbarian", Paragon = 300 },
+    };
+    Eq("ReconcileOwn: unique paragon -> that profile", "rogue1", CharacterResolver.ReconcileOwn(profs, 210, null)!.Slug);
+    Check("ReconcileOwn: same-paragon same-class with no class hint -> null (no guess)", CharacterResolver.ReconcileOwn(profs, 300, null) == null);
+    Check("ReconcileOwn: same-paragon two Barbarians even with class hint -> still null", CharacterResolver.ReconcileOwn(profs, 300, "Barbarian") == null);
+    Eq("ReconcileOwn: class tiebreak picks the matching class", "rogue1", CharacterResolver.ReconcileOwn(profs, 210, "Rogue")!.Slug);
+    Check("ReconcileOwn: unknown paragon -> null", CharacterResolver.ReconcileOwn(profs, 999, null) == null);
 }
 
 // ---- ClassDetector (weapon + skill inference) ----
