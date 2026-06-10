@@ -217,7 +217,7 @@ public static class DiffEngine
 
     /// <summary>True when a target ItemId and a live ItemType refer to the same weapon type.
     /// Used to give a big assignment-score bonus so a crossbow target always picks the crossbow.</summary>
-    static bool WeaponTypeMatch(string? targetItemId, string? liveItemType)
+    public static bool WeaponTypeMatch(string? targetItemId, string? liveItemType)
     {
         if (string.IsNullOrEmpty(targetItemId) || string.IsNullOrEmpty(liveItemType)) return false;
         var id = targetItemId.ToLowerInvariant();
@@ -255,6 +255,105 @@ public static class DiffEngine
         return h.Length > 1 ? char.ToUpperInvariant(h[0]) + h.Substring(1).ToLowerInvariant() : null;
     }
 
+    /// <summary>True for inherently two-handed voiced types ("Two-Handed Sword", polearms, staves…).</summary>
+    static bool IsTwoHandedType(string? t)
+    {
+        if (string.IsNullOrEmpty(t)) return false;
+        var s = t.ToLowerInvariant();
+        return s.Contains("two-hand") || s.Contains("two hand")
+            || s.Contains("polearm") || s.Contains("quarterstaff")
+            || (s.Contains("staff") && !s.Contains("quarter"));
+    }
+
+    /// <summary>
+    /// Weapon-class gate: can this live item physically occupy this target slot? A melee weapon can never
+    /// fill a ranged (bow/crossbow) slot or vice-versa, and a one-hander can never fill a two-hand slot.
+    /// Non-weapon slots and unknown types are always compatible — the gate only excludes what it KNOWS is
+    /// wrong. Shared by the diff assignment, the upgrade scorer, and the UI compare card so they agree.
+    /// </summary>
+    public static bool WeaponSlotCompatible(TargetGear g, Item it)
+    {
+        if (SlotBase(g.Slot) != "weapon") return true;
+        if (!IsWeaponType(g.ItemId) || !IsWeaponType(it.ItemType)) return true;
+        if (IsRangedWeapon(it.ItemType) != IsRangedWeapon(g.ItemId)) return false;
+        // handedness: the target ItemId encodes 1H/2H; the voiced type says "Two-Handed …".
+        // (ranged weapons already matched above — bows/crossbows are all 2H so the prefix adds nothing)
+        if (!IsRangedWeapon(g.ItemId))
+        {
+            bool? want2h = g.ItemId!.StartsWith("2H", StringComparison.OrdinalIgnoreCase) ? true
+                         : g.ItemId!.StartsWith("1H", StringComparison.OrdinalIgnoreCase) ? false : null;
+            if (want2h is bool w && IsTwoHandedType(it.ItemType) != w) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Does the player's item carry the wanted legendary aspect? Three signals, most reliable first:
+    /// the captured "Imprinted:" effect text (PhraseMatch), the ITEM NAME — a legendary dropped or
+    /// imprinted with an aspect is named "&lt;base&gt; of &lt;aspect&gt;" — and the tooltip power text.
+    /// The name check is gated to legendaries so a Rare's random "of …" suffix can't false-match.
+    /// </summary>
+    public static bool ItemCarriesAspect(string wantAspect, Item it)
+    {
+        if (string.IsNullOrWhiteSpace(wantAspect)) return false;
+        if (it.Aspect != null && PhraseMatch(wantAspect, it.Aspect)) return true;
+        // "Aspect of Mending Obscurity" → "mending obscurity"; "Edgemaster's Aspect" → "edgemaster"
+        // (the bare "s" token is the possessive left over after normalization)
+        var key = Regex.Replace(Normalize(wantAspect), @"\b(aspect|of|the|s)\b", " ");
+        key = Regex.Replace(key, @"\s+", " ").Trim();
+        if (key.Length < 4) return false;
+        if ((it.Rarity ?? "").Contains("legendary", StringComparison.OrdinalIgnoreCase)
+            && Normalize(it.Name).Contains(key)) return true;
+        return it.PowerText.Any(p => Normalize(p).Contains(key));
+    }
+
+    /// <summary>
+    /// Assign one distinct live item to each target slot (rings / multi-weapon slots sharing a base each
+    /// get their best match), with the weapon-type gate and type-affinity bonus. Public so the upgrade
+    /// scorer and the UI compare card use the SAME equipped-piece-per-slot decision as the diff itself.
+    /// Key = index into <paramref name="target"/>.Gear; value = the equipped item filling it (or null).
+    /// </summary>
+    public static Dictionary<int, Item?> AssignSlots(TargetBuild target, LiveBuild live)
+    {
+        var byBase = new Dictionary<string, List<int>>();
+        for (int i = 0; i < target.Gear.Count; i++)
+        {
+            var b = SlotBase(target.Gear[i].Slot);
+            if (!byBase.TryGetValue(b, out var lst)) byBase[b] = lst = new();
+            lst.Add(i);
+        }
+        var assigned = new Dictionary<int, Item?>();
+        foreach (var kv in byBase)
+        {
+            var liveIts = PooledItems(live, kv.Key);
+            var taken = new bool[liveIts.Count];
+            foreach (var idx in kv.Value)
+            {
+                var aff = target.Gear[idx].Affixes;
+                int best = -1, bestScore = -1;
+                for (int i = 0; i < liveIts.Count; i++)
+                {
+                    if (taken[i]) continue;
+                    // Weapon-class gate: a melee weapon (sword/dagger/…) must never fill a ranged slot
+                    // (crossbow/bow) or vice-versa, nor a one-hander a two-hand slot. Without this, a
+                    // crossbow slot with no live crossbow borrows the player's melee dagger by affix-count.
+                    if (kv.Key == "weapon" && !WeaponSlotCompatible(target.Gear[idx], liveIts[i]))
+                        continue;
+                    int score = aff.Count(a => liveIts[i].Affixes.Any(x => PhraseMatch(a.Name, x.Text)));
+                    // Type-affinity bonus: when the target slot has an ItemId encoding a weapon type (e.g.
+                    // "2HCrossbow_Legendary_..."), strongly prefer a live item whose ItemType matches.
+                    // A 100-point bonus dominates the affix-count score so a crossbow target always picks
+                    // the crossbow over a sword with more matching affixes.
+                    if (kv.Key == "weapon" && WeaponTypeMatch(target.Gear[idx].ItemId, liveIts[i].ItemType))
+                        score += 100;
+                    if (score > bestScore) { bestScore = score; best = i; }
+                }
+                if (best >= 0) { taken[best] = true; assigned[idx] = liveIts[best]; } else assigned[idx] = null;
+            }
+        }
+        return assigned;
+    }
+
     /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
     public static string SlotBaseName(string? slot) => SlotBase(slot);
 
@@ -265,44 +364,9 @@ public static class DiffEngine
         // ---- Gear & affixes (value-aware: HAVE vs NEED per slot) ----
         if (target.Gear.Count > 0)
         {
-            // assign one distinct live item to each target slot (rings/weapons sharing a base each get their best match)
-            var byBase = new Dictionary<string, List<int>>();
-            for (int i = 0; i < target.Gear.Count; i++)
-            {
-                var b = SlotBase(target.Gear[i].Slot);
-                if (!byBase.TryGetValue(b, out var lst)) byBase[b] = lst = new();
-                lst.Add(i);
-            }
-            var assigned = new Dictionary<int, Item?>();
-            foreach (var kv in byBase)
-            {
-                var liveIts = PooledItems(live, kv.Key);
-                var taken = new bool[liveIts.Count];
-                foreach (var idx in kv.Value)
-                {
-                    var aff = target.Gear[idx].Affixes;
-                    int best = -1, bestScore = -1;
-                    for (int i = 0; i < liveIts.Count; i++)
-                    {
-                        if (taken[i]) continue;
-                        // Weapon-class gate: a melee weapon (sword/dagger/…) must never fill a ranged slot
-                        // (crossbow/bow) or vice-versa. Without this, a crossbow slot with no live crossbow
-                        // borrows the player's melee dagger by affix-count — the exact bug being fixed.
-                        if (kv.Key == "weapon" && IsWeaponType(target.Gear[idx].ItemId) && IsWeaponType(liveIts[i].ItemType)
-                            && IsRangedWeapon(liveIts[i].ItemType) != IsRangedWeapon(target.Gear[idx].ItemId))
-                            continue;
-                        int score = aff.Count(a => liveIts[i].Affixes.Any(x => PhraseMatch(a.Name, x.Text)));
-                        // Type-affinity bonus: when the target slot has an ItemId encoding a weapon type (e.g.
-                        // "2HCrossbow_Legendary_..."), strongly prefer a live item whose ItemType matches.
-                        // A 100-point bonus dominates the affix-count score so a crossbow target always picks
-                        // the crossbow over a sword with more matching affixes.
-                        if (kv.Key == "weapon" && WeaponTypeMatch(target.Gear[idx].ItemId, liveIts[i].ItemType))
-                            score += 100;
-                        if (score > bestScore) { bestScore = score; best = i; }
-                    }
-                    if (best >= 0) { taken[best] = true; assigned[idx] = liveIts[best]; } else assigned[idx] = null;
-                }
-            }
+            // assign one distinct live item to each target slot (rings/weapons sharing a base each get
+            // their best match) — extracted to AssignSlots so the upgrade scorer shares the decision
+            var assigned = AssignSlots(target, live);
 
             var gearGroups = new List<Group>();
             for (int gi = 0; gi < target.Gear.Count; gi++)
@@ -377,14 +441,8 @@ public static class DiffEngine
         {
             var aitems = target.Aspects.Select(asp =>
             {
-                bool done = live.Aspects.Any(a => PhraseMatch(asp, a));
-                if (!done)
-                {
-                    var key = Regex.Replace(Normalize(asp), @"\b(aspect|of|the)\b", "").Trim();
-                    done = live.Gear.Any(it =>
-                        (it.Aspect != null && PhraseMatch(asp, it.Aspect)) ||
-                        it.PowerText.Any(p => key.Length >= 3 && Normalize(p).Contains(key)));
-                }
+                bool done = live.Aspects.Any(a => PhraseMatch(asp, a))
+                         || live.Gear.Any(it => ItemCarriesAspect(asp, it));
                 return new ReqItem { Label = asp, Done = done, Source = done ? "vision" : null };
             }).ToList();
             cats.Add(MakeCategory("aspects", "Aspects", new() { MakeGroup("Aspects", aitems) }));

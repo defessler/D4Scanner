@@ -91,7 +91,10 @@ public sealed class OcrCaptureEngine : IDisposable
             item.Source = ItemSource.Ocr;
             item.UiPanel = panel;
             item.LastScannedTicks = DateTime.UtcNow.Ticks;
-            item.Equipped = panel != "Inventory" && panel != "Stash";
+            // Worn ONLY on an explicit character-panel signal. Un-paneled tooltips (ground loot, vendor,
+            // trade, or a bag hover whose header word OCR missed this frame) must never masquerade as
+            // equipped — they poisoned the upgrade bar and hid the player's own bag items from All Items.
+            item.Equipped = panel == "Character";
             item.Context  = item.Equipped ? UiContext.WornGear : UiContext.BagItem;
 
             if (item.Equipped) _orderedGear.Add(item);

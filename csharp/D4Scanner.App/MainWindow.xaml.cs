@@ -452,6 +452,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("winMax", out var wm) && wm == "1") WindowState = WindowState.Maximized;
                     if (s.TryGetValue("src", out var sr) && !string.IsNullOrEmpty(sr)) _lastImportInput = sr;
                     if (s.TryGetValue("recent", out var rc) && !string.IsNullOrEmpty(rc)) _recentSlugs = rc.Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
+                    if (s.TryGetValue("invSort", out var iv2) && Enum.TryParse<GearSortMode>(iv2, out var ivm)) _invSort = ivm;
                 }
             }
         }
@@ -471,7 +472,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["invSort"] = _invSort?.ToString() }));
         }
         catch { }
     }
@@ -523,10 +524,21 @@ public partial class MainWindow : Window
             if (recon != null && recon.Slug != _activeSlug) SwitchToProfile(recon.Slug);
         }
 
+        // Equipped sanity: class-impossible items, slotless capture artifacts, and weapons beyond the
+        // class's carry capacity are stale/mis-stamped captures — demote them to inventory (still owned,
+        // still searchable in All Items) instead of letting them masquerade as worn gear.
+        var cls = _activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null;
+        var gear = LiveGearResolver.SanitizeEquipped(MergeGear(_live.Gear, b.Gear), cls, out var demoted);
+        // Inventory merges per channel (TTS / OCR each publish only their own list — a wholesale swap
+        // made items flip in and out of All Items depending on which channel scanned last).
+        var inv = LiveGearResolver.MergeInventory(_live.Inventory, b.Inventory);
+        var invFps = new HashSet<string>(inv.Select(GearList.Fingerprint), StringComparer.Ordinal);
+        foreach (var d in demoted)
+            if (invFps.Add(GearList.Fingerprint(d))) { d.Equipped = false; inv.Add(d); }
         var merged = new LiveBuild
         {
-            Gear      = MergeGear(_live.Gear, b.Gear),
-            Inventory = b.Inventory,
+            Gear      = gear,
+            Inventory = inv,
             Character = b.Character?.Any == true ? b.Character : _live.Character,   // keep captured attributes across OCR-only updates
             Skills    = b.Skills.Count > 0 ? b.Skills : _live.Skills,
             Roster    = _roster,
@@ -956,6 +968,7 @@ public partial class MainWindow : Window
                 Skills    = _live.Skills.Count > 0 ? _live.Skills : stored.Live.Skills,
                 Roster    = _roster,
             };
+        SanitizeLive(cls ?? stored?.Class);   // a new/sparse character must never inherit another class's gear as "worn"
         var prof = stored ?? new CharacterProfile { Slug = slug };
         prof.Name = name; if (cls != null) prof.Class = cls;
         prof.Live = _live; prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
@@ -976,6 +989,7 @@ public partial class MainWindow : Window
         _activeSlug = slug;
         _live = prof?.Live ?? new LiveBuild();
         _live.Roster = _roster;
+        SanitizeLive(prof?.Class);
         _profiles.ActiveSlug = slug;
         ApplyProfileTarget(prof);
         Toast("Switched to " + (prof?.Name ?? slug));
@@ -998,6 +1012,17 @@ public partial class MainWindow : Window
     // Logic lives in D4Scanner.Core.LiveGearResolver (UI-free + headlessly tested); thin wrapper so
     // the call sites stay untouched.
     static List<Item> MergeGear(List<Item> persisted, List<Item> fresh) => LiveGearResolver.Merge(persisted, fresh);
+
+    // Run the equipped-gear sanity pass over _live in place: class-impossible / slotless / over-capacity
+    // items move from Gear to Inventory (still owned, still searchable — just not "worn").
+    void SanitizeLive(string? cls)
+    {
+        _live.Gear = LiveGearResolver.SanitizeEquipped(_live.Gear, cls, out var demoted);
+        if (demoted.Count == 0) return;
+        var invFps = new HashSet<string>(_live.Inventory.Select(GearList.Fingerprint), StringComparer.Ordinal);
+        foreach (var d in demoted)
+            if (invFps.Add(GearList.Fingerprint(d))) { d.Equipped = false; _live.Inventory.Add(d); }
+    }
 
     void PickLog()
     {
@@ -2310,6 +2335,12 @@ public partial class MainWindow : Window
         return sec;
     }
 
+    // All Items modal state — instance fields so sort / search / affix filters survive a reopen
+    // (the per-row delete button closes and reopens the modal; resetting mid-session read as a bug).
+    GearSortMode? _invSort;
+    string _invSearch = "";
+    readonly HashSet<string> _invAffixes = new(StringComparer.OrdinalIgnoreCase);
+
     void ShowInventoryModal()
     {
         var overlay = new Grid { IsHitTestVisible = true };
@@ -2328,6 +2359,8 @@ public partial class MainWindow : Window
         var items = owned.Select(o => o.Item).ToList();
         var ownerByFp = owned.Where(o => o.Owner != null)
             .ToDictionary(o => GearList.Fingerprint(o.Item), o => o.Owner!, StringComparer.Ordinal);
+        var slugByFp = owned.Where(o => o.OwnerSlug != null)
+            .ToDictionary(o => GearList.Fingerprint(o.Item), o => o.OwnerSlug!, StringComparer.Ordinal);
         var affixKeys = GearList.AffixKeys(items);
         var now = DateTime.UtcNow.Ticks;
 
@@ -2346,11 +2379,16 @@ public partial class MainWindow : Window
             }
         }
 
-        // filter / sort state
-        var selectedAffixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        string search = "";
-        var sortMode = scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired;
+        // filter / sort state (instance-backed so it survives the delete-button close/reopen)
+        var selectedAffixes = _invAffixes;
+        string search = _invSearch;
+        var sortMode = _invSort ?? (scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired);
         string? expandedFp = null;   // fingerprint of the row whose inline comparison is open
+        FrameworkElement? expandedCard = null;   // the inserted compare card (for BringIntoView)
+
+        // the SAME equipped-piece-per-target-slot assignment the diff/badges use, so the inline
+        // compare card and the upgrade badge always describe the same equipped item
+        var assignedEq = scoring ? DiffEngine.AssignSlots(_target!, live) : null;
 
         // ---- header ----
         var sp = new StackPanel { MinWidth = 760, MaxWidth = 1000 };
@@ -2361,8 +2399,8 @@ public partial class MainWindow : Window
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
-            ? $"Everything {(activeClass ?? "this character")} could equip — across all your characters' bags, stash and loadouts — scored against the build, best upgrades first.  Hover to compare vs equipped · click to pin."
-            : "Everything this character could equip, across all your characters (load a build to score upgrades).  Hover to compare vs equipped · click to pin.",
+            ? $"Everything {(activeClass ?? "this character")} could equip — across all your characters' bags, stash and loadouts — scored against the build, best upgrades first.  Click a row to compare vs equipped · 📌 pins it to the overview."
+            : "Everything this character could equip, across all your characters (load a build to score upgrades).  Click a row to compare vs equipped · 📌 pins it to the overview.",
             Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
 
         // ---- filter / sort bar ----
@@ -2391,12 +2429,17 @@ public partial class MainWindow : Window
                 ? filtered.OrderBy(i => scoreOrder.GetValueOrDefault(GearList.Fingerprint(i), int.MaxValue)).ToList()
                 : GearList.Sort(filtered, sortMode);
             listPanel.Children.Clear();
+            expandedCard = null;
             foreach (var it in view)
             {
                 listPanel.Children.Add(BuildRow(it));
                 // the comparison renders INLINE under the clicked row (replaces the old hover popup)
                 if (expandedFp != null && expandedFp == GearList.Fingerprint(it))
-                    listPanel.Children.Add(ItemCompareCard(it));
+                {
+                    var cc = ItemCompareCard(it, scoreByFp.GetValueOrDefault(GearList.Fingerprint(it)), assignedEq);
+                    expandedCard = cc;
+                    listPanel.Children.Add(cc);
+                }
             }
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
         }
@@ -2406,7 +2449,7 @@ public partial class MainWindow : Window
             chipBar.Children.Clear();
             var sortRow = new WrapPanel();
             sortRow.Children.Add(TB("Sort", Faint, 11, false, new Thickness(0, 3, 8, 0)));
-            void S(string lbl, GearSortMode m) => sortRow.Children.Add(Chip(lbl, sortMode == m, () => { sortMode = m; BuildChips(); Rebuild(); }));
+            void S(string lbl, GearSortMode m) => sortRow.Children.Add(Chip(lbl, sortMode == m, () => { sortMode = m; _invSort = m; SaveSettings(); BuildChips(); Rebuild(); }));
             if (scoring) S("Best upgrade", GearSortMode.Upgrade);
             S("Recently acquired", GearSortMode.RecentlyAcquired);
             S("Slot", GearSortMode.Slot);
@@ -2422,7 +2465,8 @@ public partial class MainWindow : Window
             BorderBrush = Edge, BorderThickness = new Thickness(1), Padding = new Thickness(8, 5, 8, 5),
             FontSize = 12, Margin = new Thickness(0, 0, 0, 8),
         };
-        searchBox.TextChanged += (_, _) => { search = searchBox.Text; Rebuild(); };
+        searchBox.Text = search;
+        searchBox.TextChanged += (_, _) => { search = searchBox.Text; _invSearch = search; Rebuild(); };
 
         // ---- affix filter: multiselect combo (tag box + dropdown of all affixes present) ----
         var tagBox = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
@@ -2527,8 +2571,14 @@ public partial class MainWindow : Window
             ovl.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, rc.R, rc.G, rc.B), 1));
             iconGrid.Children.Add(new Border { Background = ovl, CornerRadius = new CornerRadius(4) });
             iconGrid.Children.Add(new Border { BorderBrush = rcol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
-            if (IsAncestral(item.Rarity))
-                iconGrid.Children.Add(new Border { BorderBrush = RAncestral, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3), Opacity = 0.5 });
+            bool ancestral = item.IsAncestral || IsAncestral(item.Rarity);
+            if (ancestral)   // ancestral = a soft cyan glow AROUND the normal rarity frame (plus text below)
+                iconGrid.Children.Add(new Border
+                {
+                    BorderBrush = RAncestral, BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(4),
+                    Effect = new System.Windows.Media.Effects.DropShadowEffect
+                    { Color = Color.FromRgb(0x66, 0xD0, 0xF8), BlurRadius = 10, ShadowDepth = 0, Opacity = 0.85 },
+                });
             // real game art whenever possible: by item name first, else by the item's base TYPE handle
             var art = SlotOrItemIcon(item.Name, SlotKey(item.Slot ?? ""), rcol, 42, 62,
                 null, BaseIconIndex.HandleForType(item.ItemType, item.Slot));
@@ -2564,18 +2614,31 @@ public partial class MainWindow : Window
                 };
                 DockPanel.SetDock(sBadge, Dock.Right); headRow.Children.Add(sBadge);
             }
+            // at-a-glance delta vs the equipped piece this item would displace (the inline card has the detail)
+            if (score != null && score.CompareSlotIndex != null)
+            {
+                string dTxt; Brush dCol;
+                if (score.EquippedEmpty) { dTxt = "▲ fills an empty slot"; dCol = Green; }
+                else if (score.AffixDelta != 0)
+                {
+                    int d = score.AffixDelta;
+                    dTxt = $"{(d > 0 ? "▲ +" : "▼ −")}{Math.Abs(d)} affix{(Math.Abs(d) == 1 ? "" : "es")}";
+                    dCol = d > 0 ? Green : Crimson;
+                }
+                else if (Math.Abs(score.QualityDelta) >= 1)
+                {
+                    double q = score.QualityDelta;
+                    dTxt = $"{(q > 0 ? "▲ +" : "▼ −")}{Math.Abs(q):0}% rolls";
+                    dCol = q > 0 ? Green : Crimson;
+                }
+                else { dTxt = "= even"; dCol = Faint; }
+                var dl = TB(dTxt, dCol, 9.5, true); dl.Margin = new Thickness(8, 0, 0, 0); dl.VerticalAlignment = VerticalAlignment.Center;
+                DockPanel.SetDock(dl, Dock.Right); headRow.Children.Add(dl);
+            }
             headRow.Children.Add(TB(slotLbl + (owner != null ? $"   ·   with {owner}" : ""), owner != null ? Steel : Faint, 10, false));
             details.Children.Add(headRow);
-            bool ancestral = item.IsAncestral || IsAncestral(item.Rarity);
-            var nameLine = new StackPanel { Orientation = Orientation.Horizontal };
-            if (ancestral)
-            {   // ancestral marker, both visual (the D4-style chevrons in ancestral orange) and in text below
-                var anc = TBs("⌃⌃ ", RAncestral, 12.5, true); anc.Margin = new Thickness(0, 0, 2, 0);
-                anc.ToolTip = "Ancestral"; nameLine.Children.Add(anc);
-            }
             var nameBlock = TBs(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;   // serif (Cinzel) — D4 item-name cue
-            nameLine.Children.Add(nameBlock);
-            details.Children.Add(nameLine);
+            details.Children.Add(nameBlock);
             if (score != null && score.SlotTarget > 0)
                 details.Children.Add(TB($"has {score.SlotPresent}/{score.SlotTarget} of this slot's affixes"
                     + (score.Fixable ? "  ·  1 enchant from full" : "")
@@ -2614,21 +2677,34 @@ public partial class MainWindow : Window
             };
             delGrid.Children.Add(delBtn);
             var capturedItem = item; var capturedSec = sec;
-            delBtn.MouseLeftButtonUp += (_, _) =>
+            delBtn.MouseLeftButtonUp += (_, e) =>
             {
-                _live.Gear.Remove(capturedItem); _live.Inventory.Remove(capturedItem);
+                e.Handled = true;   // a delete must not also toggle the row's inline comparison
+                if (slugByFp.TryGetValue(fp, out var ownerSlug))
+                {
+                    // the capture lives in ANOTHER character's profile — delete it there and persist
+                    var p = _profiles.Get(ownerSlug);
+                    if (p != null)
+                    {
+                        p.Live.Gear.RemoveAll(x => GearList.Fingerprint(x) == fp);
+                        p.Live.Inventory.RemoveAll(x => GearList.Fingerprint(x) == fp);
+                        _profiles.Save(p);
+                    }
+                }
+                else { _live.Gear.Remove(capturedItem); _live.Inventory.Remove(capturedItem); SaveLive(); }
                 _pinned.Remove(capturedSec.Key); _inventorySections.Remove(capturedSec.Key);
-                SaveLive(); Close(); Render(); ShowInventoryModal();
+                Close(); Render(); ShowInventoryModal();
             };
 
+            bool expanded = expandedFp == fp;   // row whose inline comparison is open gets the selected look
             var card = new Border
             {
                 Child = delGrid,
                 Padding = new Thickness(12, 9, 12, 9), Margin = new Thickness(0, 0, 0, 7),
                 CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Stretch,
-                Background = pinned ? TileSel : Card,
-                BorderBrush = pinned ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B)),
-                BorderThickness = new Thickness(pinned ? 1.5 : 1),
+                Background = pinned || expanded ? TileSel : Card,
+                BorderBrush = pinned || expanded ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B)),
+                BorderThickness = new Thickness(pinned || expanded ? 1.5 : 1),
                 Cursor = System.Windows.Input.Cursors.Hand,
             };
             // pin button (top-right, beside delete) — pinning moved off the row click, which now expands
@@ -2645,13 +2721,13 @@ public partial class MainWindow : Window
 
             card.MouseEnter += (_, _) =>
             {
-                if (!pinned) card.Background = CardHi;
-                if (owner == null) delBtn.Visibility = Visibility.Visible;   // can only delete what THIS character holds
+                if (!pinned && !expanded) card.Background = CardHi;
+                delBtn.Visibility = Visibility.Visible;   // deletes route to whichever profile holds the capture
                 pinBtn.Visibility = Visibility.Visible;
             };
             card.MouseLeave += (_, _) =>
             {
-                if (!pinned) card.Background = Card;
+                if (!pinned && !expanded) card.Background = Card;
                 delBtn.Visibility = Visibility.Collapsed;
                 pinBtn.Visibility = Visibility.Collapsed;
             };
@@ -2670,11 +2746,13 @@ public partial class MainWindow : Window
                 bool wasPinned = _pinned.Remove(capturedSec.Key);
                 if (!wasPinned) _pinned.Add(capturedSec.Key);
 
-                // Update card visuals in-place (avoid closing the modal)
+                // Update card visuals in-place (avoid closing the modal); keep the captured local in sync
+                // so the next MouseLeave doesn't snap the row back to its pre-toggle look
                 bool nowPinned = !wasPinned;
-                card.Background = nowPinned ? TileSel : Card;
-                card.BorderBrush = nowPinned ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B));
-                card.BorderThickness = new Thickness(nowPinned ? 1.5 : 1);
+                pinned = nowPinned;
+                card.Background = nowPinned || expanded ? TileSel : Card;
+                card.BorderBrush = nowPinned || expanded ? Gold : new SolidColorBrush(Color.FromArgb(0x60, rc.R, rc.G, rc.B));
+                card.BorderThickness = new Thickness(nowPinned || expanded ? 1.5 : 1);
                 pinLabel.Text = nowPinned ? "Pinned ✓" : "Unpinned";
                 pinLabel.Foreground = nowPinned ? Gold : Soft;
 
@@ -2691,6 +2769,11 @@ public partial class MainWindow : Window
             {
                 expandedFp = expandedFp == fp ? null : fp;
                 Rebuild();
+                // scroll the freshly-inserted card into view — expanding the last visible row otherwise
+                // pushes the whole comparison below the fold and the click looks like a no-op
+                if (expandedFp != null && expandedCard != null)
+                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+                        () => expandedCard?.BringIntoView());
             };
             return card;
         }
@@ -3215,6 +3298,7 @@ public partial class MainWindow : Window
                 .Select(li => li.Name));
 
         var weaponsRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+        int weaponCells = 0;
         void PlaceWeapons(string[] order)
         {
             foreach (var k in order)
@@ -3226,10 +3310,24 @@ public partial class MainWindow : Window
                         && LiveGearResolver.ShouldHideDuplicateWeapon(shownWeaponLiveNames, s.Gear.LiveItems[0].Name))
                     { used.Add(s); continue; }
                     weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s);
+                    if (k == "weapon") weaponCells++;
                 }
         }
         PlaceWeapons(new[] { "weapon", "offhand" });
-        foreach (var s in gear.Where(x => !used.Contains(x))) weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
+        foreach (var s in gear.Where(x => !used.Contains(x)))
+        {
+            weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
+            if (SlotKey(s.Label) == "weapon") weaponCells++;
+        }
+        // Pad to the class's REAL arsenal (Barbarian 4 weapons, Rogue 3): a new / sparsely-captured
+        // character shows its actual weapon slots as empty placeholders instead of however many tooltips
+        // happen to have been seen. (Capacity trimming in SanitizeEquipped handles the over-count side.)
+        var dollClass = _activeSlug != null ? _profiles.Get(_activeSlug)?.Class ?? className : className;
+        if (_dollView is "mine" or "all" && dollClass != null
+            && (dollClass.Equals("Barbarian", StringComparison.OrdinalIgnoreCase)
+             || dollClass.Equals("Rogue", StringComparison.OrdinalIgnoreCase)))
+            for (int i = weaponCells; i < ClassRules.WeaponSlots(dollClass); i++)
+                weaponsRow.Children.Add(EmptyWeaponCell());
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
 
@@ -3446,10 +3544,11 @@ public partial class MainWindow : Window
         var (_, rcol, iconName, wid, wimg) = SlotDisplay(s);
         var rc = ((SolidColorBrush)rcol).Color;
 
-        // ancestral treatment: if viewing "my gear" and the item is ancestral, use the cyan shimmer
+        // ancestral treatment: keep the normal rarity frame and add a cyan glow AROUND it (the old
+        // rarity-string check never fired for parsed items — IsAncestral is the captured flag)
         var liveIt = s.Gear?.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
-        bool ancestral = _dollView is "mine" or "all" && IsAncestral(liveIt?.Rarity);
-        var frameBrush = ancestral ? RAncestral : rcol;
+        bool ancestral = _dollView is "mine" or "all" && (liveIt?.IsAncestral == true || IsAncestral(liveIt?.Rarity));
+        var frameBrush = rcol;
         var frameRc = ((SolidColorBrush)frameBrush).Color;
 
         const double boxW = 54, boxH = 76;    // portrait — tall and skinny, like a D4 inventory slot
@@ -3480,12 +3579,13 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(resolved ? 1.6 : 1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1),
         });
 
-        // ancestral inner shimmer ring (only once real art is showing)
+        // ancestral outer glow ring (only once real art is showing) — sits around the rarity frame
         if (ancestral && resolved)
             grid.Children.Add(new Border
             {
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x50, 0x66, 0xD0, 0xF8)),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3),
+                BorderBrush = RAncestral, BorderThickness = new Thickness(1.3), CornerRadius = new CornerRadius(4),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                { Color = Color.FromRgb(0x66, 0xD0, 0xF8), BlurRadius = 10, ShadowDepth = 0, Opacity = 0.85 },
             });
 
         var icon = realArt ?? SlotIcon(SlotKey(s.Label), rcol, Math.Max(artW, artH)) ?? (FrameworkElement)TB("", rcol, 1, false);
@@ -3532,16 +3632,28 @@ public partial class MainWindow : Window
     // the candidate (left) vs the currently equipped piece (right), both evaluated against the slot's
     // target affix set, with the target threshold on every row, comparison ghosts on the bars, and a
     // numeric ▲/▼ delta per shared affix. Rendered INLINE under the clicked row (not a hover popup).
-    FrameworkElement ItemCompareCard(Item cand)
+    FrameworkElement ItemCompareCard(Item cand, ScoredItem? sc = null, Dictionary<int, Item?>? assignedEq = null)
     {
-        var sb = DiffEngine.SlotBaseName(cand.Slot);
-        var slotTargets = (_target?.Gear ?? new()).Where(g => DiffEngine.SlotBaseName(g.Slot) == sb).ToList();
-        var tg = slotTargets.OrderByDescending(g => DiffEngine.PresenceCount(g, cand)).FirstOrDefault();
-        // the equipped piece this candidate would replace: the weakest vs the slot's target set
-        var equipped = EffectiveLive().Gear
-            .Where(x => DiffEngine.SlotBaseName(x.Slot) == sb)
-            .OrderBy(x => tg != null ? DiffEngine.PresenceCount(tg, x) : 0)
-            .FirstOrDefault();
+        // Prefer the scorer's decision: the compatible target slot whose assigned equipped piece this
+        // candidate would displace — so the card, the badge, and the delta all describe the SAME item.
+        TargetGear? tg = null; Item? equipped = null; bool resolved = false;
+        if (sc?.CompareSlotIndex is int ci && _target != null && ci >= 0 && ci < _target.Gear.Count)
+        {
+            tg = _target.Gear[ci];
+            if (assignedEq != null) { assignedEq.TryGetValue(ci, out equipped); resolved = true; }
+        }
+        if (tg == null || !resolved)
+        {
+            var sb = DiffEngine.SlotBaseName(cand.Slot);
+            tg ??= (_target?.Gear ?? new()).Where(g => DiffEngine.SlotBaseName(g.Slot) == sb)
+                .OrderByDescending(g => DiffEngine.PresenceCount(g, cand)).FirstOrDefault();
+            // fallback: the weakest WEAPON-COMPATIBLE equipped piece vs the slot's target set
+            equipped ??= EffectiveLive().Gear
+                .Where(x => DiffEngine.SlotBaseName(x.Slot) == sb)
+                .Where(x => tg == null || DiffEngine.WeaponSlotCompatible(tg, x))
+                .OrderBy(x => tg != null ? DiffEngine.PresenceCount(tg, x) : 0)
+                .FirstOrDefault();
+        }
         double gate = _target?.MinRollPercent ?? _minRollPct;
 
         StackPanel RowsFor(Item? item, Item? other)
@@ -3583,7 +3695,8 @@ public partial class MainWindow : Window
         }
 
         string SubOf(Item? it2) => it2 == null ? "nothing equipped in this slot"
-            : (it2.Rarity ?? "") + (it2.ItemPower > 0 ? $"  ·  IP {it2.ItemPower}" : "");
+            : (it2.IsAncestral || IsAncestral(it2.Rarity) ? "Ancestral  ·  " : "")
+              + (it2.Rarity ?? "") + (it2.ItemPower > 0 ? $"  ·  IP {it2.ItemPower}" : "");
 
         // real game art whenever possible: resolve by name first, else by the item's base TYPE
         var candIcon = BaseIconIndex.HandleForType(cand.ItemType, cand.Slot);
@@ -3662,6 +3775,23 @@ public partial class MainWindow : Window
             Toast(wasPinned ? $"Unpinned  {s.Label}" : $"Pinned  {s.Label}");
         };
         return b;
+    }
+
+    // a placeholder weapon slot for arsenal padding — the character HAS this slot, we just haven't
+    // captured what's in it yet (hover the weapon in-game to fill it in)
+    UIElement EmptyWeaponCell()
+    {
+        var box = new Grid { Width = 54, Height = 76 };
+        box.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
+        box.Children.Add(new Border { BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(TB("Weapon", Faint, 10.5, false));
+        var nm = TB("not captured yet", Soft, 12, false); nm.TextWrapping = TextWrapping.Wrap;
+        text.Children.Add(nm);
+        var dp = new DockPanel { Width = 236 };
+        box.Margin = new Thickness(0, 0, 12, 0); DockPanel.SetDock(box, Dock.Left);
+        dp.Children.Add(box); dp.Children.Add(text);
+        return new Border { Child = dp, Padding = new Thickness(7, 5, 7, 5), Margin = new Thickness(0, 0, 0, 6) };
     }
 
     UIElement MiniBar(double pct, Brush fill)
@@ -3799,9 +3929,10 @@ public partial class MainWindow : Window
         {
             sp.Children.Add(TBs(it.Name.ToUpperInvariant(), RarityBrush(it.Rarity), 16, true, new Thickness(0, 0, 0, 1)));
             var parts = new List<string>();
+            if (it.IsAncestral) parts.Add("Ancestral");
             if (!string.IsNullOrEmpty(it.Rarity)) parts.Add(it.Rarity!);
             if (it.ItemPower != null) parts.Add("Item Power " + it.ItemPower);
-            sp.Children.Add(TB(string.Join("   ·   ", parts), Soft, 12, false, new Thickness(0, 0, 0, 12)));
+            sp.Children.Add(TB(string.Join("   ·   ", parts), it.IsAncestral ? RAncestral : Soft, 12, false, new Thickness(0, 0, 0, 12)));
         }
         else sp.Children.Add(TB("— no item captured for this slot —", Miss, 13, true, new Thickness(0, 0, 0, 10)));
     }
@@ -3872,6 +4003,10 @@ public partial class MainWindow : Window
         // Use the target gear's icon handle so the compare card shows real game art.
         var eq = new StackPanel();
         foreach (var i in g.Items) eq.Children.Add(EquippedRow(i));
+        // socket fill status beside the wanted-runes box on the right — current vs target for sockets too
+        if (g.WantSockets.Count > 0)
+            eq.Children.Add(TB("Sockets:  " + (g.SocketStatus ?? $"0/{g.WantSockets.Count} filled"),
+                g.SocketsDone ? Green : Amber, 11.5, false, new Thickness(0, 6, 0, 0)));
         if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
         if (g.Extras.Count > 0)
         {
@@ -3965,9 +4100,10 @@ public partial class MainWindow : Window
         var line = new StackPanel { Orientation = Orientation.Horizontal };
         if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
         line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : Ink, 13, false));
-        // the build's target for this affix is always visible — even when the item doesn't have it
+        // the build's target for this affix is always visible — even when the item doesn't have it,
+        // in the same current/target shape ("0 / 1,500") as the rows that do
         if (!string.IsNullOrEmpty(i.Need))
-            line.Children.Add(TB(i.Status == "missing" ? $"   wants {i.Need}" : $"   / {i.Need}", Faint, 11, false));
+            line.Children.Add(TB(i.Status == "missing" ? "   " + MissingCurrentTarget(i.Need!) : $"   / {i.Need}", Faint, 11, false));
         if (delta is double d && Math.Abs(d) > 0.0001)
             line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (deltaPercent ? "%" : ""),
                 d > 0 ? Green : Crimson, 11.5, true));
@@ -4127,17 +4263,24 @@ public partial class MainWindow : Window
                 // rather than a slot-by-slot breakdown. The roll-up lives in Core (AffixAggregate) for testing.
                 foreach (var p in AffixAggregate.ForGear(c))
                     sp.Children.Add(AggregateRow(p));
-                // sockets / runes rolled up across all slots
+                // sockets / runes rolled up across all slots — the value column reads "done / total"
+                // and the caption names WHAT should be socketed where (the runes the build wants)
                 int sockTotal = c.Groups.Count(g => g.WantSockets.Count > 0);
                 if (sockTotal > 0)
                 {
                     int sockDone = c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone);
+                    var missingSocks = c.Groups
+                        .Where(g => g.WantSockets.Count > 0 && !g.SocketsDone)
+                        .Select(g => g.Name + ":  " + string.Join(" + ",
+                            g.WantSockets.Select(s2 => s2.Replace("Rune: ", "").Replace("Gem: ", ""))))
+                        .ToList();
                     sp.Children.Add(AggregateRow(new AffixProgress
                     {
-                        Name = "Sockets / runes", CountNoun = "filled",
+                        Name = "Sockets / runes", CountNoun = "slots filled",
                         TargetPieces = sockTotal, HavePieces = sockDone, MetPieces = sockDone,
+                        HaveTotal = sockDone, WantsTotal = sockTotal, HaveAny = true,
                         ProgressPct = sockTotal > 0 ? 100.0 * sockDone / sockTotal : 0,
-                    }));
+                    }, missingSocks.Count > 0 ? "wants  " + string.Join("    ", missingSocks) : null));
                 }
             }
             else   // aspects / uniques / skills — all trackable (untrackable categories are filtered out above)
@@ -4203,7 +4346,7 @@ public partial class MainWindow : Window
 
     // an aggregated requirement (one affix rolled up across every slot that wants it): a bar for how many
     // slots have it met + the REAL rolled values of the slots you have it on (e.g. "+1,185 (81%) · +972 (96%)").
-    UIElement AggregateRow(AffixProgress p)
+    UIElement AggregateRow(AffixProgress p, string? detail = null)
     {
         var (glyph, col) = Look(p.Status);
 
@@ -4217,15 +4360,21 @@ public partial class MainWindow : Window
         lblSp.Children.Add(name);
         var caption = $"{p.HavePieces}/{p.TargetPieces} {p.CountNoun}" + (p.UnderPieces > 0 ? $"  ·  {p.UnderPieces} under" : "");
         lblSp.Children.Add(TB(caption, p.UnderPieces > 0 ? Amber : Faint, 10.5, false));
+        if (detail != null)
+        {
+            var dt = TB(detail, Steel, 10, false); dt.TextWrapping = TextWrapping.Wrap;
+            lblSp.Children.Add(dt);
+        }
         Grid.SetColumn(lblSp, 1); row.Children.Add(lblSp);
 
         var bar = RollBar(p.ProgressPct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
-        // value column: progress toward the combined goal as bare "current / target" numbers — shown whenever
-        // ANY target magnitude is derivable (explicit threshold, or the roll gate over a captured range)
+        // value column: progress toward the combined goal as bare "current / target" numbers — the target
+        // is estimated ("~") when the build gives no explicit magnitude for some pieces, so the column
+        // always reads current/target rather than a lone number
         string vtext =
-            p.WantsTotal > 0        ? $"{p.Fmt(p.HaveTotal)} / {p.Fmt(p.WantsTotal)}"
+            p.WantsTotal > 0        ? $"{p.Fmt(p.HaveTotal)} / {(p.WantsEstimated ? "~" : "")}{p.Fmt(p.WantsTotal)}"
           : p.HaveAny               ? p.Fmt(p.HaveTotal)
           : p.Status == "missing"   ? "missing"
           : "";
@@ -4256,18 +4405,26 @@ public partial class MainWindow : Window
         var bar = RollBar(pct, col, 158, 11, valued ? _minRollPct : (double?)null);
         bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
-        // value column always reads current / target, not just the current value
+        // value column always reads current / target, not just the current value — a MISSING affix shows
+        // "0 / target" (same shape as the rest) instead of the odd-one-out "wants X" phrasing
         string vtext = !tracked ? "from build"
             : valued ? ((i.Val ?? "") + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") + $"   {Math.Round(i.RollPct!.Value)}%").Trim()
             : i.Status == "met" ? (i.Have != null ? i.Have + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") : "equipped")
             : i.Status == "under" ? (i.Have != null ? i.Have + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") : "partial")
-            : i.Need != null ? "wants " + i.Need
+            : i.Need != null ? MissingCurrentTarget(i.Need)
             : (i.Have != null ? "have: " + i.Have : "missing");
         var val = TB(vtext, !tracked ? Faint : i.Status == "missing" ? Soft : col, 12, tracked && i.Status != "missing");
         val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
+
+    // "0 / target" for an affix the piece doesn't have — same current/target shape as every other row.
+    // "≥ 1,500" → "0 / 1,500"; "roll ≥ 80%" → "0% / 80%".
+    static string MissingCurrentTarget(string need) =>
+        need.StartsWith("roll", StringComparison.OrdinalIgnoreCase)
+            ? "0%  /  " + need.Replace("roll ≥ ", "").Trim()
+            : "0  /  " + need.Replace("≥ ", "").Trim();
 
     // socket/rune fill progress for a gear slot (runes, gems — and S8 seals/charms when socketed)
     UIElement SocketProgressRow(Group g)

@@ -1048,14 +1048,26 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("AffixAggregate: dot multiplier prefix", "x", dot.Prefix);
     Eq("AffixAggregate: dot percent suffix", "%", dot.Suffix);
     Eq("AffixAggregate: dot fmt", "x50%", dot.Fmt(dot.HaveTotal));
-    // a PARTIALLY-known target still drives the ratio (current/target shows whenever any target is derivable)
-    Eq("AffixAggregate: dot progress uses the partially-known target (50/30 clamps to 100)", 100.0, dot.ProgressPct);
+    // a PARTIALLY-known target is completed by extrapolation: the target-less piece is estimated at the
+    // known per-piece average (30), so wants = 30+30 = 60 and progress = 50/60 — flagged as estimated
+    Check("AffixAggregate: dot target marked estimated", dot.WantsEstimated);
+    Eq("AffixAggregate: dot estimated wantsTotal (30 known + 30 extrapolated)", 60.0, dot.WantsTotal);
+    Eq("AffixAggregate: dot progress vs estimated target (50/60)", Math.Round(100.0 * 50 / 60, 6), Math.Round(dot.ProgressPct, 6));
 
-    // an affix with NO derivable target anywhere falls back to blended roll quality
+    // an affix with NO explicit target estimates from the rolls you HAVE: 1 of 2 pieces at +5 → target ~10
     var q = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
         { G(new ReqItem { Label = "Crit", Status = "met", Done = true, ValueNum = 5 },
             new ReqItem { Label = "Crit", Status = "missing", Done = false }) } });
-    Eq("AffixAggregate: no targets at all -> quality-based progress (met 100, missing 0 -> 50)", 50.0, q[0].ProgressPct);
+    Check("AffixAggregate: no-target estimate flagged", q[0].WantsEstimated);
+    Eq("AffixAggregate: no-target estimate = per-piece have × pieces (5×2)", 10.0, q[0].WantsTotal);
+    Eq("AffixAggregate: no-target progress vs estimate (5/10)", 50.0, q[0].ProgressPct);
+
+    // an affix with no target AND no captured magnitudes still falls back to blended roll quality
+    var q2 = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
+        { G(new ReqItem { Label = "Crit", Status = "met", Done = true },
+            new ReqItem { Label = "Crit", Status = "missing", Done = false }) } });
+    Check("AffixAggregate: no values at all -> no estimate", !q2[0].WantsEstimated);
+    Eq("AffixAggregate: no values at all -> quality-based progress (met 100, missing 0 -> 50)", 50.0, q2[0].ProgressPct);
 
     // a fully-missing affix reads as missing with zero progress
     var miss = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
@@ -1543,6 +1555,161 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var sPool = GearList.SharedCandidates(scur, Array.Empty<CharacterProfile>(), "Rogue");
     Check("SharedCandidates: stale copy of the equipped item is excluded (was a false upgrade)",
         !sPool.Any(o => o.Item.Name == "Etna's Lost Dagger"));
+}
+
+// ---- v0.27: weapon-gated upgrades, per-slot bars, channel-merged inventory, gear sanitizing, aspect matching ----
+{
+    // WeaponSlotCompatible: the physical gate
+    var xbowSlot = new TargetGear { Slot = "weapon1", ItemId = "2HCrossbow_Legendary_S8" };
+    Check("WeaponSlotCompatible: melee can't fill a ranged slot",
+        !DiffEngine.WeaponSlotCompatible(xbowSlot, new Item { Slot = "weapon", ItemType = "Sword" }));
+    Check("WeaponSlotCompatible: a crossbow fits its slot",
+        DiffEngine.WeaponSlotCompatible(xbowSlot, new Item { Slot = "weapon", ItemType = "Crossbow" }));
+    Check("WeaponSlotCompatible: a one-hander can't fill a two-hand slot",
+        !DiffEngine.WeaponSlotCompatible(new TargetGear { Slot = "weapon", ItemId = "2HSword_Leg" }, new Item { Slot = "weapon", ItemType = "Sword" }));
+    Check("WeaponSlotCompatible: a two-handed sword fits the 2H slot",
+        DiffEngine.WeaponSlotCompatible(new TargetGear { Slot = "weapon", ItemId = "2HSword_Leg" }, new Item { Slot = "weapon", ItemType = "Two-Handed Sword" }));
+    Check("WeaponSlotCompatible: non-weapon slots always pass",
+        DiffEngine.WeaponSlotCompatible(new TargetGear { Slot = "helm" }, new Item { Slot = "helm", ItemType = "Helm" }));
+
+    // a stash SWORD loaded with the crossbow slot's affixes must never badge as an upgrade for it
+    var wTarget = new TargetBuild { Gear = {
+        new TargetGear { Slot = "weapon1", Label = "Crossbow", ItemId = "2HCrossbow_Legendary_S8", Affixes = {
+            new TargetAffix { Name = "Vulnerable Damage" }, new TargetAffix { Name = "Maximum Life" },
+            new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Critical Strike Damage" } } },
+        new TargetGear { Slot = "weapon2", Label = "Dagger", ItemId = "1HDagger_Legendary_S8", Affixes = {
+            new TargetAffix { Name = "Attack Speed" }, new TargetAffix { Name = "Core Skill Damage" },
+            new TargetAffix { Name = "Damage to Close Enemies" } } } } };
+    var eqXbow = new Item { Name = "EqXbow", Slot = "weapon", ItemType = "Crossbow", Equipped = true, Affixes = {
+        new Affix { Text = "Vulnerable Damage", Value = 20 }, new Affix { Text = "Maximum Life", Value = 500 } } };
+    var eqDag = new Item { Name = "EqDagger", Slot = "weapon", ItemType = "Dagger", Equipped = true, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 5 } } };
+    var swordCand = new Item { Name = "StashSword", Slot = "weapon", ItemType = "Sword", Affixes = {
+        new Affix { Text = "Vulnerable Damage", Value = 25 }, new Affix { Text = "Maximum Life", Value = 700 },
+        new Affix { Text = "Dexterity", Value = 60 } } };
+    var xbowCand = new Item { Name = "StashXbow", Slot = "weapon", ItemType = "Crossbow", Affixes = {
+        new Affix { Text = "Vulnerable Damage", Value = 25 }, new Affix { Text = "Maximum Life", Value = 700 },
+        new Affix { Text = "Dexterity", Value = 60 } } };
+    var wScored = UpgradeScorer.Score(wTarget, new LiveBuild { Gear = { eqXbow, eqDag } }, new[] { swordCand, xbowCand }, 75);
+    Check("WeaponGate: a sword is never an upgrade for the crossbow slot",
+        !wScored.First(x => x.Item.Name == "StashSword").IsUpgrade);
+    Check("WeaponGate: a real crossbow with more slot affixes IS the upgrade",
+        wScored.First(x => x.Item.Name == "StashXbow").IsUpgrade);
+    Eq("WeaponGate: the crossbow upgrade compares against the crossbow slot", "Crossbow",
+        wScored.First(x => x.Item.Name == "StashXbow").SlotLabel);
+    Eq("WeaponGate: the sword's honest comparison is the dagger slot (its only compatible one)", 1,
+        wScored.First(x => x.Item.Name == "StashSword").CompareSlotIndex);
+
+    // per-slot bar: a 3/4 ring upgrades your WORSE ring even though your better ring is 4/4
+    TargetAffix[] R() => new[] { new TargetAffix { Name = "Critical Strike Chance" }, new TargetAffix { Name = "Attack Speed" },
+                                 new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Lucky Hit Chance" } };
+    var rTarget = new TargetBuild { Gear = {
+        new TargetGear { Slot = "ring1", Label = "Ring #1", Affixes = new(R()) },
+        new TargetGear { Slot = "ring2", Label = "Ring #2", Affixes = new(R()) } } };
+    var ringGood = new Item { Name = "GoodRing", Slot = "ring", Equipped = true, Affixes = {
+        new Affix { Text = "Critical Strike Chance", Value = 5 }, new Affix { Text = "Attack Speed", Value = 8 },
+        new Affix { Text = "Maximum Life", Value = 900 }, new Affix { Text = "Lucky Hit Chance", Value = 10 } } };
+    var ringBad = new Item { Name = "BadRing", Slot = "ring", Equipped = true, Affixes = {
+        new Affix { Text = "Maximum Life", Value = 400 } } };
+    var ringCand = new Item { Name = "CandRing", Slot = "ring", Affixes = {
+        new Affix { Text = "Critical Strike Chance", Value = 4 }, new Affix { Text = "Attack Speed", Value = 7 },
+        new Affix { Text = "Maximum Life", Value = 800 } } };
+    var rScored = UpgradeScorer.Score(rTarget, new LiveBuild { Gear = { ringGood, ringBad } }, new[] { ringCand }, 75);
+    Check("PerSlotBar: 3/4 ring IS an upgrade over the worse equipped ring", rScored[0].IsUpgrade);
+    Eq("PerSlotBar: it compares against the weaker ring's presence", 1, rScored[0].EquippedPresent);
+    Eq("PerSlotBar: affix delta vs the displaced ring (4 effective − 1)", 3, rScored[0].AffixDelta);
+
+    // channel-aware inventory merge: TTS and OCR no longer wipe each other
+    var ttsRing = new Item { Name = "Tts Ring", Slot = "ring", Source = ItemSource.Tts };
+    var ocrHelm = new Item { Name = "Ocr Helm", Slot = "helm", Source = ItemSource.Ocr };
+    var m1 = LiveGearResolver.MergeInventory(new List<Item> { ttsRing, ocrHelm },
+        new List<Item> { new Item { Name = "Ocr Boots", Slot = "boots", Source = ItemSource.Ocr } });
+    Check("MergeInventory: an OCR batch keeps the TTS item", m1.Any(i => i.Name == "Tts Ring"));
+    Check("MergeInventory: an OCR batch replaces its OWN channel's list",
+        !m1.Any(i => i.Name == "Ocr Helm") && m1.Any(i => i.Name == "Ocr Boots"));
+    var m2 = LiveGearResolver.MergeInventory(new List<Item> { ttsRing },
+        new List<Item> { new Item { Name = "Tts Ring", Slot = "ring", Source = ItemSource.Ocr } });
+    Check("MergeInventory: Tts wins a cross-channel name+slot collision", m2.Count == 1 && m2[0].Source == ItemSource.Tts);
+    var m3 = LiveGearResolver.MergeInventory(new List<Item> { new Item { Name = "X", Slot = "ring", Source = ItemSource.Ocr } },
+        new List<Item> { new Item { Name = "X", Slot = "ring", Source = ItemSource.Tts } });
+    Check("MergeInventory: a fresh Tts capture replaces the persisted Ocr copy", m3.Count == 1 && m3[0].Source == ItemSource.Tts);
+    Eq("MergeInventory: an empty fresh batch changes nothing", 2,
+        LiveGearResolver.MergeInventory(new List<Item> { ttsRing, ocrHelm }, new List<Item>()).Count);
+
+    // equipped-gear sanity pass: class gate + slotless junk + per-class weapon capacity
+    var rogueGear = new List<Item> {
+        new Item { Name = "Helm", Slot = "helm", ItemType = "Helm" },
+        new Item { Name = "OldBow", Slot = "weapon", ItemType = "Bow", LastScannedTicks = 100 },
+        new Item { Name = "NewXbow", Slot = "weapon", ItemType = "Crossbow", LastScannedTicks = 200 },
+        new Item { Name = "Dag1", Slot = "weapon", ItemType = "Dagger", LastScannedTicks = 150 },
+        new Item { Name = "Dag2", Slot = "weapon", ItemType = "Dagger", LastScannedTicks = 160 },
+        new Item { Name = "OldSword", Slot = "weapon", ItemType = "Sword", LastScannedTicks = 90 },
+        new Item { Name = "Bitter Bash", Slot = null },
+        new Item { Name = "TwoHander", Slot = "weapon", ItemType = "Two-Handed Mace", LastScannedTicks = 300 },
+    };
+    var keptR = LiveGearResolver.SanitizeEquipped(rogueGear, "Rogue", out var demR);
+    Check("Sanitize: slotless capture artifact demoted", demR.Any(i => i.Name == "Bitter Bash"));
+    Check("Sanitize: class-impossible two-hander demoted from the Rogue", demR.Any(i => i.Name == "TwoHander"));
+    Check("Sanitize: only the NEWEST ranged weapon stays (bow↔crossbow swap)",
+        keptR.Any(i => i.Name == "NewXbow") && demR.Any(i => i.Name == "OldBow"));
+    Check("Sanitize: the two newest melee weapons stay", keptR.Any(i => i.Name == "Dag1") && keptR.Any(i => i.Name == "Dag2") && demR.Any(i => i.Name == "OldSword"));
+    Eq("Sanitize: rogue arsenal trimmed to 3 weapons", 3, keptR.Count(i => DiffEngine.SlotBaseName(i.Slot) == "weapon"));
+    var barbGear = new List<Item> {
+        new Item { Name = "2H1", Slot = "weapon", ItemType = "Two-Handed Mace", LastScannedTicks = 10 },
+        new Item { Name = "2H2", Slot = "weapon", ItemType = "Two-Handed Sword", LastScannedTicks = 20 },
+        new Item { Name = "2H3", Slot = "weapon", ItemType = "Two-Handed Axe", LastScannedTicks = 30 },
+        new Item { Name = "1H1", Slot = "weapon", ItemType = "Sword", LastScannedTicks = 5 },
+        new Item { Name = "1H2", Slot = "weapon", ItemType = "Mace", LastScannedTicks = 6 },
+    };
+    var keptB = LiveGearResolver.SanitizeEquipped(barbGear, "Barbarian", out var demB);
+    Check("Sanitize: barb keeps the 2 newest two-handers + both one-handers",
+        keptB.Count == 4 && demB.Count == 1 && demB[0].Name == "2H1");
+    Eq("Sanitize: unknown class only drops slotless junk", rogueGear.Count - 1,
+        LiveGearResolver.SanitizeEquipped(rogueGear, null, out _).Count);
+
+    // aspect matching that actually works on captured data (name / imprint text / power text)
+    Check("ItemCarriesAspect: legendary NAME carries the aspect",
+        DiffEngine.ItemCarriesAspect("Aspect of Mending Obscurity",
+            new Item { Name = "Boneweave Armor of Mending Obscurity", Rarity = "Legendary" }));
+    Check("ItemCarriesAspect: possessive aspect matches the name",
+        DiffEngine.ItemCarriesAspect("Edgemaster's Aspect",
+            new Item { Name = "Doombringer of the Edgemaster", Rarity = "Legendary" }));
+    Check("ItemCarriesAspect: a Rare's random suffix can't false-match",
+        !DiffEngine.ItemCarriesAspect("Aspect of Winter", new Item { Name = "Cruel Band of Winter", Rarity = "Rare" }));
+    Check("ItemCarriesAspect: imprinted effect text still matches",
+        DiffEngine.ItemCarriesAspect("Aspect of the Expectant", new Item { Aspect = "Aspect of the Expectant" }));
+    Check("ItemCarriesAspect: power-text fallback",
+        DiffEngine.ItemCarriesAspect("Aspect of Mending Obscurity",
+            new Item { Rarity = "Rare", PowerText = { "Mending Obscurity: gain Stealth when standing still" } }));
+    Eq("AspectDisplayName: suffix form", "Aspect of Encircling Blades", MaxrollImporter.AspectDisplayName("of Encircling Blades"));
+    Eq("AspectDisplayName: possessive form", "Edgemaster's Aspect", MaxrollImporter.AspectDisplayName("Edgemaster's"));
+    Eq("AspectDisplayName: already-named passthrough", "Aspect of X", MaxrollImporter.AspectDisplayName("Aspect of X"));
+
+    // salvage flagged from the item NAME alone — the production path (imprint text never matched Maxroll's)
+    var nTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Chest", Aspect = "Aspect of Mending Obscurity",
+        Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
+    var byName = new Item { Name = "Boneweave Armor of Mending Obscurity", Slot = "Chest", Rarity = "Legendary" };
+    var nScored = UpgradeScorer.Score(nTarget, new LiveBuild(), new[] { byName }, 75);
+    Eq("Salvage: matched by ITEM NAME (no imprint text needed)", "Aspect of Mending Obscurity", nScored[0].SalvageAspect);
+
+    // cross-profile stale-copy collapse: same name+slot pools to ONE row, active character's copy first
+    var freshCopy = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 200,
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 10 } } };
+    var staleCopy = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 100,
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 9 } } };
+    var poolX = GearList.SharedCandidates(
+        new LiveBuild { Inventory = { freshCopy } },
+        new[] { new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian",
+                                       Live = new LiveBuild { Inventory = { staleCopy } } } },
+        "Rogue");
+    Eq("SharedCandidates: cross-profile stale copy collapses to one row", 1, poolX.Count(o => o.Item.Name == "Tal Ring"));
+    Check("SharedCandidates: the ACTIVE character's copy wins the collapse",
+        poolX.First(o => o.Item.Name == "Tal Ring").Owner == null);
+    Check("SharedCandidates: other-character rows carry their profile slug for deletes",
+        GearList.SharedCandidates(new LiveBuild(),
+            new[] { new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian",
+                                           Live = new LiveBuild { Inventory = { staleCopy } } } }, "Rogue")
+            .First().OwnerSlug == "heoki-barbarian");
 }
 
 // ---- report ----
