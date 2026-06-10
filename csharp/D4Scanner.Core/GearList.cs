@@ -48,8 +48,9 @@ public static class GearList
                   .ToList();
     }
 
-    /// <summary>An item in the shared pool + which OTHER character is holding it (null = the active one).</summary>
-    public sealed record OwnedItem(Item Item, string? Owner);
+    /// <summary>An item in the shared pool + which OTHER character is holding it (null = the active one).
+    /// <paramref name="OwnerSlug"/> is that character's profile slug, so deletes can reach its profile.</summary>
+    public sealed record OwnedItem(Item Item, string? Owner, string? OwnerSlug = null);
 
     /// <summary>
     /// The cross-character candidate pool for the "All Items" view: gear is shared via the stash, so it
@@ -77,7 +78,7 @@ public static class GearList
         {
             var label = p.Name + (p.Class != null ? " · " + p.Class : "");
             foreach (var it in (p.Live.Gear ?? new()).Concat(p.Live.Inventory ?? new()))
-                pool.Add(new OwnedItem(it, label));
+                pool.Add(new OwnedItem(it, label, p.Slug));
         }
 
         return pool
@@ -87,6 +88,14 @@ public static class GearList
             .GroupBy(o => Fingerprint(o.Item))
             .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)               // active character's copy wins…
                           .ThenByDescending(o => AcquiredTicks(o.Item)).First()) // …else the freshest sighting
+            // Cross-profile stale-copy collapse: the SAME physical item re-scanned after masterworking /
+            // tempering rolls a different fingerprint, so an old sighting saved on ANOTHER character would
+            // list beside the fresh one as a phantom duplicate. Same name + same slot ⇒ one row, the active
+            // character's (else freshest) copy. (Cost: two genuinely distinct same-named rolls collapse
+            // too — better than phantom duplicates of every reworked item.)
+            .GroupBy(o => DiffEngine.Normalize(o.Item.Name) + "|" + DiffEngine.SlotBaseName(o.Item.Slot), StringComparer.Ordinal)
+            .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)
+                          .ThenByDescending(o => AcquiredTicks(o.Item)).First())
             .ToList();
     }
 

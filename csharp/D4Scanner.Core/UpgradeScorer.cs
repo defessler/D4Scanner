@@ -11,27 +11,42 @@ public sealed class ScoredItem
     public double GoalScore { get; set; }    // contribution toward the overall combined-affix goal
     public bool Fixable { get; set; }        // exactly ONE affix short of the perfect set — one enchant fixes it
     public bool AspectBlocked { get; set; }  // unique item where the build wants an imprinted aspect (can't imprint a unique)
-    public bool IsUpgrade { get; set; }      // beats the currently equipped piece in its slot
-    public int EquippedPresent { get; set; } // present-count of the equipped piece in that slot (0 if empty)
+    public bool IsUpgrade { get; set; }      // beats the equipped piece it would displace
     public string? SlotLabel { get; set; }   // the matched target slot (label/slot)
     /// <summary>The item carries an imprinted aspect the build WANTS — worth salvaging to capture the
     /// aspect into the codex even when its affixes aren't an upgrade. Null when not applicable.</summary>
     public string? SalvageAspect { get; set; }
 
+    /// <summary>Index into target.Gear of the slot this item was compared against — the compatible slot
+    /// whose equipped piece it would displace (max margin). Null when no compatible target slot exists.
+    /// The UI compare card uses this so the badge and the card describe the SAME equipped item.</summary>
+    public int? CompareSlotIndex { get; set; }
+    public int EquippedPresent { get; set; }   // present-count of that equipped piece (0 if slot empty)
+    public int EquippedEff { get; set; }       // its effective presence (with the one-enchant credit)
+    public double EquippedQuality { get; set; } // its avg roll quality (0-100)
+    public bool EquippedEmpty { get; set; }    // nothing equipped fills the compared slot
+
     /// <summary>Affix completeness with the enchant credit: one wrong affix is fixable at the Occultist, so a
     /// 3/4 item competes in the 4/4 tier (roll quality then separates them).</summary>
     public int EffectivePresent => SlotPresent + (Fixable ? 1 : 0);
+
+    /// <summary>Signed affix-count delta vs the equipped piece it would displace (enchant credit included).</summary>
+    public int AffixDelta => EffectivePresent - EquippedEff;
+    /// <summary>Signed roll-quality delta vs that piece — the tiebreak when affix counts are even.</summary>
+    public double QualityDelta => SlotQuality - EquippedQuality;
 }
 
 /// <summary>
 /// Scores owned items against a target build for upgrade-hunting. Ordering, per the user's model:
-///   1. Upgrades first — anything beating the equipped piece sorts above everything that doesn't.
+///   1. Upgrades first — anything beating the equipped piece it would displace sorts above the rest.
 ///   2. Affix COUNT dominates value: more correct affixes at any roll beats fewer at high rolls —
 ///      EXCEPT one-affix-short items, which can be enchanted to complete the set and so compete in the
 ///      complete tier (with roll quality as the separator).
 ///   3. A unique can never be an upgrade over a non-unique when the build wants an aspect on that slot:
 ///      aspects can't be imprinted onto uniques.
-/// UI-free / headlessly testable.
+/// The equipped bar is PER TARGET SLOT, from the SAME assignment the diff view uses (weapon-type
+/// gated) — so a sword is never "an upgrade" over your crossbow, and a 3/4 ring IS an upgrade when
+/// your worse ring is 1/4 even though your better ring is 4/4. UI-free / headlessly testable.
 /// </summary>
 public static class UpgradeScorer
 {
@@ -50,27 +65,25 @@ public static class UpgradeScorer
         return w;
     }
 
-    /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build.
-    /// The bar an upgrade must beat is the equipped piece's effective presence for that slot.</summary>
+    /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build.</summary>
     public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, double gate)
     {
         var goal = GoalWeights(target);
 
-        // per slot base: the equipped piece's best (effective, real) presence + whether a non-unique sits there
-        var eqBest = new Dictionary<string, (int eff, int present)>(StringComparer.OrdinalIgnoreCase);
-        var eqNonUnique = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        foreach (var g in target.Gear)
+        // The bar an upgrade must beat: the equipped item ASSIGNED to each target slot (same weapon-type
+        // gated assignment the diff uses, so badge and compare card agree on what "equipped" means).
+        var assigned = DiffEngine.AssignSlots(target, live);
+        var bars = new (int eff, int present, double quality, bool nonUnique, bool empty)[target.Gear.Count];
+        for (int gi = 0; gi < target.Gear.Count; gi++)
         {
-            var sb = DiffEngine.SlotBaseName(g.Slot);
-            foreach (var x in live.Gear.Where(x => DiffEngine.SlotBaseName(x.Slot) == sb))
+            var g = target.Gear[gi];
+            if (assigned.TryGetValue(gi, out var x) && x != null)
             {
                 int present = DiffEngine.PresenceCount(g, x);
                 bool fix = !x.IsUnique && g.Affixes.Count > 1 && present == g.Affixes.Count - 1;
-                var pair = (eff: present + (fix ? 1 : 0), present);
-                var cur = eqBest.GetValueOrDefault(sb);
-                if (pair.eff > cur.eff || (pair.eff == cur.eff && pair.present > cur.present)) eqBest[sb] = pair;
-                if (!x.IsUnique) eqNonUnique[sb] = true;
+                bars[gi] = (present + (fix ? 1 : 0), present, DiffEngine.SlotQuality(g, x), !x.IsUnique, false);
             }
+            else bars[gi] = (0, 0, 0, false, true);
         }
 
         var result = new List<ScoredItem>();
@@ -78,22 +91,36 @@ public static class UpgradeScorer
         {
             var sb = DiffEngine.SlotBaseName(it.Slot);
 
-            // best matching target slot for this item (rings / multi-weapon slots can have several)
-            TargetGear? bestSlot = null; int bestPresent = -1; int bestMet = 0; double bestQ = 0;
-            foreach (var g in target.Gear.Where(g => DiffEngine.SlotBaseName(g.Slot) == sb))
+            // Evaluate the candidate against every COMPATIBLE same-base target slot, then keep the slot
+            // whose equipped piece it would displace with the biggest margin (type-affinity breaks ties).
+            int pick = -1; (int margin, int typeMatch, int eff, double q) pickKey = default;
+            int pickPresent = 0, pickMet = 0; double pickQ = 0; bool pickFix = false;
+            for (int gi = 0; gi < target.Gear.Count; gi++)
             {
+                var g = target.Gear[gi];
+                if (DiffEngine.SlotBaseName(g.Slot) != sb) continue;
+                if (!DiffEngine.WeaponSlotCompatible(g, it)) continue;
                 int present = DiffEngine.PresenceCount(g, it);
-                double q = DiffEngine.SlotQuality(g, it);
-                if (present > bestPresent || (present == bestPresent && q > bestQ))
-                { bestSlot = g; bestPresent = present; bestMet = DiffEngine.ScoreSlot(g, it, gate); bestQ = q; }
+                bool fix = !it.IsUnique && g.Affixes.Count > 1 && present == g.Affixes.Count - 1;
+                int eff = present + (fix ? 1 : 0);
+                var key = (margin: eff - bars[gi].eff,
+                           typeMatch: DiffEngine.WeaponTypeMatch(g.ItemId, it.ItemType) ? 1 : 0,
+                           eff, q: DiffEngine.SlotQuality(g, it));
+                if (pick < 0 || key.CompareTo(pickKey) > 0)
+                {
+                    pick = gi; pickKey = key;
+                    pickPresent = present; pickFix = fix; pickQ = key.q;
+                    pickMet = DiffEngine.ScoreSlot(g, it, gate);
+                }
             }
-            int slotPresent = Math.Max(0, bestPresent);
-            int slotTarget = bestSlot?.Affixes.Count ?? 0;
-            bool fixable = bestSlot != null && slotTarget > 1 && slotPresent == slotTarget - 1;
+
+            TargetGear? bestSlot = pick >= 0 ? target.Gear[pick] : null;
+            var bar = pick >= 0 ? bars[pick] : default;
             // a unique can't take an imprinted aspect — if the build wants one on this slot, the unique
             // can never complete it (and enchanting uniques is off the table, so no fixable credit either)
             bool aspectBlocked = it.IsUnique && !string.IsNullOrEmpty(bestSlot?.Aspect);
-            if (it.IsUnique) fixable = false;
+            if (it.IsUnique) pickFix = false;
+            int effective = pickPresent + (pickFix ? 1 : 0);
 
             // overall-goal contribution: sum the build-wide weight of each affix the item carries (each affix once)
             double goalScore = 0;
@@ -101,29 +128,29 @@ public static class UpgradeScorer
                 foreach (var kv in goal)
                     if (DiffEngine.PhraseMatch(kv.Key, a.Text)) { goalScore += kv.Value; break; }
 
-            var bar = eqBest.GetValueOrDefault(sb);
-            int effective = slotPresent + (fixable ? 1 : 0);
-            // beats the equipped piece when it's more complete (with the enchant credit), or equally
-            // complete but REALLY complete where the equipped one merely could be after an enchant
-            bool beats = effective > bar.eff || (effective == bar.eff && slotPresent > bar.present);
-            bool upgrade = bestSlot != null && beats
-                        && !(aspectBlocked && eqNonUnique.GetValueOrDefault(sb));
+            // beats the piece it would displace when it's more complete (with the enchant credit), or
+            // equally complete but REALLY complete where the equipped one merely could be after an enchant
+            bool beats = pick >= 0 && (effective > bar.eff || (effective == bar.eff && pickPresent > bar.present));
+            bool upgrade = beats && !(aspectBlocked && bar.nonUnique);
 
             // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping
             // even when its affixes aren't — salvaging captures the aspect into the codex. (Uniques can't
-            // be salvaged for aspects.)
+            // be salvaged for aspects.) Matched via name/imprint/power text — see ItemCarriesAspect.
             string? salvage = null;
-            if (!it.IsUnique && !string.IsNullOrEmpty(it.Aspect))
-            {
-                foreach (var want in target.Gear.Select(g2 => g2.Aspect).Concat(target.Aspects).Where(a => !string.IsNullOrEmpty(a)))
-                    if (DiffEngine.PhraseMatch(want!, it.Aspect)) { salvage = want; break; }
-            }
+            if (!it.IsUnique)
+                foreach (var want in target.Gear.Select(g2 => g2.Aspect).Concat(target.Aspects)
+                                                .Where(a => !string.IsNullOrEmpty(a)).Distinct())
+                    if (DiffEngine.ItemCarriesAspect(want!, it)) { salvage = want; break; }
 
             result.Add(new ScoredItem
             {
-                Item = it, SlotPresent = slotPresent, SlotMet = bestMet, SlotTarget = slotTarget,
-                SlotQuality = bestQ, GoalScore = goalScore, Fixable = fixable, AspectBlocked = aspectBlocked,
-                EquippedPresent = bar.present, IsUpgrade = upgrade, SalvageAspect = salvage,
+                Item = it, SlotPresent = pickPresent, SlotMet = pickMet,
+                SlotTarget = bestSlot?.Affixes.Count ?? 0,
+                SlotQuality = pickQ, GoalScore = goalScore, Fixable = pickFix, AspectBlocked = aspectBlocked,
+                IsUpgrade = upgrade, SalvageAspect = salvage,
+                CompareSlotIndex = pick >= 0 ? pick : null,
+                EquippedPresent = bar.present, EquippedEff = bar.eff,
+                EquippedQuality = bar.quality, EquippedEmpty = pick >= 0 && bar.empty,
                 SlotLabel = bestSlot?.Label ?? bestSlot?.Slot,
             });
         }

@@ -22,6 +22,7 @@ public sealed class AffixProgress
     public bool HaveAny { get; set; }        // any actual magnitudes were summed
     public double WantsTotal { get; set; }  // summed target magnitude across target pieces
     public bool WantsKnown { get; set; }    // every target piece had a derivable target magnitude
+    public bool WantsEstimated { get; set; } // part of WantsTotal was extrapolated (shown with a "~")
 
     public string Prefix { get; set; } = ""; // unit hint: "x" / "+" / ""
     public string Suffix { get; set; } = ""; // unit hint: "%" / ""
@@ -29,6 +30,7 @@ public sealed class AffixProgress
 
     // accumulators used during aggregation (not for display)
     internal int WantsPieces;               // pieces with a derivable target magnitude
+    internal int HaveValuePieces;           // pieces that contributed a numeric magnitude to HaveTotal
     internal double QualitySum;             // summed per-piece quality (met=100, under=roll%, missing=0)
 
     public string Status => MetPieces >= TargetPieces && TargetPieces > 0 ? "met"
@@ -71,7 +73,7 @@ public static class AffixAggregate
         else quality = 0;   // missing
         p.QualitySum += Math.Max(0, Math.Min(100, quality));
 
-        if (i.ValueNum is double v) { p.HaveTotal += v; p.HaveAny = true; }
+        if (i.ValueNum is double v) { p.HaveTotal += v; p.HaveAny = true; p.HaveValuePieces++; }
 
         // unit hint from the first piece that carries one
         if (p.Prefix.Length == 0 && p.Suffix.Length == 0 && (i.IsMultiplier || i.IsPercent || i.ValueNum != null))
@@ -86,6 +88,20 @@ public static class AffixAggregate
     static void Finish(AffixProgress p)
     {
         p.WantsKnown = p.TargetPieces > 0 && p.WantsPieces == p.TargetPieces;
+        // Pieces with NO derivable target magnitude (build states no min and the piece has no captured
+        // roll range) still count toward the goal: estimate each at the average per-piece target when one
+        // is known, else at the average of the rolls you already have ("get this on every wanted piece at
+        // the roll you've got"). Keeps the value column an honest current/target instead of a bare number.
+        if (p.WantsPieces < p.TargetPieces)
+        {
+            double perPiece = p.WantsPieces > 0 ? p.WantsTotal / p.WantsPieces
+                            : p.HaveValuePieces > 0 ? p.HaveTotal / p.HaveValuePieces : 0;
+            if (perPiece > 0)
+            {
+                p.WantsTotal += perPiece * (p.TargetPieces - p.WantsPieces);
+                p.WantsEstimated = true;
+            }
+        }
         // progress prefers the literal have/wants ratio whenever ANY target magnitude is known (a partially
         // known goal still beats no number at all — the piece-count caption carries completeness); falls back
         // to blended roll quality only when no piece has a derivable target.

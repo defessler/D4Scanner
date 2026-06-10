@@ -42,6 +42,77 @@ public static class LiveGearResolver
     }
 
     /// <summary>
+    /// Merge a fresh INVENTORY batch into the persisted inventory. Each capture channel (TTS / OCR)
+    /// publishes only its OWN accumulated list, so a wholesale replacement made items flip in and out
+    /// of All Items depending on which channel scanned last. Rules:
+    ///   • the fresh batch is its channel's full truth — same-channel persisted items are replaced;
+    ///   • the OTHER channel's persisted items survive;
+    ///   • on a name+slot collision across channels, Tts wins (same precedence as gear).
+    /// An empty fresh batch carries no information and leaves the persisted list untouched.
+    /// </summary>
+    public static List<Item> MergeInventory(List<Item> persisted, List<Item> fresh)
+    {
+        if (fresh.Count == 0) return persisted;
+        var channel = fresh.Any(i => i.Source == ItemSource.Tts) ? ItemSource.Tts : ItemSource.Ocr;
+        static string Key(Item i) => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot);
+        var freshKeys = new HashSet<string>(fresh.Select(Key), StringComparer.Ordinal);
+
+        var result = new List<Item>();
+        foreach (var p in persisted.Where(p => p.Source != channel))
+            // other-channel survivor — unless a fresh Tts item covers the same item (Tts wins);
+            // a persisted Tts item survives even when the fresh Ocr batch re-saw it
+            if (p.Source == ItemSource.Tts || !freshKeys.Contains(Key(p)))
+                result.Add(p);
+        var ttsKept = new HashSet<string>(result.Where(p => p.Source == ItemSource.Tts).Select(Key), StringComparer.Ordinal);
+        foreach (var f in fresh)
+            if (channel == ItemSource.Tts || !ttsKept.Contains(Key(f)))
+                result.Add(f);
+        return result;
+    }
+
+    /// <summary>
+    /// Equipped-gear sanity pass for a character whose class is known. Items that CANNOT be worn are
+    /// demoted out of the equipped list (they're stale captures from another character's session, or a
+    /// tooltip mis-stamped as worn): class-impossible items (a crossbow on a Barbarian), items with no
+    /// slot at all (capture artifacts), and weapons beyond the class's actual carry capacity —
+    /// Rogue: 2 melee + 1 ranged; Barbarian: 2 two-handers + 2 one-handers (newest sighting per bucket
+    /// wins; an older capture of a swapped-out weapon drops off the doll instead of lingering forever).
+    /// Demoted items are returned so the caller can keep them findable as owned inventory.
+    /// </summary>
+    public static List<Item> SanitizeEquipped(List<Item> gear, string? cls, out List<Item> demoted)
+    {
+        demoted = new List<Item>();
+        var kept = new List<Item>();
+        foreach (var it in gear)
+        {
+            bool slotless = string.IsNullOrWhiteSpace(it.Slot);
+            bool wrongClass = cls != null && !ClassRules.CanEquip(cls, it);
+            if (slotless || wrongClass) demoted.Add(it); else kept.Add(it);
+        }
+
+        // weapon capacity: only for the two classes whose arsenals we've verified on live data
+        string? Bucket(Item it)
+        {
+            if (DiffEngine.SlotBaseName(it.Slot) != "weapon") return null;
+            var t = (it.ItemType ?? "").ToLowerInvariant();
+            return cls?.ToLowerInvariant() switch
+            {
+                "rogue"     => t.Contains("bow") ? "ranged" : "melee",
+                "barbarian" => t.Contains("two-hand") || t.Contains("two hand") || t.Contains("polearm") ? "twohand" : "onehand",
+                _ => null,
+            };
+        }
+        static int Cap(string bucket) => bucket == "ranged" ? 1 : 2;
+
+        foreach (var grp in kept.Where(i => Bucket(i) != null).GroupBy(Bucket!))
+        {
+            var stale = grp.OrderByDescending(GearList.AcquiredTicks).Skip(Cap(grp.Key!)).ToList();
+            foreach (var s in stale) { kept.Remove(s); demoted.Add(s); }
+        }
+        return kept;
+    }
+
+    /// <summary>
     /// Build the canonical set of live weapon names already shown by paper-doll "gear:" slots, using
     /// the de-dup policy: case-insensitive (OrdinalIgnoreCase), null/empty names skipped. Pure data —
     /// the UI extracts the names off its private Section/Group types and passes them in.

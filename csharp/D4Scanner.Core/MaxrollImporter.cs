@@ -175,15 +175,27 @@ public static class MaxrollImporter
 
     // ---- id -> name maps ----
 
-    sealed record Maps(Dictionary<long, string> AffixKeyById, Dictionary<string, string> Token);
+    sealed record Maps(Dictionary<long, string> AffixKeyById, Dictionary<string, string> Token,
+                       Dictionary<long, string> AspectNameById);
 
     static Maps BuildMaps(JsonElement dm, JsonElement dc)
     {
         var byId = new Dictionary<long, string>();
+        var aspectById = new Dictionary<long, string>();
         if (dm.TryGetProperty("affixes", out var affixes))
             foreach (var p in affixes.EnumerateObject())
                 if (p.Value.ValueKind == JsonValueKind.Object && p.Value.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number)
+                {
                     byId[id.GetInt64()] = p.Name;
+                    // Legendary-aspect affixes carry the in-game item NAME modifier ("of Mending Obscurity" /
+                    // "Edgemaster's") in suffix/prefix — the only human-readable aspect name in the data.
+                    // Token descriptions never cover legendary_* keys, so without this the aspect's display
+                    // name degraded to the raw key ("legendary rogue 011") and could never match owned items.
+                    string? mod = p.Value.TryGetProperty("suffix", out var sx) && sx.ValueKind == JsonValueKind.String ? sx.GetString()
+                                : p.Value.TryGetProperty("prefix", out var px) && px.ValueKind == JsonValueKind.String ? px.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(mod) && p.Name.Contains("legendary", StringComparison.OrdinalIgnoreCase))
+                        aspectById[id.GetInt64()] = AspectDisplayName(mod!);
+                }
         var tok = new Dictionary<string, string>();
         if (dc.ValueKind == JsonValueKind.Array)
             foreach (var el in dc.EnumerateArray())
@@ -196,7 +208,7 @@ public static class MaxrollImporter
                     if (tt.Length > 0 && !tok.ContainsKey(tt)) tok[tt] = desc ?? "";
                 }
             }
-        return new Maps(byId, tok);
+        return new Maps(byId, tok, aspectById);
     }
 
     static string? AffixName(long nid, Maps m)
@@ -205,6 +217,18 @@ public static class MaxrollImporter
         string? raw = m.Token.TryGetValue(key, out var d) ? d : null;
         return CleanAffix(raw) ?? CleanAffix(Humanize(key));
     }
+
+    /// <summary>Canonical display name for an aspect from its item-name modifier:
+    /// "of Mending Obscurity" → "Aspect of Mending Obscurity"; "Edgemaster's" → "Edgemaster's Aspect".</summary>
+    public static string AspectDisplayName(string nameModifier)
+    {
+        var s = Regex.Replace(nameModifier, @"\s+", " ").Trim();
+        if (s.Contains("aspect", StringComparison.OrdinalIgnoreCase)) return s;
+        return s.StartsWith("of ", StringComparison.OrdinalIgnoreCase) ? "Aspect " + s : s + " Aspect";
+    }
+
+    static string? AspectName(long nid, Maps m) =>
+        m.AspectNameById.TryGetValue(nid, out var n) ? n : AffixName(nid, m);
 
     static string? CleanAffix(string? name)
     {
@@ -295,11 +319,21 @@ public static class MaxrollImporter
 
                 if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic, Image = image, ItemId = itemId }); continue; }
 
+                // the planner stores the imprinted aspect under "aspects" (an ARRAY) in the current format;
+                // older payloads used a single "aspect" object — accept both (the object-only read silently
+                // imported ZERO aspects from every modern build)
                 string? aspectName = null;
-                if (item.TryGetProperty("aspect", out var asp) && asp.ValueKind == JsonValueKind.Object)
+                var aspEls = new List<JsonElement>();
+                if (item.TryGetProperty("aspect", out var aspObj) && aspObj.ValueKind == JsonValueKind.Object)
+                    aspEls.Add(aspObj);
+                else if (item.TryGetProperty("aspects", out var aspArr) && aspArr.ValueKind == JsonValueKind.Array)
+                    aspEls.AddRange(aspArr.EnumerateArray().Where(a => a.ValueKind == JsonValueKind.Object));
+                foreach (var asp in aspEls)
                 {
                     var anid = Nid(asp);
-                    if (anid != null) { var an = AffixName(anid.Value, m); if (an != null) { aspects.Add(an); aspectName = an; } }
+                    if (anid == null) continue;
+                    var an = AspectName(anid.Value, m);
+                    if (an != null) { aspects.Add(an); aspectName ??= an; }
                 }
 
                 var affixes = new List<TargetAffix>();
