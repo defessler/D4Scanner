@@ -12,9 +12,15 @@ namespace D4Scanner.Core;
 public static class ClassRules
 {
     // weapon-type keyword → classes that can equip it (the six verified classes; matched as substrings
-    // of the voiced ItemType, longest keyword first so "crossbow" wins over "bow")
+    // of the voiced ItemType, longest keyword first so "two-handed sword" wins over "sword" and
+    // "crossbow" over "bow"). Two-handed bladed/blunt weapons have their OWN class sets — a Rogue uses
+    // one-handed swords but can never lift a two-hander (caught by live verification on real gear).
     static readonly (string kw, string[] classes)[] WeaponUse =
     {
+        ("two-handed sword", new[] { "Barbarian", "Necromancer" }),
+        ("two-handed mace",  new[] { "Barbarian", "Druid" }),
+        ("two-handed axe",   new[] { "Barbarian", "Druid" }),
+        ("two-handed scythe", new[] { "Necromancer" }),
         ("crossbow",     new[] { "Rogue" }),
         ("quarterstaff", new[] { "Spiritborn" }),
         ("glaive",       new[] { "Spiritborn" }),
