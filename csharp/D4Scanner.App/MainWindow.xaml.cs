@@ -2350,6 +2350,7 @@ public partial class MainWindow : Window
         var selectedAffixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string search = "";
         var sortMode = scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired;
+        string? expandedFp = null;   // fingerprint of the row whose inline comparison is open
 
         // ---- header ----
         var sp = new StackPanel { MinWidth = 760, MaxWidth = 1000 };
@@ -2390,7 +2391,13 @@ public partial class MainWindow : Window
                 ? filtered.OrderBy(i => scoreOrder.GetValueOrDefault(GearList.Fingerprint(i), int.MaxValue)).ToList()
                 : GearList.Sort(filtered, sortMode);
             listPanel.Children.Clear();
-            foreach (var it in view) listPanel.Children.Add(BuildRow(it));
+            foreach (var it in view)
+            {
+                listPanel.Children.Add(BuildRow(it));
+                // the comparison renders INLINE under the clicked row (replaces the old hover popup)
+                if (expandedFp != null && expandedFp == GearList.Fingerprint(it))
+                    listPanel.Children.Add(ItemCompareCard(it));
+            }
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
         }
 
@@ -2404,6 +2411,7 @@ public partial class MainWindow : Window
             S("Recently acquired", GearSortMode.RecentlyAcquired);
             S("Slot", GearSortMode.Slot);
             S("Item power", GearSortMode.ItemPower);
+            S("Rarity", GearSortMode.Rarity);
             S("Name", GearSortMode.Name);
             chipBar.Children.Add(sortRow);
         }
@@ -2546,18 +2554,40 @@ public partial class MainWindow : Window
                 };
                 DockPanel.SetDock(badge, Dock.Right); headRow.Children.Add(badge);
             }
+            if (score != null && score.SalvageAspect != null && !score.IsUpgrade)
+            {
+                var sBadge = new Border
+                {
+                    Background = B("#2A2418"), BorderBrush = Amber, BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(8, 0, 0, 0),
+                    Child = TB("♻ SALVAGE", Amber, 9, true),
+                };
+                DockPanel.SetDock(sBadge, Dock.Right); headRow.Children.Add(sBadge);
+            }
             headRow.Children.Add(TB(slotLbl + (owner != null ? $"   ·   with {owner}" : ""), owner != null ? Steel : Faint, 10, false));
             details.Children.Add(headRow);
+            bool ancestral = item.IsAncestral || IsAncestral(item.Rarity);
+            var nameLine = new StackPanel { Orientation = Orientation.Horizontal };
+            if (ancestral)
+            {   // ancestral marker, both visual (the D4-style chevrons in ancestral orange) and in text below
+                var anc = TBs("⌃⌃ ", RAncestral, 12.5, true); anc.Margin = new Thickness(0, 0, 2, 0);
+                anc.ToolTip = "Ancestral"; nameLine.Children.Add(anc);
+            }
             var nameBlock = TBs(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;   // serif (Cinzel) — D4 item-name cue
-            details.Children.Add(nameBlock);
+            nameLine.Children.Add(nameBlock);
+            details.Children.Add(nameLine);
             if (score != null && score.SlotTarget > 0)
                 details.Children.Add(TB($"has {score.SlotPresent}/{score.SlotTarget} of this slot's affixes"
                     + (score.Fixable ? "  ·  1 enchant from full" : "")
                     + (score.AspectBlocked ? "  ·  unique — can't take the wanted aspect" : "")
                     + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedPresent}" : ""),
                     score.IsUpgrade ? Green : score.AspectBlocked ? Amber : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
-            if (item.ItemPower > 0)
-                details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
+            if (score != null && score.SalvageAspect != null)
+                details.Children.Add(TB($"carries a wanted aspect: {score.SalvageAspect} — salvage to capture it",
+                    Amber, 9.5, false, new Thickness(0, 1, 0, 0)));
+            if (item.ItemPower > 0 || ancestral)
+                details.Children.Add(TB((ancestral ? "Ancestral  ·  " : "") + $"IP {item.ItemPower}"
+                    + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), ancestral ? RAncestral : Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
             // top 3 affixes
             foreach (var aff in item.Affixes.Take(3))
             {
@@ -2601,17 +2631,29 @@ public partial class MainWindow : Window
                 BorderThickness = new Thickness(pinned ? 1.5 : 1),
                 Cursor = System.Windows.Input.Cursors.Hand,
             };
+            // pin button (top-right, beside delete) — pinning moved off the row click, which now expands
+            var pinBtn = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x0E, 0x0E, 0x11)),
+                BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 1, 5, 2), Cursor = System.Windows.Input.Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -4, 22, 0), Child = TB("📌", Soft, 9.5, true), Visibility = Visibility.Collapsed,
+                ToolTip = "Pin to the compare deck on the overview",
+            };
+            delGrid.Children.Add(pinBtn);
+
             card.MouseEnter += (_, _) =>
             {
                 if (!pinned) card.Background = CardHi;
                 if (owner == null) delBtn.Visibility = Visibility.Visible;   // can only delete what THIS character holds
-                ShowItemCompareHover(capturedItem, card);   // vs the currently equipped piece, with deltas
+                pinBtn.Visibility = Visibility.Visible;
             };
             card.MouseLeave += (_, _) =>
             {
                 if (!pinned) card.Background = Card;
                 delBtn.Visibility = Visibility.Collapsed;
-                _hoverPopup.IsOpen = false;
+                pinBtn.Visibility = Visibility.Collapsed;
             };
             // Tiny inline "Pinned ✓" / "Unpinned" label that fades in/out on the card — modal stays open
             var pinLabel = new TextBlock
@@ -2622,11 +2664,11 @@ public partial class MainWindow : Window
             };
             delGrid.Children.Add(pinLabel);
 
-            card.MouseLeftButtonUp += (_, _) =>
+            pinBtn.MouseLeftButtonUp += (_, e) =>
             {
+                e.Handled = true;
                 bool wasPinned = _pinned.Remove(capturedSec.Key);
                 if (!wasPinned) _pinned.Add(capturedSec.Key);
-                _hoverPopup.IsOpen = false;
 
                 // Update card visuals in-place (avoid closing the modal)
                 bool nowPinned = !wasPinned;
@@ -2642,6 +2684,13 @@ public partial class MainWindow : Window
                 pinLabel.BeginAnimation(OpacityProperty, fade);
 
                 Render();   // update compare deck in the main window behind the modal
+            };
+
+            // clicking the row toggles the INLINE comparison card beneath it
+            card.MouseLeftButtonUp += (_, _) =>
+            {
+                expandedFp = expandedFp == fp ? null : fp;
+                Rebuild();
             };
             return card;
         }
@@ -3479,11 +3528,11 @@ public partial class MainWindow : Window
         _hoverPopup.IsOpen = true;
     }
 
-    // hover card for the All Items view — the SAME two-panel compare card as hovering a paper-doll slot:
-    // the hovered item (left) vs the currently equipped piece (right), both evaluated against the slot's
+    // the All Items comparison card — the SAME two-panel compare card as hovering a paper-doll slot:
+    // the candidate (left) vs the currently equipped piece (right), both evaluated against the slot's
     // target affix set, with the target threshold on every row, comparison ghosts on the bars, and a
-    // numeric ▲/▼ delta per shared affix.
-    void ShowItemCompareHover(Item cand, UIElement target)
+    // numeric ▲/▼ delta per shared affix. Rendered INLINE under the clicked row (not a hover popup).
+    FrameworkElement ItemCompareCard(Item cand)
     {
         var sb = DiffEngine.SlotBaseName(cand.Slot);
         var slotTargets = (_target?.Gear ?? new()).Where(g => DiffEngine.SlotBaseName(g.Slot) == sb).ToList();
@@ -3545,28 +3594,13 @@ public partial class MainWindow : Window
             equipped != null ? RarityBrush(equipped.Rarity) : Faint, SubOf(equipped),
             RarityColor(equipped?.Rarity), RowsFor(equipped, cand), equipped?.Name, SlotKey(cand.Slot ?? ""), null, eqIcon);
 
-        var grid = new Grid();
+        var grid = new Grid { Margin = new Thickness(8, 2, 8, 10) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn((FrameworkElement)left, 0); grid.Children.Add((FrameworkElement)left);
         Grid.SetColumn((FrameworkElement)right, 2); grid.Children.Add((FrameworkElement)right);
-        grid.MinWidth = 640; grid.MaxWidth = 820;
-
-        if (target is FrameworkElement fe2)
-        {
-            try
-            {
-                var pt = fe2.TransformToAncestor(this).Transform(new Point(0, 0));
-                _hoverPopup.Placement = pt.X + fe2.ActualWidth + 680 > ActualWidth
-                    ? System.Windows.Controls.Primitives.PlacementMode.Left
-                    : System.Windows.Controls.Primitives.PlacementMode.Right;
-            }
-            catch { }
-        }
-        _hoverPopup.PlacementTarget = target;
-        _hoverPopup.Child = grid;
-        _hoverPopup.IsOpen = true;
+        return grid;
     }
 
     // a Mobalytics-style slot row: icon + (slot label / wanted item name); hover to compare, click to pin

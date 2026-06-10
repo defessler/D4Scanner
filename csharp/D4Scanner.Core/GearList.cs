@@ -4,7 +4,7 @@ using System.Text;
 
 namespace D4Scanner.Core;
 
-public enum GearSortMode { Slot, RecentlyAcquired, ItemPower, Name, Upgrade }
+public enum GearSortMode { Slot, RecentlyAcquired, ItemPower, Name, Upgrade, Rarity }
 
 /// <summary>
 /// Headless helpers for the build-AGNOSTIC "All Items" table: a flat list of every captured item
@@ -62,6 +62,13 @@ public static class GearList
     public static List<OwnedItem> SharedCandidates(LiveBuild current, IEnumerable<CharacterProfile> otherProfiles, string? activeClass)
     {
         var equippedNow = new HashSet<string>((current.Gear ?? new()).Select(Fingerprint), StringComparer.Ordinal);
+        // Stale-copy guard: the SAME physical item re-scanned after masterworking / tempering / an enchant
+        // rolls a different fingerprint, so an old capture of the currently-equipped piece would slip past
+        // the fingerprint exclusion and list "an upgrade" that is really the item you're wearing. Same
+        // name + same slot as an equipped piece ⇒ treat as the equipped item. (Cost: a true duplicate of
+        // an equipped item is hidden too — better than flagging your own gear as its own upgrade.)
+        var equippedNameSlot = new HashSet<string>((current.Gear ?? new())
+            .Select(i => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot)), StringComparer.Ordinal);
 
         var pool = new List<OwnedItem>();
         foreach (var it in Build(current))
@@ -75,6 +82,7 @@ public static class GearList
 
         return pool
             .Where(o => !equippedNow.Contains(Fingerprint(o.Item)))
+            .Where(o => !equippedNameSlot.Contains(DiffEngine.Normalize(o.Item.Name) + "|" + DiffEngine.SlotBaseName(o.Item.Slot)))
             .Where(o => ClassRules.CanEquip(activeClass, o.Item))
             .GroupBy(o => Fingerprint(o.Item))
             .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)               // active character's copy wins…
@@ -118,10 +126,21 @@ public static class GearList
         return Sort(q, sort);
     }
 
+    /// <summary>Rarity ordering for sorting/tiebreaks: Mythic > Unique > Legendary > Rare > Magic > rest.</summary>
+    public static int RarityRank(string? rarity)
+    {
+        var r = (rarity ?? "").ToLowerInvariant();
+        return r.Contains("mythic") ? 5 : r.Contains("unique") ? 4 : r.Contains("legendary") ? 3
+             : r.Contains("rare") ? 2 : r.Contains("magic") ? 1 : 0;
+    }
+
     public static List<Item> Sort(IEnumerable<Item> items, GearSortMode sort) => sort switch
     {
         GearSortMode.RecentlyAcquired => items.OrderByDescending(AcquiredTicks).ThenBy(i => i.Name).ToList(),
-        GearSortMode.ItemPower        => items.OrderByDescending(i => i.ItemPower ?? 0).ThenBy(i => i.Name).ToList(),
+        GearSortMode.ItemPower        => items.OrderByDescending(i => i.ItemPower ?? 0)
+                                              .ThenByDescending(i => RarityRank(i.Rarity)).ThenBy(i => i.Name).ToList(),
+        GearSortMode.Rarity           => items.OrderByDescending(i => RarityRank(i.Rarity))
+                                              .ThenByDescending(i => i.ItemPower ?? 0).ThenBy(i => i.Name).ToList(),
         GearSortMode.Name             => items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList(),
         _                             => items.OrderBy(i => i.Slot ?? "")
                                               .ThenByDescending(i => i.ItemPower ?? 0)

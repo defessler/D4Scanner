@@ -14,6 +14,9 @@ public sealed class ScoredItem
     public bool IsUpgrade { get; set; }      // beats the currently equipped piece in its slot
     public int EquippedPresent { get; set; } // present-count of the equipped piece in that slot (0 if empty)
     public string? SlotLabel { get; set; }   // the matched target slot (label/slot)
+    /// <summary>The item carries an imprinted aspect the build WANTS — worth salvaging to capture the
+    /// aspect into the codex even when its affixes aren't an upgrade. Null when not applicable.</summary>
+    public string? SalvageAspect { get; set; }
 
     /// <summary>Affix completeness with the enchant credit: one wrong affix is fixable at the Occultist, so a
     /// 3/4 item competes in the 4/4 tier (roll quality then separates them).</summary>
@@ -105,23 +108,35 @@ public static class UpgradeScorer
             bool beats = effective > bar.eff || (effective == bar.eff && slotPresent > bar.present);
             bool upgrade = bestSlot != null && beats
                         && !(aspectBlocked && eqNonUnique.GetValueOrDefault(sb));
+
+            // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping
+            // even when its affixes aren't — salvaging captures the aspect into the codex. (Uniques can't
+            // be salvaged for aspects.)
+            string? salvage = null;
+            if (!it.IsUnique && !string.IsNullOrEmpty(it.Aspect))
+            {
+                foreach (var want in target.Gear.Select(g2 => g2.Aspect).Concat(target.Aspects).Where(a => !string.IsNullOrEmpty(a)))
+                    if (DiffEngine.PhraseMatch(want!, it.Aspect)) { salvage = want; break; }
+            }
+
             result.Add(new ScoredItem
             {
                 Item = it, SlotPresent = slotPresent, SlotMet = bestMet, SlotTarget = slotTarget,
                 SlotQuality = bestQ, GoalScore = goalScore, Fixable = fixable, AspectBlocked = aspectBlocked,
-                EquippedPresent = bar.present, IsUpgrade = upgrade,
+                EquippedPresent = bar.present, IsUpgrade = upgrade, SalvageAspect = salvage,
                 SlotLabel = bestSlot?.Label ?? bestSlot?.Slot,
             });
         }
 
         return result
-            .OrderByDescending(s => s.IsUpgrade)           // upgrades always above non-upgrades
-            .ThenByDescending(s => s.EffectivePresent)     // affix count (with the one-enchant credit) dominates
-            .ThenByDescending(s => s.SlotMet)              // within the tier: rolls that already meet thresholds…
-            .ThenByDescending(s => s.SlotQuality)          // …then raw roll quality (lets a hot 3/4 beat a cold 4/4)
-            .ThenByDescending(s => s.SlotPresent)          // …then real presence over the enchant credit
-            .ThenByDescending(s => s.GoalScore)            // then overall-goal contribution
-            .ThenByDescending(s => s.Item.ItemPower ?? 0)
+            .OrderByDescending(s => s.IsUpgrade)                 // affix upgrades always first
+            .ThenByDescending(s => s.SalvageAspect != null)      // then wanted-aspect salvage upgrades
+            .ThenByDescending(s => s.EffectivePresent)           // affix count (with the one-enchant credit)
+            .ThenByDescending(s => s.SlotMet)                    // rolls already meeting thresholds…
+            .ThenByDescending(s => s.SlotQuality)                // …then raw roll quality
+            .ThenByDescending(s => s.SlotPresent)                // …then real presence over the enchant credit
+            .ThenByDescending(s => s.Item.ItemPower ?? 0)        // secondary: item power
+            .ThenByDescending(s => GearList.RarityRank(s.Item.Rarity))   // tertiary: rarity
             .ThenBy(s => s.Item.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
