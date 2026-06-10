@@ -86,8 +86,10 @@ public static class AffixAggregate
     static void Finish(AffixProgress p)
     {
         p.WantsKnown = p.TargetPieces > 0 && p.WantsPieces == p.TargetPieces;
-        // progress prefers the literal have/wants ratio when the goal is fully known; otherwise blended quality
-        if (p.WantsKnown && p.WantsTotal > 0)
+        // progress prefers the literal have/wants ratio whenever ANY target magnitude is known (a partially
+        // known goal still beats no number at all — the piece-count caption carries completeness); falls back
+        // to blended roll quality only when no piece has a derivable target.
+        if (p.WantsTotal > 0)
             p.ProgressPct = Math.Max(0, Math.Min(100, 100.0 * p.HaveTotal / p.WantsTotal));
         else
             p.ProgressPct = p.TargetPieces > 0 ? Math.Max(0, Math.Min(100, p.QualitySum / p.TargetPieces)) : 0;

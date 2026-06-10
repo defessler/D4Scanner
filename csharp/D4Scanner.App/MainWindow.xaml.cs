@@ -1207,7 +1207,13 @@ public partial class MainWindow : Window
             if (sk == "weapon" && ((eq != null ? LiveWeaponType(eq.Name) : null) ?? WeaponTypeLabel(u.ItemId)) is string wt) slotLabel = wt;
             bool have = liveNow.Gear.Any(it => DiffEngine.PhraseMatch(u.Name, it.Name));
             var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
-            if (eq != null) grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
+            if (eq != null)
+            {
+                grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
+                // a unique's affixes are fixed by the item — show them as-is (the group otherwise has no
+                // affix-target rows, which left unique slots with NO detail in the hover/compare/list views)
+                grp.Items = DiffEngine.SelfRows(eq);
+            }
             sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
         }
 
@@ -3861,7 +3867,13 @@ public partial class MainWindow : Window
         Color wrc = wantUnique != null ? (myth ? Col("#D1492E") : Col("#C9A45C")) : Col("#C8A24E");
         Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
         var wp = new StackPanel();
-        foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
+        // unique sections carry the EQUIPPED item's own affixes in g.Items (SelfRows) — those are details
+        // of what you have, not requirements; the build's "want" for a unique is the unique itself.
+        if (isUniqueSection)
+            wp.Children.Add(TB(wantUnique != null ? "the unique itself — its affix set is fixed by the item"
+                                                  : "any unique that fits this slot", Soft, 11.5, false));
+        else
+            foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
         // Use the unique's real icon when a specific unique is targeted; silhouette when it's "Any <slot>".
@@ -4176,11 +4188,12 @@ public partial class MainWindow : Window
         var bar = RollBar(p.ProgressPct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
-        // value column: progress toward the combined goal as bare "have / wants" numbers (e.g. "1,000 / 1,500")
+        // value column: progress toward the combined goal as bare "current / target" numbers — shown whenever
+        // ANY target magnitude is derivable (explicit threshold, or the roll gate over a captured range)
         string vtext =
-            p.WantsKnown && p.WantsTotal > 0 ? $"{p.Fmt(p.HaveTotal)} / {p.Fmt(p.WantsTotal)}"
-          : p.HaveAny                        ? p.Fmt(p.HaveTotal)
-          : p.Status == "missing"            ? "missing"
+            p.WantsTotal > 0        ? $"{p.Fmt(p.HaveTotal)} / {p.Fmt(p.WantsTotal)}"
+          : p.HaveAny               ? p.Fmt(p.HaveTotal)
+          : p.Status == "missing"   ? "missing"
           : "";
         if (vtext.Length > 0)
         {
