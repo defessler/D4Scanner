@@ -1292,11 +1292,8 @@ public partial class MainWindow : Window
             Body.Children.Add(cols);
         }
 
-        // full per-requirement progress: a bar for every affix / aspect / unique / rune / skill / paragon glyph
-        Body.Children.Add(BuildProgressPanel(r));
-
-        // compare deck (in the space freed by the two-column layout): pinned slots, each a FULL side-by-side
-        // compare. A header lets you clear all at once; each panel can be unpinned or focused.
+        // compare deck FIRST (above Gear & Affixes): pinned slots are the user's active working set —
+        // each a FULL side-by-side compare. A header clears all at once; each panel can be unpinned/focused.
         var pinnedSecs = _pinned.ToList()
             .Select(k => sections.FirstOrDefault(x => x.Key == k && x.Gear != null)
                       ?? (_inventorySections.TryGetValue(k, out var inv) ? inv : null))
@@ -1328,6 +1325,10 @@ public partial class MainWindow : Window
                 Body.Children.Add(DetailPanel(p));
             }
         }
+
+        // full per-requirement progress: a bar for every affix / aspect / unique / rune / skill / paragon glyph
+        Body.Children.Add(BuildProgressPanel(r));
+
         // a selected category (Uniques/Skills/Paragon) shows its detail
         var selCat = sections.FirstOrDefault(x => x.Key == _selectedKey && x.Cat != null);
         if (selCat != null) Body.Children.Add(DetailPanel(selCat));
@@ -2514,7 +2515,9 @@ public partial class MainWindow : Window
             iconGrid.Children.Add(new Border { BorderBrush = rcol, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
             if (IsAncestral(item.Rarity))
                 iconGrid.Children.Add(new Border { BorderBrush = RAncestral, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(2.5), Margin = new Thickness(3), Opacity = 0.5 });
-            var art = SlotOrItemIcon(item.Name, SlotKey(item.Slot ?? ""), rcol, 42, 62);
+            // real game art whenever possible: by item name first, else by the item's base TYPE handle
+            var art = SlotOrItemIcon(item.Name, SlotKey(item.Slot ?? ""), rcol, 42, 62,
+                null, BaseIconIndex.HandleForType(item.ItemType, item.Slot));
             art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
             iconGrid.Children.Add(art);
 
@@ -3470,61 +3473,80 @@ public partial class MainWindow : Window
         _hoverPopup.IsOpen = true;
     }
 
-    // hover card for the All Items view: the hovered item side-by-side with what's CURRENTLY EQUIPPED in
-    // that slot, with a numeric delta per shared affix — "what changes if I swap to this?"
+    // hover card for the All Items view — the SAME two-panel compare card as hovering a paper-doll slot:
+    // the hovered item (left) vs the currently equipped piece (right), both evaluated against the slot's
+    // target affix set, with the target threshold on every row, comparison ghosts on the bars, and a
+    // numeric ▲/▼ delta per shared affix.
     void ShowItemCompareHover(Item cand, UIElement target)
     {
-        // the equipped piece this candidate would replace: weakest presence vs its slot's target set
         var sb = DiffEngine.SlotBaseName(cand.Slot);
         var slotTargets = (_target?.Gear ?? new()).Where(g => DiffEngine.SlotBaseName(g.Slot) == sb).ToList();
+        var tg = slotTargets.OrderByDescending(g => DiffEngine.PresenceCount(g, cand)).FirstOrDefault();
+        // the equipped piece this candidate would replace: the weakest vs the slot's target set
         var equipped = EffectiveLive().Gear
             .Where(x => DiffEngine.SlotBaseName(x.Slot) == sb)
-            .OrderBy(x => slotTargets.Count > 0 ? slotTargets.Max(g => DiffEngine.PresenceCount(g, x)) : 0)
+            .OrderBy(x => tg != null ? DiffEngine.PresenceCount(tg, x) : 0)
             .FirstOrDefault();
+        double gate = _target?.MinRollPercent ?? _minRollPct;
 
-        var sp = new StackPanel { MinWidth = 460, MaxWidth = 640 };
-        var hdr = new Grid { Margin = new Thickness(0, 0, 0, 7) };
-        hdr.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        hdr.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var ch = TBs(cand.Name, RarityBrush(cand.Rarity), 13, true); ch.TextWrapping = TextWrapping.Wrap;
-        var eh = TBs(equipped != null ? "EQUIPPED · " + equipped.Name : "EQUIPPED · (slot empty)",
-            equipped != null ? RarityBrush(equipped.Rarity) : Faint, 13, equipped != null);
-        eh.TextWrapping = TextWrapping.Wrap; eh.Margin = new Thickness(14, 0, 0, 0);
-        Grid.SetColumn(ch, 0); hdr.Children.Add(ch);
-        Grid.SetColumn(eh, 1); hdr.Children.Add(eh);
-        sp.Children.Add(hdr);
-        if (cand.ItemPower > 0 || equipped?.ItemPower > 0)
-            sp.Children.Add(TB($"IP {cand.ItemPower?.ToString() ?? "—"}  vs  {equipped?.ItemPower?.ToString() ?? "—"}",
-                Soft, 10.5, false, new Thickness(0, 0, 0, 6)));
-
-        foreach (var r in ItemCompare.Rows(cand, equipped))
+        StackPanel RowsFor(Item? item, Item? other)
         {
-            var row = new Grid { Margin = new Thickness(0, 1.5, 0, 1.5) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });   // affix
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });                     // this item
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });                     // equipped
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });                     // delta
-            var lbl = TB(r.Label, Soft, 11.5, false); lbl.TextWrapping = TextWrapping.Wrap;
-            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
-            var cv = TB(r.CandidateText, r.CandidateText == "—" ? Faint : Ink, 11.5, r.CandidateText != "—");
-            cv.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(cv, 1); row.Children.Add(cv);
-            var ev = TB(r.EquippedText, r.EquippedText == "—" ? Faint : Soft, 11.5, false);
-            ev.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(ev, 2); row.Children.Add(ev);
-            if (r.Delta is double d && Math.Abs(d) > 0.0001)
+            var rows = new StackPanel();
+            if (tg != null)
             {
-                var dv = TB((d > 0 ? "▲ +" : "▼ ") + d.ToString("#,0.##") + (r.DeltaIsPercent ? "%" : ""),
-                    d > 0 ? Green : Crimson, 11.5, true);
-                dv.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(dv, 3); row.Children.Add(dv);
+                var mine = DiffEngine.EvalSlot(tg, item, gate, out var extras);
+                var theirs = DiffEngine.EvalSlot(tg, other, gate, out _);
+                for (int i = 0; i < mine.Count; i++)
+                {
+                    double? delta = mine[i].ValueNum != null && theirs[i].ValueNum != null
+                        ? mine[i].ValueNum - theirs[i].ValueNum : null;
+                    rows.Children.Add(EquippedRow(mine[i], ghostPct: theirs[i].RollPct, delta: delta, deltaPercent: mine[i].IsPercent));
+                }
+                if (extras.Count > 0)
+                {
+                    rows.Children.Add(Divider(RarityColor(item?.Rarity), 0x44));
+                    rows.Children.Add(TB("also: " + string.Join("   ·   ", extras), Soft, 11, false));
+                }
             }
-            sp.Children.Add(row);
+            else
+            {
+                // no affix targets for this slot (e.g. a unique-only slot) — plain affix list with deltas
+                foreach (var r in ItemCompare.Rows(item ?? new Item(), other))
+                {
+                    if (r.CandidateText == "—") continue;
+                    var line = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
+                    line.Children.Add(TB(r.CandidateText + "  ", Ink, 13, true));
+                    line.Children.Add(TB(r.Label, Soft, 13, false));
+                    if (r.Delta is double d && Math.Abs(d) > 0.0001)
+                        line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (r.DeltaIsPercent ? "%" : ""),
+                            d > 0 ? Green : Crimson, 11.5, true));
+                    rows.Children.Add(line);
+                }
+            }
+            if (!string.IsNullOrEmpty(item?.Aspect)) rows.Children.Add(AspectBox(item!.Aspect!));
+            return rows;
         }
-        if (!string.IsNullOrEmpty(cand.Aspect)) sp.Children.Add(TB("Imprinted: " + cand.Aspect, Steel, 10.5, false, new Thickness(0, 6, 0, 0)));
 
-        var card = new Border
-        {
-            Background = B("#15151A"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 11, 14, 12), Child = sp,
-        };
+        string SubOf(Item? it2) => it2 == null ? "nothing equipped in this slot"
+            : (it2.Rarity ?? "") + (it2.ItemPower > 0 ? $"  ·  IP {it2.ItemPower}" : "");
+
+        // real game art whenever possible: resolve by name first, else by the item's base TYPE
+        var candIcon = BaseIconIndex.HandleForType(cand.ItemType, cand.Slot);
+        var eqIcon = equipped != null ? BaseIconIndex.HandleForType(equipped.ItemType, equipped.Slot) : null;
+        var left = TooltipPanel("THIS ITEM", cand.Name, RarityBrush(cand.Rarity), SubOf(cand),
+            RarityColor(cand.Rarity), RowsFor(cand, equipped), cand.Name, SlotKey(cand.Slot ?? ""), null, candIcon);
+        var right = TooltipPanel("EQUIPPED", equipped?.Name ?? "(empty)",
+            equipped != null ? RarityBrush(equipped.Rarity) : Faint, SubOf(equipped),
+            RarityColor(equipped?.Rarity), RowsFor(equipped, cand), equipped?.Name, SlotKey(cand.Slot ?? ""), null, eqIcon);
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn((FrameworkElement)left, 0); grid.Children.Add((FrameworkElement)left);
+        Grid.SetColumn((FrameworkElement)right, 2); grid.Children.Add((FrameworkElement)right);
+        grid.MinWidth = 640; grid.MaxWidth = 820;
+
         if (target is FrameworkElement fe2)
         {
             try
@@ -3537,7 +3559,7 @@ public partial class MainWindow : Window
             catch { }
         }
         _hoverPopup.PlacementTarget = target;
-        _hoverPopup.Child = card;
+        _hoverPopup.Child = grid;
         _hoverPopup.IsOpen = true;
     }
 
@@ -3885,7 +3907,7 @@ public partial class MainWindow : Window
     }
 
     // left panel row: your rolled value + roll quality, colored by how it compares to the target
-    UIElement EquippedRow(ReqItem i)
+    UIElement EquippedRow(ReqItem i, double? ghostPct = null, double? delta = null, bool deltaPercent = false)
     {
         var (glyph, col) = Look(i.Status);
         var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
@@ -3897,13 +3919,19 @@ public partial class MainWindow : Window
         var line = new StackPanel { Orientation = Orientation.Horizontal };
         if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
         line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : Ink, 13, false));
+        // the build's target for this affix is always visible — even when the item doesn't have it
+        if (!string.IsNullOrEmpty(i.Need))
+            line.Children.Add(TB(i.Status == "missing" ? $"   wants {i.Need}" : $"   / {i.Need}", Faint, 11, false));
+        if (delta is double d && Math.Abs(d) > 0.0001)
+            line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (deltaPercent ? "%" : ""),
+                d > 0 ? Green : Crimson, 11.5, true));
         if (i.Tempered) line.Children.Add(TemperedBadge());
         mid.Children.Add(line);
-        if (i.Status != "missing" && i.RollPct != null)
-        {
-            var bar = RollBar(i.RollPct.Value, col, 200, 7, _minRollPct); bar.Margin = new Thickness(0, 4, 0, 0);
-            mid.Children.Add(bar);
-        }
+        // every affix row carries the bar: real roll quality when measurable, full/half for met/under
+        // presence without a range, empty (threshold tick only) when missing — current vs target at a glance
+        double pct = i.RollPct ?? (i.Status == "met" ? 100 : i.Status == "under" ? 55 : 0);
+        var bar = RollBar(pct, col, 200, 7, _minRollPct, ghostPct); bar.Margin = new Thickness(0, 4, 0, 0);
+        mid.Children.Add(bar);
         Grid.SetColumn(mid, 1); g.Children.Add(mid);
         return g;
     }
@@ -3986,19 +4014,28 @@ public partial class MainWindow : Window
 
     // a roll-quality bar: inset track + gradient fill at pct% of width, with an optional
     // target-threshold tick so you can see how far the roll is from where the build wants it.
-    FrameworkElement RollBar(double pct, Brush fill, double w = 190, double h = 12, double? threshold = null)
+    FrameworkElement RollBar(double pct, Brush fill, double w = 190, double h = 12, double? threshold = null, double? ghostPct = null)
     {
         var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         g.Children.Add(new Border { Background = B("#1A1B20"), BorderBrush = B("#0A0A0C"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(h / 2) });
 
         var fc = ((SolidColorBrush)fill).Color;
         var grad = new LinearGradientBrush(Lighten(fc, 0.22), fc, 0);
-        g.Children.Add(new Border
-        {
-            Width = Math.Max(4, w * Math.Clamp(pct, 0, 100) / 100.0),
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0),
-            Background = grad, CornerRadius = new CornerRadius(h / 2),
-        });
+        if (pct > 0)
+            g.Children.Add(new Border
+            {
+                Width = Math.Max(4, w * Math.Clamp(pct, 0, 100) / 100.0),
+                HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0),
+                Background = grad, CornerRadius = new CornerRadius(h / 2),
+            });
+
+        // comparison ghost: a soft white tick where the OTHER item's roll sits, so the bar itself shows the delta
+        if (ghostPct is double gp && gp >= 0)
+            g.Children.Add(new Border
+            {
+                Width = 2, Height = h + 3, Background = B("#C9CFD9"), HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(Math.Min(w - 2, w * Math.Clamp(gp, 0, 100) / 100.0) - 1, -1.5, 0, 0), Opacity = 0.65,
+            });
 
         if (threshold is double t && t > 0 && t < 100)
             g.Children.Add(new Border
@@ -4172,10 +4209,12 @@ public partial class MainWindow : Window
         var bar = RollBar(pct, col, 158, 11, valued ? _minRollPct : (double?)null);
         bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
+        // value column always reads current / target, not just the current value
         string vtext = !tracked ? "from build"
-            : valued ? ((i.Val ?? "") + $"   {Math.Round(i.RollPct!.Value)}%" + (i.Status == "under" && i.Need != null ? "   " + i.Need : "")).Trim()
-            : i.Status == "met" ? (i.Have != null ? i.Have + (i.Need != null ? "  ·  " + i.Need : "") : "equipped")
-            : i.Status == "under" ? (i.Have != null ? i.Have + (i.Need != null ? "  ·  " + i.Need : "") : "partial")
+            : valued ? ((i.Val ?? "") + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") + $"   {Math.Round(i.RollPct!.Value)}%").Trim()
+            : i.Status == "met" ? (i.Have != null ? i.Have + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") : "equipped")
+            : i.Status == "under" ? (i.Have != null ? i.Have + (i.Need != null ? "  /  " + i.Need.Replace("≥ ", "") : "") : "partial")
+            : i.Need != null ? "wants " + i.Need
             : (i.Have != null ? "have: " + i.Have : "missing");
         var val = TB(vtext, !tracked ? Faint : i.Status == "missing" ? Soft : col, 12, tracked && i.Status != "missing");
         val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;

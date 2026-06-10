@@ -89,6 +89,72 @@ public static class DiffEngine
         return met;
     }
 
+    /// <summary>
+    /// Evaluate ANY item against a target slot's affix set, producing one display-ready <see cref="ReqItem"/>
+    /// per wanted affix (met / under / missing, value, roll %, threshold) plus the item's surplus affixes.
+    /// This is the slot evaluation <see cref="Diff"/> uses for equipped gear, extracted so candidate items
+    /// (the All-Items hover) render with EXACTLY the same rows. Missing affixes still carry the target
+    /// threshold in <see cref="ReqItem.Need"/> so a comparison can always show what the build wants.
+    /// </summary>
+    public static List<ReqItem> EvalSlot(TargetGear g, Item? it, double gate, out List<string> extras)
+    {
+        var pool = it?.Affixes ?? new List<Affix>();
+        var used = new bool[pool.Count];
+        var items = new List<ReqItem>();
+        foreach (var aff in g.Affixes)
+        {
+            Affix? match = null;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
+            }
+            var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
+            // the target is known even when the piece is missing the affix — always show what the build wants
+            if (aff.Min != null) { req.TargetNum = aff.Min.Value; req.Need = "≥ " + aff.Min.Value.ToString("#,0.##"); }
+            else if (aff.MinPercent != null) req.Need = $"roll ≥ {aff.MinPercent:0}%";
+            if (match == null) { req.Status = "missing"; req.Done = false; }
+            else
+            {
+                req.Done = true;            // you have the affix (presence)
+                req.Source = "tts";
+                req.Val = FmtVal(match);
+                req.ValueNum = match.Value;
+                req.IsMultiplier = match.IsMultiplier;
+                req.IsPercent = match.IsPercent;
+                var pct = RollPct(match);
+                req.RollPct = pct;
+                // threshold: explicit absolute min > explicit minPercent > global gate
+                if (aff.Min != null)
+                {
+                    req.Status = (match.Value ?? 0) >= aff.Min.Value ? "met" : "under";
+                }
+                else
+                {
+                    double thr = aff.MinPercent ?? gate;
+                    // show the concrete value needed (thr% into the affix's captured [min..max] range)
+                    // rather than a bare "roll ≥ N%" when a range is available to derive it from.
+                    if (match.Min != null && match.Max != null && match.Max.Value > match.Min.Value)
+                    {
+                        double need = match.Min.Value + thr / 100.0 * (match.Max.Value - match.Min.Value);
+                        req.TargetNum = need;
+                        req.Need = "≥ " + need.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
+                    }
+                    req.Status = (pct == null || pct.Value >= thr) ? "met" : "under";
+                }
+            }
+            items.Add(req);
+        }
+        extras = new List<string>();
+        for (int i = 0; i < pool.Count; i++)
+        {
+            if (used[i] || Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) continue;
+            var d = FmtVal(pool[i]); var s = pool[i].Text + (d.Length > 0 ? " " + d : "");
+            if (!extras.Contains(s)) extras.Add(s);
+        }
+        return items;
+    }
+
     /// <summary>How many of a target slot's affixes are PRESENT on the item at ANY value (no roll/threshold
     /// gate; each item affix matched once). The primary upgrade signal: having the right affix at a low roll
     /// beats not having it at all — rolls can be masterworked up, missing affixes can only be enchanted in
@@ -232,62 +298,8 @@ public static class DiffEngine
             {
                 var g = target.Gear[gi];
                 var it = assigned.TryGetValue(gi, out var ai) ? ai : null;
-                var pool = it?.Affixes ?? new List<Affix>();
-                var used = new bool[pool.Count];
-                var items = new List<ReqItem>();
                 double gate = target.MinRollPercent ?? defaultMinRollPercent;
-                foreach (var aff in g.Affixes)
-                {
-                    Affix? match = null;
-                    for (int i = 0; i < pool.Count; i++)
-                    {
-                        if (used[i]) continue;
-                        if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
-                    }
-                    var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
-                    // absolute target is known even when the piece is missing the affix
-                    if (aff.Min != null) req.TargetNum = aff.Min.Value;
-                    if (match == null) { req.Status = "missing"; req.Done = false; }
-                    else
-                    {
-                        req.Done = true;            // you have the affix (presence)
-                        req.Source = "tts";
-                        req.Val = FmtVal(match);
-                        req.ValueNum = match.Value;
-                        req.IsMultiplier = match.IsMultiplier;
-                        req.IsPercent = match.IsPercent;
-                        var pct = RollPct(match);
-                        req.RollPct = pct;
-                        // threshold: explicit absolute min > explicit minPercent > global gate
-                        if (aff.Min != null)
-                        {
-                            req.Need = "≥ " + aff.Min.Value.ToString("#,0.##");
-                            req.Status = (match.Value ?? 0) >= aff.Min.Value ? "met" : "under";
-                        }
-                        else
-                        {
-                            double thr = aff.MinPercent ?? gate;
-                            // show the concrete value needed (thr% into the affix's captured [min..max] range)
-                            // rather than a bare "roll ≥ N%"; null when there's no range to derive one from.
-                            if (match.Min != null && match.Max != null && match.Max.Value > match.Min.Value)
-                            {
-                                double need = match.Min.Value + thr / 100.0 * (match.Max.Value - match.Min.Value);
-                                req.TargetNum = need;
-                                req.Need = "≥ " + need.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
-                            }
-                            else req.Need = null;
-                            req.Status = (pct == null || pct.Value >= thr) ? "met" : "under";
-                        }
-                    }
-                    items.Add(req);
-                }
-                var extras = new List<string>();
-                for (int i = 0; i < pool.Count; i++)
-                {
-                    if (used[i] || Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) continue;
-                    var d = FmtVal(pool[i]); var s = pool[i].Text + (d.Length > 0 ? " " + d : "");
-                    if (!extras.Contains(s)) extras.Add(s);
-                }
+                var items = EvalSlot(g, it, gate, out var extras);
                 var grp = MakeGroup(g.Label ?? g.Slot, items);
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
