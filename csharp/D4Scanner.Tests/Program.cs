@@ -1410,6 +1410,11 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("ClassRules: Rogue can equip a bow", ClassRules.CanEquip("Rogue", new Item { ItemType = "Bow", Slot = "ranged" }));
     Check("ClassRules: Barbarian cannot equip a bow", !ClassRules.CanEquip("Barbarian", new Item { ItemType = "Bow", Slot = "ranged" }));
     Check("ClassRules: Barbarian can equip a two-handed sword", ClassRules.CanEquip("Barbarian", new Item { ItemType = "Two-Handed Sword", Slot = "weapon" }));
+    Check("ClassRules: Rogue can equip a one-handed sword", ClassRules.CanEquip("Rogue", new Item { ItemType = "Sword", Slot = "weapon" }));
+    Check("ClassRules: Rogue CANNOT equip a two-handed sword (live-verified miss)",
+        !ClassRules.CanEquip("Rogue", new Item { ItemType = "Two-Handed Sword", Slot = "weapon" }));
+    Check("ClassRules: Necromancer can equip a two-handed sword", ClassRules.CanEquip("Necromancer", new Item { ItemType = "Two-Handed Sword", Slot = "weapon" }));
+    Check("ClassRules: Druid cannot equip a two-handed sword", !ClassRules.CanEquip("Druid", new Item { ItemType = "Two-Handed Sword", Slot = "weapon" }));
     Check("ClassRules: Rogue cannot equip a polearm", !ClassRules.CanEquip("Rogue", new Item { ItemType = "Polearm", Slot = "weapon" }));
     Check("ClassRules: crossbow doesn't false-match the 'bow' table for Sorcerer either",
         !ClassRules.CanEquip("Sorcerer", new Item { ItemType = "Crossbow", Slot = "ranged" }));
