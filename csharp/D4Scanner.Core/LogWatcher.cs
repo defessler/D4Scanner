@@ -55,6 +55,9 @@ public sealed class LogWatcher : IDisposable
         { "Mythic Unique", "Mythic", "Unique", "Legendary", "Rare", "Magic", "Common" };
 
     public LiveBuild Build { get; private set; } = new();
+    /// <summary>True once the initial catch-up parse has reached the end of the log (the first poll runs on
+    /// the thread pool, so the UI can show a "catching up…" state until this flips).</summary>
+    public bool IsCaughtUp { get; private set; }
     public event Action<LiveBuild>? Updated;
     /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
     /// Subscribe to auto-capture the portrait without requiring a manual button click.</summary>
@@ -86,18 +89,42 @@ public sealed class LogWatcher : IDisposable
 
     public void Start(int pollMs = 500)
     {
-        Poll();
-        _timer = new System.Threading.Timer(_ => Poll(), null, pollMs, pollMs);
+        // The first poll runs on the timer (thread pool), NOT synchronously: the initial catch-up parse of
+        // a large cumulative log would otherwise block the caller — the UI thread at startup — for seconds.
+        _timer = new System.Threading.Timer(_ => Poll(), null, 0, pollMs);
     }
+
+    /// <summary>Byte offset of the line holding the LAST "shim attached" session marker (0 when absent).
+    /// Everything before it is prior-session history whose effects are already persisted (profiles /
+    /// active pointer / last-known gear), and which the marker would wipe on replay anyway — so startup
+    /// can begin reading there instead of re-parsing the whole cumulative log.</summary>
+    public static long LastSessionStartPos(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return 0;
+            var bytes = File.ReadAllBytes(path);
+            var marker = System.Text.Encoding.UTF8.GetBytes("=== d4scanner tts shim attached");
+            int at = bytes.AsSpan().LastIndexOf(marker);
+            if (at <= 0) return 0;
+            int lineStart = at;
+            while (lineStart > 0 && bytes[lineStart - 1] != (byte)'\n') lineStart--;   // include the [ISO] prefix
+            return lineStart;
+        }
+        catch { return 0; }
+    }
+
+    int _polling;   // ticks can fire while a long catch-up parse is still running — skip, don't overlap
 
     void Poll()
     {
+        if (System.Threading.Interlocked.Exchange(ref _polling, 1) == 1) return;
         try
         {
             if (!File.Exists(_path)) return;
             long size = new FileInfo(_path).Length;
             if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset(); }  // log cleared/rotated
-            if (size <= _pos) return;
+            if (size <= _pos) { IsCaughtUp = true; return; }
 
             using var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             fs.Seek(_pos, SeekOrigin.Begin);
@@ -163,7 +190,9 @@ public sealed class LogWatcher : IDisposable
                 else { _inv[key] = item; _invOrdered.Add(item); }
                 changed = true;
             }
-            if (changed)
+            bool firstCatchUp = !IsCaughtUp;
+            IsCaughtUp = true;
+            if (changed || firstCatchUp)   // always emit once after catch-up so the UI can drop "catching up…"
             {
                 // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
                 if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
@@ -173,6 +202,7 @@ public sealed class LogWatcher : IDisposable
             }
         }
         catch { /* file was mid-write; retry on the next tick */ }
+        finally { System.Threading.Interlocked.Exchange(ref _polling, 0); }
     }
 
     /// <summary>Classify an item's UiContext and fix its Equipped flag using in-body signals and a post-end-marker

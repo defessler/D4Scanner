@@ -1335,6 +1335,23 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     try { File.Delete(swLog); } catch { }
 }
 
+// ---- LogWatcher.LastSessionStartPos (startup skips dead history before the last session marker) ----
+{
+    var posLog = Path.Combine(Path.GetTempPath(), "d4s_pos_test_" + Guid.NewGuid().ToString("N") + ".log");
+    var older = "[2026-06-05T07:49:15Z]=== d4scanner tts shim attached v2 ===\n[old]stale gear line\n";
+    var newer = "[2026-06-09T08:04:18Z]=== d4scanner tts shim attached v2 ===\n[new]current line\n";
+    File.WriteAllText(posLog, older + newer);
+    long pos = LogWatcher.LastSessionStartPos(posLog);
+    Eq("LastSessionStartPos: points at the LAST attach marker's line start",
+        (long)System.Text.Encoding.UTF8.GetByteCount(older), pos);
+    var tail = File.ReadAllText(posLog).Substring((int)pos);
+    Check("LastSessionStartPos: tail begins with the marker line", tail.StartsWith("[2026-06-09T08:04:18Z]==="));
+    File.WriteAllText(posLog, "no markers here at all\njust gameplay\n");
+    Eq("LastSessionStartPos: no marker -> 0 (full replay)", 0L, LogWatcher.LastSessionStartPos(posLog));
+    Eq("LastSessionStartPos: missing file -> 0", 0L, LogWatcher.LastSessionStartPos(posLog + ".nope"));
+    try { File.Delete(posLog); } catch { }
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

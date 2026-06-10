@@ -572,21 +572,20 @@ public partial class MainWindow : Window
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
-            // Pass _logSkipToPos so a live-cache clear starts reading from the end of the old data.
-            _watcher = new LogWatcher(_log, equippedOnly: true, startPos: _logSkipToPos);
+            // Start position: an explicit cache-clear skip wins; otherwise begin at the LAST session marker
+            // instead of re-parsing the whole cumulative log (18MB+ after a few weeks — measured 4s of parse
+            // plus per-visit UI churn). Everything earlier is already persisted in the per-character profiles.
+            // First run with no profiles yet replays everything once so historical characters migrate.
+            long startPos = _logSkipToPos != 0 ? _logSkipToPos
+                          : _profiles.All().Count > 0 ? LogWatcher.LastSessionStartPos(_log) : 0;
+            _watcher = new LogWatcher(_log, equippedOnly: true, startPos: startPos);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.CharacterSelectDetected += () => Dispatcher.Invoke(OnCharacterSelect);
             _watcher.CharacterConfirmed += id => Dispatcher.Invoke(() => OnCharacterConfirmed(id));
             // (portrait auto-capture removed — the doll uses a class-coloured glow, not a screenshot)
-            _watcher.Start();
-            _live = new LiveBuild
-            {
-                Gear      = MergeGear(_live.Gear, _watcher.Build.Gear),
-                Inventory = _watcher.Build.Inventory,
-                Character = _watcher.Build.Character?.Any == true ? _watcher.Build.Character : _live.Character,
-                Skills    = _watcher.Build.Skills.Count > 0 ? _watcher.Build.Skills : _live.Skills,
-            };
+            _watcher.Start();   // first poll runs on the thread pool — the window paints immediately
+            // (Render shows "catching up on the capture log…" until the watcher's first pass completes)
         }
         _captureEngine?.Dispose(); _captureEngine = null;
         if (_useCapture)
@@ -1343,7 +1342,9 @@ public partial class MainWindow : Window
                 : $" · last scan {since.TotalHours:0.0}h ago";
         }
         string src = _useTts && _useCapture ? "TTS+OCR" : _useTts ? "TTS" : _useCapture ? "OCR" : "offline";
-        Status.Text = $"● live  ·  {gearCount} items  ·  {src}{ago}";
+        Status.Text = _watcher is { IsCaughtUp: false }
+            ? "catching up on the capture log…"
+            : $"● live  ·  {gearCount} items  ·  {src}{ago}";
         StatusDetail.Text = $"{Updater.RunningVersion()}  ·  {Path.GetFileName(_log)}";
     }
 
