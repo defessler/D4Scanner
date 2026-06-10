@@ -29,8 +29,15 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        // Single-instance guard: if another D4Scanner is already running, bring it to the front.
-        _singleInstance = new System.Threading.Mutex(true, "D4Scanner.App.SingleInstance", out bool isNew);
+        // Single-instance guard. An update restart hands off to a NEW process while the old one is still
+        // shutting down — "--from-update" lets the successor WAIT for the mutex instead of losing the race
+        // and silently exiting (the old "app never came back after updating" failure). A plain duplicate
+        // launch still bounces instantly. An abandoned mutex (prior instance crashed) counts as acquired.
+        bool fromUpdate = e.Args.Contains("--from-update");
+        _singleInstance = new System.Threading.Mutex(false, "D4Scanner.App.SingleInstance");
+        bool isNew;
+        try { isNew = _singleInstance.WaitOne(fromUpdate ? System.TimeSpan.FromSeconds(10) : System.TimeSpan.Zero); }
+        catch (System.Threading.AbandonedMutexException) { isNew = true; }   // previous instance died holding it — it's ours
         if (!isNew)
         {
             var existing = Process.GetProcessesByName("D4Scanner").FirstOrDefault(p => p.Id != Process.GetCurrentProcess().Id);
@@ -43,37 +50,22 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        // Auto-update: if a newer staged exe is already downloaded from a previous session,
-        // apply it now (before any window appears) — rename the running image, copy the new
-        // one into its place, relaunch, and exit.  Falls back gracefully if the swap fails.
-        var staged = Updater.FindStagedUpdate();
-        if (staged.HasValue)
-        {
-            var exe = System.Environment.ProcessPath
+        var exePath = System.Environment.ProcessPath
                    ?? Process.GetCurrentProcess().MainModule!.FileName;
-            // Place the new exe with its version in the filename (same directory as the current exe)
-            var dir      = System.IO.Path.GetDirectoryName(exe) ?? ".";
-            var newName  = $"D4Scanner-{staged.Value.tag}-win-x64.exe";
-            var newPath  = System.IO.Path.Combine(dir, newName);
-            if (Updater.TryApplyStaged(staged.Value.path, exe, newPath))
-            {
-                // Delete the previous versioned exe (renamed to .old by TryApplyStaged)
-                try { System.IO.File.Delete(exe + ".old"); } catch { }
-                // Also try to delete the original exe path if the name changed (old version filename)
-                try { if (exe != newPath && System.IO.File.Exists(exe)) System.IO.File.Delete(exe); } catch { }
-                Process.Start(new ProcessStartInfo(newPath) { UseShellExecute = true });
-                Shutdown(0);
-                return;
-            }
+
+        // Auto-update: if a newer staged exe is already downloaded from a previous session, swap it in
+        // (versioned filename beside this one) and hand off to it. Falls back gracefully on failure.
+        var newExe = Updater.ApplyStagedNow(exePath);
+        if (newExe != null)
+        {
+            Process.Start(new ProcessStartInfo(newExe) { UseShellExecute = true, Arguments = "--from-update" });
+            Shutdown(0);
+            return;
         }
 
-        // Clean up the .old sidecar left by a prior successful update (best-effort)
-        try
-        {
-            Updater.CleanUpOld(System.Environment.ProcessPath
-                             ?? Process.GetCurrentProcess().MainModule!.FileName);
-        }
-        catch { }
+        // Sweep update leftovers: .old sidecars AND superseded versioned exes (they used to accumulate —
+        // the .old of the exe an update replaced can never be deleted by the exiting process itself).
+        Updater.CleanUpSuperseded(exePath);
 
         base.OnStartup(e);
     }

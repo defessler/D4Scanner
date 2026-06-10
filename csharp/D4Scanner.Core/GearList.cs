@@ -48,6 +48,40 @@ public static class GearList
                   .ToList();
     }
 
+    /// <summary>An item in the shared pool + which OTHER character is holding it (null = the active one).</summary>
+    public sealed record OwnedItem(Item Item, string? Owner);
+
+    /// <summary>
+    /// The cross-character candidate pool for the "All Items" view: gear is shared via the stash, so it
+    /// includes everything known from the active character (bags/stash) AND every other saved character
+    /// (their bags and even their equipped pieces — they can hand items over), EXCLUDING only what the
+    /// active character is wearing right now, and anything the active class can't equip
+    /// (<see cref="ClassRules.CanEquip"/>). De-duplicated by <see cref="Fingerprint"/>; the active
+    /// character's instance wins so its delete button stays usable.
+    /// </summary>
+    public static List<OwnedItem> SharedCandidates(LiveBuild current, IEnumerable<CharacterProfile> otherProfiles, string? activeClass)
+    {
+        var equippedNow = new HashSet<string>((current.Gear ?? new()).Select(Fingerprint), StringComparer.Ordinal);
+
+        var pool = new List<OwnedItem>();
+        foreach (var it in Build(current))
+            pool.Add(new OwnedItem(it, null));
+        foreach (var p in otherProfiles)
+        {
+            var label = p.Name + (p.Class != null ? " · " + p.Class : "");
+            foreach (var it in (p.Live.Gear ?? new()).Concat(p.Live.Inventory ?? new()))
+                pool.Add(new OwnedItem(it, label));
+        }
+
+        return pool
+            .Where(o => !equippedNow.Contains(Fingerprint(o.Item)))
+            .Where(o => ClassRules.CanEquip(activeClass, o.Item))
+            .GroupBy(o => Fingerprint(o.Item))
+            .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)               // active character's copy wins…
+                          .ThenByDescending(o => AcquiredTicks(o.Item)).First()) // …else the freshest sighting
+            .ToList();
+    }
+
     /// <summary>Distinct affix display names present across the items, for the by-affix filter dropdown.</summary>
     public static List<string> AffixKeys(IEnumerable<Item> items) =>
         items.SelectMany(i => i.Affixes ?? new())

@@ -54,9 +54,11 @@
             <Grid Grid.Column="0" Margin="0,0,10,0">
               <TextBox x:Name="UrlBox" HorizontalContentAlignment="Left" TextAlignment="Left"
                        ToolTip="Type a build name to search, or paste a Maxroll build-guide / planner URL"/>
+              <!-- left margin = TextBox border (1) + style Padding.Left (10) + caret inset (2), so the
+                   placeholder's first letter sits exactly where the caret blinks -->
               <TextBlock x:Name="UrlPlaceholder" IsHitTestVisible="False" Foreground="{StaticResource Faint}"
                          Text="Search builds  (e.g. dance of knives)  or paste a Maxroll URL…"
-                         FontSize="15" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="22.5,0,0,0"/>
+                         FontSize="15" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="13,0,0,0"/>
               <Popup x:Name="AcPopup" PlacementTarget="{Binding ElementName=UrlBox}" Placement="Bottom"
                      StaysOpen="False" AllowsTransparency="True" Width="{Binding ActualWidth, ElementName=UrlBox}">
                 <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"

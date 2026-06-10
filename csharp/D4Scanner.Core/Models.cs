@@ -35,6 +35,7 @@ public class Item
     public int? TemperMax { get; set; }
     public int? Quality { get; set; }    // Season 8 item quality score
     public int? RequiresLevel { get; set; }
+    public string? ClassLock { get; set; }   // "Rogue Only" class restriction voiced on the requires line
     public string? Aspect { get; set; }
     public bool Equipped { get; set; }
     public bool IsComparison { get; set; }   // "Properties lost when equipped:" seen — bag/stash item, NOT worn

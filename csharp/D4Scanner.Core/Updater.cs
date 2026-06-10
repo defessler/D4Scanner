@@ -167,4 +167,56 @@ public static class Updater
     {
         try { var old = currentExe + ".old"; if (File.Exists(old)) File.Delete(old); } catch { }
     }
+
+    /// <summary>Apply a staged update right now: swap it in beside <paramref name="currentExe"/> under its
+    /// versioned filename and return the new exe's path (null when nothing is staged or the swap failed).
+    /// Safe to call from the running app — Windows allows renaming a running image, just not deleting it,
+    /// so the leftover sidecar is swept by <see cref="CleanUpSuperseded"/> on a later launch.</summary>
+    public static string? ApplyStagedNow(string currentExe)
+    {
+        var staged = FindStagedUpdate();
+        if (staged == null) return null;
+        var dir = Path.GetDirectoryName(currentExe) ?? ".";
+        var newPath = Path.Combine(dir, $"D4Scanner-{staged.Value.tag}-win-x64.exe");
+        if (!TryApplyStaged(staged.Value.path, currentExe, newPath)) return null;
+        try { File.Delete(currentExe + ".old"); } catch { }   // fails while still running from it — swept next launch
+        try
+        {
+            if (!string.Equals(Path.GetFullPath(currentExe), Path.GetFullPath(newPath), StringComparison.OrdinalIgnoreCase)
+                && File.Exists(currentExe)) File.Delete(currentExe);
+        }
+        catch { }
+        return newPath;
+    }
+
+    /// <summary>
+    /// Sweep update leftovers from the exe's directory: every "*.exe.old" sidecar, and every versioned
+    /// "D4Scanner-v*-win-x64.exe" STRICTLY OLDER than the running version. The .old of the exe we were
+    /// just updated FROM can't be deleted while its process is exiting, so without this sweep old
+    /// binaries accumulate forever (one per release). Never touches the running image or a newer exe
+    /// (which could be a mid-flight update). Best-effort: locked files are skipped and caught next launch.
+    /// </summary>
+    public static void CleanUpSuperseded(string currentExe)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(currentExe);
+            if (dir == null || !Directory.Exists(dir)) return;
+            var running = RunningVersion();
+            var self = Path.GetFullPath(currentExe);
+
+            foreach (var f in Directory.GetFiles(dir, "*.exe.old"))
+                try { File.Delete(f); } catch { }
+
+            foreach (var f in Directory.GetFiles(dir, "D4Scanner-v*-win-x64.exe"))
+            {
+                if (string.Equals(Path.GetFullPath(f), self, StringComparison.OrdinalIgnoreCase)) continue;
+                var parts = Path.GetFileNameWithoutExtension(f).Split('-');
+                var tag = parts.Length >= 2 ? parts[1] : null;
+                if (tag != null && IsNewer(running, tag))   // running > tag → superseded binary
+                    try { File.Delete(f); } catch { }
+            }
+        }
+        catch { }
+    }
 }
