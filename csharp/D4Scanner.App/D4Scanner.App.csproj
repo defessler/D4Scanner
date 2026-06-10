@@ -12,6 +12,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Version>0.23.1</Version>
+    <!-- AOT-compile published builds: cuts WPF cold-start JIT time substantially (publish-only; no effect on dotnet build) -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\D4Scanner.Core\D4Scanner.Core.csproj" />
@@ -24,6 +26,8 @@
   <ItemGroup>
     <Resource Include="Assets\Fonts\Cinzel.ttf" />
     <Resource Include="Assets\app.ico" />
+    <!-- native WPF splash: shown by unmanaged code before JIT/extraction, so launch feedback is instant -->
+    <SplashScreen Include="Assets\splash.png" />
   </ItemGroup>
   <ItemGroup>
     <!-- prebuilt, signed capture shim + its public cert, for the in-app installer -->

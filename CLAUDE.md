@@ -29,7 +29,8 @@ dotnet run --project csharp/D4Scanner.Tests
 
 # Publish local exe (use to smoke-test before a release commit)
 dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained \
-  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
+  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
+  -p:PublishReadyToRun=true -o publish
 ```
 
 The build should be **warning-free**. The vendored CascLib emits `SYSLIB0014`

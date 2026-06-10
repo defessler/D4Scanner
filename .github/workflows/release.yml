@@ -61,7 +61,7 @@ jobs:
           if ($ver -notmatch '^\d') { $ver = '0.0.0' }
           dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true -p:Version=$ver -o publish
+            -p:EnableCompressionInSingleFile=true -p:PublishReadyToRun=true -p:Version=$ver -o publish
           Copy-Item publish/D4Scanner.exe "D4Scanner-$tag-win-x64.exe"
 
       # Optional Authenticode signing — only runs if a CODESIGN_PFX_BASE64 secret is set.
