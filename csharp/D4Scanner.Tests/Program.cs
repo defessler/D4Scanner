@@ -1114,13 +1114,14 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
 
     var scored = UpgradeScorer.Score(upTarget, upLive, candidates, 80);
     Eq("UpgradeScorer: 4 items scored", 4, scored.Count);
-    Eq("UpgradeScorer: rank 1 is Helm3 (complete + threshold-met + highest goal)", "Helm3", scored[0].Item.Name);
-    Eq("UpgradeScorer: rank 2 is Helm2", "Helm2", scored[1].Item.Name);
+    // Helm2/Helm3 tie on every key (affixes, IP, rarity) — name order decides; goal score no longer sorts
+    Eq("UpgradeScorer: rank 1 is Helm2 (full tie -> name order)", "Helm2", scored[0].Item.Name);
+    Eq("UpgradeScorer: rank 2 is Helm3", "Helm3", scored[1].Item.Name);
     Eq("UpgradeScorer: rank 3 is Helm1 (present 2 but under-rolled life)", "Helm1", scored[2].Item.Name);
     Eq("UpgradeScorer: rank 4 is RingJunk (nothing present)", "RingJunk", scored[3].Item.Name);
 
-    Eq("UpgradeScorer: Helm3 present count", 2, scored[0].SlotPresent);
-    Eq("UpgradeScorer: Helm3 goal score (life 2 + dex 1 + crit 1)", 4.0, scored[0].GoalScore);
+    Eq("UpgradeScorer: Helm3 present count", 2, scored.First(x => x.Item.Name == "Helm3").SlotPresent);
+    Eq("UpgradeScorer: Helm3 goal score (life 2 + dex 1 + crit 1)", 4.0, scored.First(x => x.Item.Name == "Helm3").GoalScore);
     Check("UpgradeScorer: Helm3 is an upgrade", scored[0].IsUpgrade);
     Check("UpgradeScorer: Helm1 IS an upgrade now — presence at any value beats the equipped 1/2",
         scored[2].IsUpgrade);
@@ -1502,6 +1503,46 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("CleanUpSuperseded: the running image survives", File.Exists(current));
     Check("CleanUpSuperseded: a NEWER exe (mid-flight update) survives", File.Exists(Path.Combine(dir, "D4Scanner-v9.9.9-win-x64.exe")));
     try { Directory.Delete(dir, recursive: true); } catch { }
+}
+
+// ---- Salvage upgrades, sort tiers, rarity rank, stale-copy exclusion ----
+{
+    Eq("RarityRank: mythic top", 5, GearList.RarityRank("Mythic Unique"));
+    Eq("RarityRank: legendary", 3, GearList.RarityRank("Ancestral Legendary"));
+    Eq("RarityRank: unknown", 0, GearList.RarityRank(null));
+
+    // salvage: a legendary carrying a WANTED aspect flags + outranks plain non-upgrades
+    var sTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Gloves", Aspect = "Edgemaster's Aspect",
+        Affixes = { new TargetAffix { Name = "Attack Speed" } } } } };
+    var eqGl = new Item { Name = "EqGloves", Slot = "Gloves", Equipped = true, Affixes = { new Affix { Text = "Attack Speed", Value = 9 } } };
+    var salv = new Item { Name = "SalvageGloves", Slot = "Gloves", Rarity = "Legendary", Aspect = "Edgemaster's Aspect" };
+    var plain = new Item { Name = "PlainGloves", Slot = "Gloves", Rarity = "Legendary", ItemPower = 900 };
+    var uniqSalv = new Item { Name = "UniqGloves", Slot = "Gloves", Rarity = "Unique", IsUnique = true, Aspect = "Edgemaster's Aspect" };
+    var sScored = UpgradeScorer.Score(sTarget, new LiveBuild { Gear = { eqGl } }, new[] { plain, salv, uniqSalv }, 75);
+    Check("Salvage: wanted-aspect legendary is flagged", sScored.First(x => x.Item.Name == "SalvageGloves").SalvageAspect != null);
+    Check("Salvage: uniques are never salvage candidates", sScored.First(x => x.Item.IsUnique).SalvageAspect == null);
+    Eq("Salvage: salvage upgrade outranks the plain non-upgrade", "SalvageGloves", sScored[0].Item.Name);
+
+    // sort tiers: equal affix score -> item power decides, then rarity
+    var tTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Dexterity" } } } } };
+    var ipLow = new Item { Name = "A LowIP", Slot = "Helm", Rarity = "Legendary", ItemPower = 700 };
+    var ipHigh = new Item { Name = "B HighIP", Slot = "Helm", Rarity = "Rare", ItemPower = 900 };
+    var ipTieLeg = new Item { Name = "C TieLeg", Slot = "Helm", Rarity = "Legendary", ItemPower = 800 };
+    var ipTieRare = new Item { Name = "D TieRare", Slot = "Helm", Rarity = "Rare", ItemPower = 800 };
+    var tScored = UpgradeScorer.Score(tTarget, new LiveBuild(), new[] { ipLow, ipTieRare, ipHigh, ipTieLeg }, 75);
+    Eq("Sort: item power is the secondary key", "B HighIP", tScored[0].Item.Name);
+    Eq("Sort: rarity breaks the IP tie (legendary over rare)", "C TieLeg", tScored[1].Item.Name);
+    Eq("Sort: rare tie follows", "D TieRare", tScored[2].Item.Name);
+
+    // stale-copy guard: a re-scan of the EQUIPPED item (different fingerprint after masterworking) is excluded
+    var eqNow = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", Equipped = true,
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 10 } } };   // post-masterwork values
+    var stale = new Item { Name = "Etna's Lost Dagger", Slot = "weapon",
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 9 } } };    // older scan, different fingerprint
+    var scur = new LiveBuild { Gear = { eqNow }, Inventory = { stale } };
+    var sPool = GearList.SharedCandidates(scur, Array.Empty<CharacterProfile>(), "Rogue");
+    Check("SharedCandidates: stale copy of the equipped item is excluded (was a false upgrade)",
+        !sPool.Any(o => o.Item.Name == "Etna's Lost Dagger"));
 }
 
 // ---- report ----
