@@ -1048,7 +1048,14 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("AffixAggregate: dot multiplier prefix", "x", dot.Prefix);
     Eq("AffixAggregate: dot percent suffix", "%", dot.Suffix);
     Eq("AffixAggregate: dot fmt", "x50%", dot.Fmt(dot.HaveTotal));
-    Eq("AffixAggregate: dot progress is quality-based (met 100, missing 0 -> 50)", 50.0, dot.ProgressPct);
+    // a PARTIALLY-known target still drives the ratio (current/target shows whenever any target is derivable)
+    Eq("AffixAggregate: dot progress uses the partially-known target (50/30 clamps to 100)", 100.0, dot.ProgressPct);
+
+    // an affix with NO derivable target anywhere falls back to blended roll quality
+    var q = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
+        { G(new ReqItem { Label = "Crit", Status = "met", Done = true, ValueNum = 5 },
+            new ReqItem { Label = "Crit", Status = "missing", Done = false }) } });
+    Eq("AffixAggregate: no targets at all -> quality-based progress (met 100, missing 0 -> 50)", 50.0, q[0].ProgressPct);
 
     // a fully-missing affix reads as missing with zero progress
     var miss = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
@@ -1056,6 +1063,27 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("AffixAggregate: missing affix status", "missing", miss[0].Status);
     Eq("AffixAggregate: missing affix progress 0", 0.0, miss[0].ProgressPct);
     Check("AffixAggregate: missing affix has no haveTotal", !miss[0].HaveAny);
+}
+
+// ---- SelfRows (unique items' own affixes) + skills Need (no blanket "wants 1") ----
+{
+    var uniq = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", IsUnique = true, Affixes = {
+        new Affix { Text = "Critical Strike Chance", Value = 9, IsPercent = true, Min = 5, Max = 10 },
+        new Affix { Text = "Maximum Life", Value = 1500 } } };
+    var rows = DiffEngine.SelfRows(uniq);
+    Eq("SelfRows: one row per affix", 2, rows.Count);
+    Eq("SelfRows: value formatted", "+9%", rows[0].Val);
+    Eq("SelfRows: roll quality computed from the range", 80.0, Math.Round(rows[0].RollPct ?? -1));
+    Check("SelfRows: rows read as met with no target", rows.All(x => x.Status == "met" && x.Need == null));
+
+    var skT = new TargetBuild { Skills = {
+        new TargetSkill { Name = "Dance of Knives", Rank = 5 },
+        new TargetSkill { Name = "Concealment" } } };           // no explicit rank from the planner
+    var skL = new LiveBuild { Skills = { new LiveSkill { Name = "Dance of Knives", Rank = 20 } } };
+    var rep = DiffEngine.Diff(skT, skL, 75);
+    var sk = rep.Categories.First(c => c.Id == "skills").Groups[0].Items;
+    Eq("Skills: explicit rank target shows", "≥ 5", sk[0].Need);
+    Check("Skills: planner rank omitted -> NO 'wants 1' target", sk[1].Need == null);
 }
 
 // ---- UpgradeScorer (All Items scored upgrade list) ----

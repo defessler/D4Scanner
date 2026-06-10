@@ -155,6 +155,17 @@ public static class DiffEngine
         return items;
     }
 
+    /// <summary>Display rows for an item's OWN affixes, with values and roll quality but no target — for
+    /// items the build wants as-is (uniques: their affix set is fixed by the item, nothing to compare it to).
+    /// Without this, unique slots rendered with no detail at all (their synthesized group had no rows).</summary>
+    public static List<ReqItem> SelfRows(Item it) =>
+        (it.Affixes ?? new()).Select(a => new ReqItem
+        {
+            Label = a.Text, Done = true, Status = "met", Source = "tts",
+            Val = FmtVal(a), ValueNum = a.Value, IsMultiplier = a.IsMultiplier, IsPercent = a.IsPercent,
+            RollPct = RollPct(a),
+        }).ToList();
+
     /// <summary>How many of a target slot's affixes are PRESENT on the item at ANY value (no roll/threshold
     /// gate; each item affix matched once). The primary upgrade signal: having the right affix at a low roll
     /// beats not having it at all — rolls can be masterworked up, missing affixes can only be enchanted in
@@ -394,7 +405,10 @@ public static class DiffEngine
                     Label = t.Name, Done = done,
                     Status = done ? "met" : hit != null ? "under" : "missing",
                     Have = hit != null ? $"{have} pts" : null,
-                    Need = $"wants {want}",   // want = t.Rank ?? 1 — D4 actives are 1 base point (gear adds the rest)
+                    // Only a REAL rank target is worth showing: Maxroll often exports no explicit rank
+                    // (actives are 1 base point; gear adds the rest), and a blanket "wants 1" reads as
+                    // wrong next to a 20-point captured rank. Selection itself is the requirement then.
+                    Need = t.Rank is int r && r > 1 ? $"≥ {r}" : null,
                     Val = hit != null ? have.ToString() : null,
                     Source = done ? "tts" : null,
                 };
