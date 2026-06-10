@@ -38,6 +38,10 @@ public class GearParser
     static readonly Regex ReQuality = new(@"^(\d+)\s*(?:\(\s*[+-]?\d+(?:/\d+)?\s*\)|[+-]?\d+(?:/\d+)?)?\s+Quality", RegexOptions.IgnoreCase);
     static readonly Regex ReTemper = new(@"Tempers?[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReReqLevel = new(@"Requires Level\s+(\d+)", RegexOptions.IgnoreCase);
+    // class restriction on the requires line — the class is glued to the preceding text by the reader:
+    // "Requires Level 70. Account BoundRogue. Only. Vessel of Hatred Item"
+    static readonly Regex ReClassLock = new(
+        @"(Barbarian|Druid|Necromancer|Rogue|Sorcerer|Spiritborn|Paladin|Warlock)[.\s]*Only", RegexOptions.IgnoreCase);
     static readonly Regex ReBracket = new(@"\[\s*([\d,.]+)\s*%?\s*(?:-\s*([\d,.]+)\s*%?\s*)?\]");
     static readonly Regex ReAffix = new(@"^\s*([+x]?)\s*([\d,.]+)\s*(%?)\s+(.+?)\s*$");
     // S8 core-stat affixes voice the value twice: "+109 Dexterity +[83 - 99]". After the [range] is
@@ -265,7 +269,13 @@ public class GearParser
             var mt = ReTemper.Match(ln);
             if (mt.Success) { item.TemperUsed = int.Parse(mt.Groups[1].Value); item.TemperMax = int.Parse(mt.Groups[2].Value); continue; }
             var mr = ReReqLevel.Match(ln);
-            if (mr.Success) { item.RequiresLevel = int.Parse(mr.Groups[1].Value); continue; }
+            if (mr.Success)
+            {
+                item.RequiresLevel = int.Parse(mr.Groups[1].Value);
+                var mc = ReClassLock.Match(ln);
+                if (mc.Success) item.ClassLock = char.ToUpper(mc.Groups[1].Value[0]) + mc.Groups[1].Value[1..].ToLowerInvariant();
+                continue;
+            }
             if (item.Rarity == null && DetectRarityType(ln, item)) continue;
             var mi = ReImprinted.Match(ln);
             if (mi.Success) { item.Aspect = mi.Groups[1].Value.Trim(); item.PowerText.Add(ln); continue; }

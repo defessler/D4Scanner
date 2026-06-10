@@ -1086,18 +1086,62 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
 
     var scored = UpgradeScorer.Score(upTarget, upLive, candidates, 80);
     Eq("UpgradeScorer: 4 items scored", 4, scored.Count);
-    Eq("UpgradeScorer: rank 1 is Helm3 (met 2, highest goal)", "Helm3", scored[0].Item.Name);
-    Eq("UpgradeScorer: rank 2 is Helm2 (met 2, lower goal)", "Helm2", scored[1].Item.Name);
-    Eq("UpgradeScorer: rank 3 is Helm1 (met 1)", "Helm1", scored[2].Item.Name);
-    Eq("UpgradeScorer: rank 4 is RingJunk (met 0)", "RingJunk", scored[3].Item.Name);
+    Eq("UpgradeScorer: rank 1 is Helm3 (complete + threshold-met + highest goal)", "Helm3", scored[0].Item.Name);
+    Eq("UpgradeScorer: rank 2 is Helm2", "Helm2", scored[1].Item.Name);
+    Eq("UpgradeScorer: rank 3 is Helm1 (present 2 but under-rolled life)", "Helm1", scored[2].Item.Name);
+    Eq("UpgradeScorer: rank 4 is RingJunk (nothing present)", "RingJunk", scored[3].Item.Name);
 
-    Eq("UpgradeScorer: Helm3 slot met", 2, scored[0].SlotMet);
+    Eq("UpgradeScorer: Helm3 present count", 2, scored[0].SlotPresent);
     Eq("UpgradeScorer: Helm3 goal score (life 2 + dex 1 + crit 1)", 4.0, scored[0].GoalScore);
-    Check("UpgradeScorer: Helm3 is an upgrade (2 > equipped 1)", scored[0].IsUpgrade);
-    Check("UpgradeScorer: Helm2 is an upgrade (2 > equipped 1)", scored[1].IsUpgrade);
-    Check("UpgradeScorer: Helm1 is NOT an upgrade (1 == equipped 1)", !scored[2].IsUpgrade);
-    Check("UpgradeScorer: RingJunk is NOT an upgrade (0 met)", !scored[3].IsUpgrade);
-    Eq("UpgradeScorer: Helm3 equipped-met bar", 1, scored[0].EquippedMet);
+    Check("UpgradeScorer: Helm3 is an upgrade", scored[0].IsUpgrade);
+    Check("UpgradeScorer: Helm1 IS an upgrade now — presence at any value beats the equipped 1/2",
+        scored[2].IsUpgrade);
+    Check("UpgradeScorer: RingJunk is NOT an upgrade", !scored[3].IsUpgrade);
+    Eq("UpgradeScorer: equipped-present bar exposed", 1, scored[0].EquippedPresent);
+
+    // count dominance: 3 wanted affixes at terrible rolls outrank 2 at perfect rolls
+    var four = new TargetBuild { Gear = { new TargetGear { Slot = "Chest", Affixes = {
+        new TargetAffix { Name = "W", MinPercent = 80 }, new TargetAffix { Name = "X", MinPercent = 80 },
+        new TargetAffix { Name = "Y", MinPercent = 80 }, new TargetAffix { Name = "Z", MinPercent = 80 } } } } };
+    Affix Lo(string n) => new() { Text = n, Value = 1, Min = 0, Max = 100 };     // 1% roll — fails the gate
+    Affix Hi(string n) => new() { Text = n, Value = 99, Min = 0, Max = 100 };    // 99% roll
+    var threeLow = new Item { Name = "ThreeLow", Slot = "Chest", Affixes = { Lo("W"), Lo("X"), Lo("Y") } };
+    var twoHigh = new Item { Name = "TwoHigh", Slot = "Chest", Affixes = { Hi("W"), Hi("X") } };
+    var fourLow = new Item { Name = "FourLow", Slot = "Chest", Affixes = { Lo("W"), Lo("X"), Lo("Y"), Lo("Z") } };
+    var s2 = UpgradeScorer.Score(four, new LiveBuild(), new[] { twoHigh, threeLow, fourLow }, 80);
+    Eq("UpgradeScorer: 3-of-4 at any roll outranks 2-of-4 at perfect rolls",
+        "TwoHigh", s2[2].Item.Name);
+    Check("UpgradeScorer: one-short item is fixable (enchant credit)", s2.First(x => x.Item.Name == "ThreeLow").Fixable);
+    // the fixable 3/4 with high rolls beats a complete 4/4 with terrible rolls (eff tier equal, met/quality decide)
+    var threeHigh = new Item { Name = "ThreeHigh", Slot = "Chest", Affixes = { Hi("W"), Hi("X"), Hi("Y") } };
+    var s3 = UpgradeScorer.Score(four, new LiveBuild(), new[] { fourLow, threeHigh }, 80);
+    Eq("UpgradeScorer: hot 3/4 (fixable) outranks cold 4/4 in the same tier", "ThreeHigh", s3[0].Item.Name);
+
+    // aspect rule: uniques can't take an imprinted aspect, so they can't upgrade over a non-unique
+    var asp = new TargetBuild { Gear = { new TargetGear { Slot = "Gloves", Aspect = "Edgemaster's", Affixes = {
+        new TargetAffix { Name = "Attack Speed" }, new TargetAffix { Name = "Dexterity" } } } } };
+    var eqGloves = new Item { Name = "Plain Gloves", Slot = "Gloves", Equipped = true, Affixes = { new Affix { Text = "Attack Speed", Value = 5 } } };
+    var uniqGloves = new Item { Name = "Fists of Fate", Slot = "Gloves", IsUnique = true, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 9 }, new Affix { Text = "Dexterity", Value = 60 } } };
+    var rareGloves = new Item { Name = "Rare Gloves", Slot = "Gloves", Affixes = {
+        new Affix { Text = "Attack Speed", Value = 9 }, new Affix { Text = "Dexterity", Value = 60 } } };
+    var s4 = UpgradeScorer.Score(asp, new LiveBuild { Gear = { eqGloves } }, new[] { uniqGloves, rareGloves }, 80);
+    Check("UpgradeScorer: unique is aspect-blocked on an aspect slot", s4.First(x => x.Item.IsUnique).AspectBlocked);
+    Check("UpgradeScorer: unique is NOT an upgrade over a non-unique on an aspect slot",
+        !s4.First(x => x.Item.IsUnique).IsUpgrade);
+    Check("UpgradeScorer: same affixes on a rare ARE an upgrade there", s4.First(x => !x.Item.IsUnique).IsUpgrade);
+    Eq("UpgradeScorer: the rare sorts above the aspect-blocked unique", "Rare Gloves", s4[0].Item.Name);
+
+    // upgrades always sort above non-upgrades, even when the non-upgrade has fancier numbers
+    var two = new TargetBuild { Gear = {
+        new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "A" }, new TargetAffix { Name = "B" }, new TargetAffix { Name = "C" } } },
+        new TargetGear { Slot = "Boots", Affixes = { new TargetAffix { Name = "D" } } } } };
+    var eqHelmPerfect = new Item { Name = "PerfectHelm", Slot = "Helm", Equipped = true, Affixes = { Hi("A"), Hi("B"), Hi("C") } };
+    var helmAlmost = new Item { Name = "AlmostHelm", Slot = "Helm", Affixes = { Hi("A"), Hi("B"), Hi("C") } };   // ties equipped — not an upgrade
+    var bootsUp = new Item { Name = "BootsUp", Slot = "Boots", Affixes = { Hi("D") } };                          // empty slot — upgrade
+    var s5 = UpgradeScorer.Score(two, new LiveBuild { Gear = { eqHelmPerfect } }, new[] { helmAlmost, bootsUp }, 80);
+    Check("UpgradeScorer: the modest UPGRADE sorts above the impressive non-upgrade",
+        s5[0].Item.Name == "BootsUp" && s5[0].IsUpgrade && !s5[1].IsUpgrade);
 }
 
 // ---- RosterParser + CharacterResolver (multi-character identity) ----
@@ -1350,6 +1394,81 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("LastSessionStartPos: no marker -> 0 (full replay)", 0L, LogWatcher.LastSessionStartPos(posLog));
     Eq("LastSessionStartPos: missing file -> 0", 0L, LogWatcher.LastSessionStartPos(posLog + ".nope"));
     try { File.Delete(posLog); } catch { }
+}
+
+// ---- ClassRules / ClassLock / SharedCandidates / ItemCompare (shared-stash All Items) ----
+{
+    // class-lock parsed from the requires line (class glued by the reader: "Account BoundRogue. Only.")
+    var lockSeg = new GearParser();
+    Item? lockItem = null;
+    foreach (var ln in new[] { "FROSTBITTEN MAMMALBANE BOW", "Ancestral Legendary Bow", "900 Item Power",
+        "+275 Weapon Damage [188 - 314]", "Requires Level 70. Account BoundRogue. Only. Vessel of Hatred Item ", "Right mouse button" })
+    { var r = lockSeg.Feed(ln); if (r != null) lockItem = r; }
+    Eq("GearParser: class lock parsed from requires line", "Rogue", lockItem?.ClassLock);
+
+    // weapon-type tables
+    Check("ClassRules: Rogue can equip a bow", ClassRules.CanEquip("Rogue", new Item { ItemType = "Bow", Slot = "ranged" }));
+    Check("ClassRules: Barbarian cannot equip a bow", !ClassRules.CanEquip("Barbarian", new Item { ItemType = "Bow", Slot = "ranged" }));
+    Check("ClassRules: Barbarian can equip a two-handed sword", ClassRules.CanEquip("Barbarian", new Item { ItemType = "Two-Handed Sword", Slot = "weapon" }));
+    Check("ClassRules: Rogue cannot equip a polearm", !ClassRules.CanEquip("Rogue", new Item { ItemType = "Polearm", Slot = "weapon" }));
+    Check("ClassRules: crossbow doesn't false-match the 'bow' table for Sorcerer either",
+        !ClassRules.CanEquip("Sorcerer", new Item { ItemType = "Crossbow", Slot = "ranged" }));
+    Check("ClassRules: armor is class-free", ClassRules.CanEquip("Barbarian", new Item { ItemType = "Helm", Slot = "helm" }));
+    Check("ClassRules: explicit class lock beats everything", !ClassRules.CanEquip("Barbarian", new Item { ItemType = "Helm", Slot = "helm", ClassLock = "Rogue" }));
+    Check("ClassRules: unknown class is never filtered", ClassRules.CanEquip("Paladin", new Item { ItemType = "Bow", Slot = "ranged" }));
+    Eq("ClassRules: Barbarian carries 4 weapons", 4, ClassRules.WeaponSlots("Barbarian"));
+    Eq("ClassRules: Rogue carries 3 weapons", 3, ClassRules.WeaponSlots("Rogue"));
+    Eq("ClassRules: Sorcerer carries 2 weapons", 2, ClassRules.WeaponSlots("Sorcerer"));
+
+    // shared pool: other characters' gear shows up, current-equipped is excluded, class filter applies
+    var myHelm = new Item { Name = "My Helm", Slot = "helm", Equipped = true, Affixes = { new Affix { Text = "Maximum Life", Value = 100 } } };
+    var myBag = new Item { Name = "Bag Ring", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 50 } } };
+    var cur = new LiveBuild { Gear = { myHelm }, Inventory = { myBag } };
+    var barbProfile = new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian", Live = new LiveBuild {
+        Gear = { new Item { Name = "Barb Mace", Slot = "weapon", ItemType = "Two-Handed Mace", Equipped = true, Affixes = { new Affix { Text = "Strength", Value = 90 } } },
+                 new Item { Name = "Shared Amulet", Slot = "amulet", Affixes = { new Affix { Text = "Maximum Life", Value = 200 } } } } } };
+    var pool = GearList.SharedCandidates(cur, new[] { barbProfile }, "Rogue");
+    Check("SharedCandidates: current equipped is excluded", !pool.Any(o => o.Item.Name == "My Helm"));
+    Check("SharedCandidates: own bag item present with no owner tag", pool.Any(o => o.Item.Name == "Bag Ring" && o.Owner == null));
+    Check("SharedCandidates: other character's amulet present with owner tag",
+        pool.Any(o => o.Item.Name == "Shared Amulet" && o.Owner == "Heoki · Barbarian"));
+    Check("SharedCandidates: other character's Rogue-unusable mace filtered out", !pool.Any(o => o.Item.Name == "Barb Mace"));
+    var poolBarb = GearList.SharedCandidates(barbProfile.Live, new[] { new CharacterProfile { Name = "Heoki", Class = "Rogue", Live = cur } }, "Barbarian");
+    Check("SharedCandidates: from the Barbarian's side the mace is its own equipped (excluded) but the helm shows",
+        !poolBarb.Any(o => o.Item.Name == "Barb Mace") && poolBarb.Any(o => o.Item.Name == "My Helm"));
+
+    // hover compare rows: shared affixes get a delta; one-sided affixes show a dash
+    var candItem = new Item { Name = "Cand", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1500 }, new Affix { Text = "Dexterity", Value = 60 } } };
+    var eqItem = new Item { Name = "Eq", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1200 }, new Affix { Text = "Cooldown Reduction", Value = 7, IsPercent = true } } };
+    var rows = ItemCompare.Rows(candItem, eqItem);
+    Eq("ItemCompare: union of affixes", 3, rows.Count);
+    var life = rows.First(r => r.Label.Contains("Life"));
+    Eq("ItemCompare: shared affix delta", 300.0, life.Delta);
+    var dex = rows.First(r => r.Label.Contains("Dexterity"));
+    Check("ItemCompare: candidate-only affix has no delta and a dash on the equipped side", dex.Delta == null && dex.EquippedText == "—");
+    var cdr = rows.First(r => r.Label.Contains("Cooldown"));
+    Check("ItemCompare: equipped-only affix renders last with a dash on the candidate side", cdr.CandidateText == "—");
+    Eq("ItemCompare: no equipped item -> all rows one-sided", 2, ItemCompare.Rows(candItem, null).Count);
+}
+
+// ---- Updater.CleanUpSuperseded (old exes used to accumulate forever after updates) ----
+{
+    var dir = Path.Combine(Path.GetTempPath(), "d4s_upd_test_" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    var current = Path.Combine(dir, "D4Scanner-v0.5.0-win-x64.exe");          // pretend this is the running image
+    File.WriteAllText(current, "current");
+    File.WriteAllText(Path.Combine(dir, "D4Scanner-v0.4.0-win-x64.exe"), "older");
+    File.WriteAllText(Path.Combine(dir, "D4Scanner-v0.4.0-win-x64.exe.old"), "sidecar");
+    File.WriteAllText(Path.Combine(dir, "D4Scanner-v9.9.9-win-x64.exe"), "newer-mid-update");
+    Updater.CleanUpSuperseded(current);
+    // test host's running version is ~1.0.0, so v0.x are superseded and v9.9.9 is "newer"
+    Check("CleanUpSuperseded: older versioned exe deleted", !File.Exists(Path.Combine(dir, "D4Scanner-v0.4.0-win-x64.exe")));
+    Check("CleanUpSuperseded: .old sidecar deleted", !File.Exists(Path.Combine(dir, "D4Scanner-v0.4.0-win-x64.exe.old")));
+    Check("CleanUpSuperseded: the running image survives", File.Exists(current));
+    Check("CleanUpSuperseded: a NEWER exe (mid-flight update) survives", File.Exists(Path.Combine(dir, "D4Scanner-v9.9.9-win-x64.exe")));
+    try { Directory.Delete(dir, recursive: true); } catch { }
 }
 
 // ---- report ----

@@ -1064,6 +1064,7 @@ public partial class MainWindow : Window
         else if (seed == "focus") _focusKey = "gear:0";
         else if (seed == "steps") _stepsView = true;
         else if (seed == "raw") _rawView = true;
+        else if (seed == "target") _dollView = "target";
         Render();
         if (seed == "help" || System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
         try
@@ -1542,7 +1543,7 @@ public partial class MainWindow : Window
         };
         var ph = TB(placeholder, Faint, 12.5, false);
         ph.HorizontalAlignment = HorizontalAlignment.Left; ph.VerticalAlignment = VerticalAlignment.Center;
-        ph.Margin = new Thickness(31, 0, 0, 0); ph.IsHitTestVisible = false;
+        ph.Margin = new Thickness(33, 0, 0, 0); ph.IsHitTestVisible = false;   // border 1 + padding 30 + caret inset 2
         ph.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Visible : Visibility.Collapsed;
         box.TextChanged += (_, _) => ph.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1839,11 +1840,14 @@ public partial class MainWindow : Window
 
     void RestartToApplyUpdate()
     {
-        // The staged update will be applied on the next launch by App.xaml.cs.
-        // Restart immediately; the startup code handles the swap and old-file cleanup.
+        // Apply the staged update IN-PROCESS (Windows allows renaming our own running image), then hand off
+        // straight to the new exe — one hop instead of the old relaunch-self-then-swap chain whose extra
+        // process lost the single-instance race and left the app closed. "--from-update" makes the successor
+        // wait for our mutex. If the swap fails, relaunch self and let startup retry it.
         var exe = System.Environment.ProcessPath
                ?? System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
+        var newExe = Updater.ApplyStagedNow(exe) ?? exe;
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(newExe) { UseShellExecute = true, Arguments = "--from-update" });
         Application.Current.Shutdown();
     }
 
@@ -2309,8 +2313,14 @@ public partial class MainWindow : Window
         void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; }
 
         var live = EffectiveLive();
-        // ONLY non-equipped items — this list answers "what in my bags/stash should I equip?"
-        var items = GearList.Build(live).Where(i => !i.Equipped).ToList();
+        // The SHARED pool: gear moves between characters via the stash, so candidates come from every saved
+        // character — excluding only what THIS character wears now, and anything its class can't equip.
+        var activeClass = _profiles.Get(_activeSlug)?.Class ?? ClassDetector.Detect(live);
+        var others = _profiles.All().Where(p => p.Slug != _activeSlug && CharSelectParser.IsValidCharName(p.Name)).ToList();
+        var owned = GearList.SharedCandidates(live, others, activeClass);
+        var items = owned.Select(o => o.Item).ToList();
+        var ownerByFp = owned.Where(o => o.Owner != null)
+            .ToDictionary(o => GearList.Fingerprint(o.Item), o => o.Owner!, StringComparer.Ordinal);
         var affixKeys = GearList.AffixKeys(items);
         var now = DateTime.UtcNow.Ticks;
 
@@ -2343,8 +2353,8 @@ public partial class MainWindow : Window
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
-            ? "Everything in your bags & stash, scored against the build — best upgrades first.  Hover to compare · click to pin · ✕ to delete."
-            : "Everything in your bags & stash (load a build to score upgrades).  Hover to compare · click to pin · ✕ to delete.",
+            ? $"Everything {(activeClass ?? "this character")} could equip — across all your characters' bags, stash and loadouts — scored against the build, best upgrades first.  Hover to compare vs equipped · click to pin."
+            : "Everything this character could equip, across all your characters (load a build to score upgrades).  Hover to compare vs equipped · click to pin.",
             Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
 
         // ---- filter / sort bar ----
@@ -2512,8 +2522,10 @@ public partial class MainWindow : Window
             var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
             var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
 
-            // build-aware header: slot + (upgrade badge / slot-match caption) when a build is loaded
-            scoreByFp.TryGetValue(GearList.Fingerprint(item), out var score);
+            // build-aware header: slot + owner + (upgrade badge / slot-match caption) when a build is loaded
+            var fp = GearList.Fingerprint(item);
+            scoreByFp.TryGetValue(fp, out var score);
+            ownerByFp.TryGetValue(fp, out var owner);
             var headRow = new DockPanel();
             if (score != null && score.IsUpgrade)
             {
@@ -2525,14 +2537,16 @@ public partial class MainWindow : Window
                 };
                 DockPanel.SetDock(badge, Dock.Right); headRow.Children.Add(badge);
             }
-            headRow.Children.Add(TB(slotLbl, Faint, 10, false));
+            headRow.Children.Add(TB(slotLbl + (owner != null ? $"   ·   with {owner}" : ""), owner != null ? Steel : Faint, 10, false));
             details.Children.Add(headRow);
             var nameBlock = TBs(item.Name, rcol, 12.5, true); nameBlock.TextWrapping = TextWrapping.Wrap;   // serif (Cinzel) — D4 item-name cue
             details.Children.Add(nameBlock);
             if (score != null && score.SlotTarget > 0)
-                details.Children.Add(TB($"matches {score.SlotMet}/{score.SlotTarget} of this slot's affixes"
-                    + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedMet}" : ""),
-                    score.IsUpgrade ? Green : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
+                details.Children.Add(TB($"has {score.SlotPresent}/{score.SlotTarget} of this slot's affixes"
+                    + (score.Fixable ? "  ·  1 enchant from full" : "")
+                    + (score.AspectBlocked ? "  ·  unique — can't take the wanted aspect" : "")
+                    + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedPresent}" : ""),
+                    score.IsUpgrade ? Green : score.AspectBlocked ? Amber : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
             if (item.ItemPower > 0)
                 details.Children.Add(TB($"IP {item.ItemPower}" + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
             // top 3 affixes
@@ -2581,8 +2595,8 @@ public partial class MainWindow : Window
             card.MouseEnter += (_, _) =>
             {
                 if (!pinned) card.Background = CardHi;
-                delBtn.Visibility = Visibility.Visible;
-                ShowHover(capturedSec, card);
+                if (owner == null) delBtn.Visibility = Visibility.Visible;   // can only delete what THIS character holds
+                ShowItemCompareHover(capturedItem, card);   // vs the currently equipped piece, with deltas
             };
             card.MouseLeave += (_, _) =>
             {
@@ -3177,9 +3191,10 @@ public partial class MainWindow : Window
             foreach (var s in shownCats) center.Children.Add(CatCell(s));
         }
         // Paragon's NET EFFECT (captured live): total attributes + level, in the doll centre where the
-        // character stands — their stat block. Only on "My Gear"/"All" (your character), not the Target view.
+        // character stands — their stat block. Shown in EVERY view (it's the character, not the view), and
+        // it keeps the Target view's column geometry identical to My Gear.
         var pc = EffectiveLive().Character;
-        if (_dollView is "mine" or "all" && pc.Any)
+        if (pc.Any)
         {
             center.Margin = new Thickness(20, 2, 20, 0); center.MinWidth = 168;
             if (center.Children.Count > 0) center.Children.Add(new Border { Height = 12 });
@@ -3452,6 +3467,77 @@ public partial class MainWindow : Window
         // the 2 star columns need a real width or they collapse to a thin, tall strip in the free-floating popup
         cc.MinWidth = 640; cc.MaxWidth = 820;
         _hoverPopup.Child = cc;   // no outer wrapper — each panel has its own opaque background
+        _hoverPopup.IsOpen = true;
+    }
+
+    // hover card for the All Items view: the hovered item side-by-side with what's CURRENTLY EQUIPPED in
+    // that slot, with a numeric delta per shared affix — "what changes if I swap to this?"
+    void ShowItemCompareHover(Item cand, UIElement target)
+    {
+        // the equipped piece this candidate would replace: weakest presence vs its slot's target set
+        var sb = DiffEngine.SlotBaseName(cand.Slot);
+        var slotTargets = (_target?.Gear ?? new()).Where(g => DiffEngine.SlotBaseName(g.Slot) == sb).ToList();
+        var equipped = EffectiveLive().Gear
+            .Where(x => DiffEngine.SlotBaseName(x.Slot) == sb)
+            .OrderBy(x => slotTargets.Count > 0 ? slotTargets.Max(g => DiffEngine.PresenceCount(g, x)) : 0)
+            .FirstOrDefault();
+
+        var sp = new StackPanel { MinWidth = 460, MaxWidth = 640 };
+        var hdr = new Grid { Margin = new Thickness(0, 0, 0, 7) };
+        hdr.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        hdr.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var ch = TBs(cand.Name, RarityBrush(cand.Rarity), 13, true); ch.TextWrapping = TextWrapping.Wrap;
+        var eh = TBs(equipped != null ? "EQUIPPED · " + equipped.Name : "EQUIPPED · (slot empty)",
+            equipped != null ? RarityBrush(equipped.Rarity) : Faint, 13, equipped != null);
+        eh.TextWrapping = TextWrapping.Wrap; eh.Margin = new Thickness(14, 0, 0, 0);
+        Grid.SetColumn(ch, 0); hdr.Children.Add(ch);
+        Grid.SetColumn(eh, 1); hdr.Children.Add(eh);
+        sp.Children.Add(hdr);
+        if (cand.ItemPower > 0 || equipped?.ItemPower > 0)
+            sp.Children.Add(TB($"IP {cand.ItemPower?.ToString() ?? "—"}  vs  {equipped?.ItemPower?.ToString() ?? "—"}",
+                Soft, 10.5, false, new Thickness(0, 0, 0, 6)));
+
+        foreach (var r in ItemCompare.Rows(cand, equipped))
+        {
+            var row = new Grid { Margin = new Thickness(0, 1.5, 0, 1.5) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });   // affix
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });                     // this item
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });                     // equipped
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });                     // delta
+            var lbl = TB(r.Label, Soft, 11.5, false); lbl.TextWrapping = TextWrapping.Wrap;
+            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
+            var cv = TB(r.CandidateText, r.CandidateText == "—" ? Faint : Ink, 11.5, r.CandidateText != "—");
+            cv.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(cv, 1); row.Children.Add(cv);
+            var ev = TB(r.EquippedText, r.EquippedText == "—" ? Faint : Soft, 11.5, false);
+            ev.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(ev, 2); row.Children.Add(ev);
+            if (r.Delta is double d && Math.Abs(d) > 0.0001)
+            {
+                var dv = TB((d > 0 ? "▲ +" : "▼ ") + d.ToString("#,0.##") + (r.DeltaIsPercent ? "%" : ""),
+                    d > 0 ? Green : Crimson, 11.5, true);
+                dv.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(dv, 3); row.Children.Add(dv);
+            }
+            sp.Children.Add(row);
+        }
+        if (!string.IsNullOrEmpty(cand.Aspect)) sp.Children.Add(TB("Imprinted: " + cand.Aspect, Steel, 10.5, false, new Thickness(0, 6, 0, 0)));
+
+        var card = new Border
+        {
+            Background = B("#15151A"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 11, 14, 12), Child = sp,
+        };
+        if (target is FrameworkElement fe2)
+        {
+            try
+            {
+                var pt = fe2.TransformToAncestor(this).Transform(new Point(0, 0));
+                _hoverPopup.Placement = pt.X + fe2.ActualWidth + 680 > ActualWidth
+                    ? System.Windows.Controls.Primitives.PlacementMode.Left
+                    : System.Windows.Controls.Primitives.PlacementMode.Right;
+            }
+            catch { }
+        }
+        _hoverPopup.PlacementTarget = target;
+        _hoverPopup.Child = card;
         _hoverPopup.IsOpen = true;
     }
 

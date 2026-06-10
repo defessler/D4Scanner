@@ -89,6 +89,24 @@ public static class DiffEngine
         return met;
     }
 
+    /// <summary>How many of a target slot's affixes are PRESENT on the item at ANY value (no roll/threshold
+    /// gate; each item affix matched once). The primary upgrade signal: having the right affix at a low roll
+    /// beats not having it at all — rolls can be masterworked up, missing affixes can only be enchanted in
+    /// one at a time.</summary>
+    public static int PresenceCount(TargetGear g, Item item)
+    {
+        var pool = item.Affixes;
+        var used = new bool[pool.Count];
+        int present = 0;
+        foreach (var aff in g.Affixes)
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; present++; break; }
+            }
+        return present;
+    }
+
     /// <summary>Average roll quality (0-100) of the target slot's affixes that <paramref name="item"/> actually
     /// has (matched once each). 0 when it has none of them; affixes with no range count as a perfect 100. An
     /// upgrade sub-tiebreak between items that meet the same number of slot affixes.</summary>

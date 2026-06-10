@@ -4,20 +4,31 @@ namespace D4Scanner.Core;
 public sealed class ScoredItem
 {
     public Item Item { get; init; } = new();
-    public int SlotMet { get; set; }         // PRIMARY: target affixes for its own slot the item meets ("perfect set")
+    public int SlotPresent { get; set; }     // PRIMARY: target affixes PRESENT at any value
+    public int SlotMet { get; set; }         // of those, how many also meet the roll threshold
     public int SlotTarget { get; set; }      // affixes the perfect set for that slot wants
-    public double SlotQuality { get; set; }  // avg roll quality (0-100) of the slot affixes it has — sub-tiebreak
-    public double GoalScore { get; set; }    // SECONDARY: contribution toward the overall combined-affix goal
+    public double SlotQuality { get; set; }  // avg roll quality (0-100) of the slot affixes it has
+    public double GoalScore { get; set; }    // contribution toward the overall combined-affix goal
+    public bool Fixable { get; set; }        // exactly ONE affix short of the perfect set — one enchant fixes it
+    public bool AspectBlocked { get; set; }  // unique item where the build wants an imprinted aspect (can't imprint a unique)
     public bool IsUpgrade { get; set; }      // beats the currently equipped piece in its slot
-    public int EquippedMet { get; set; }     // met count of the equipped piece in that slot (0 if empty)
+    public int EquippedPresent { get; set; } // present-count of the equipped piece in that slot (0 if empty)
     public string? SlotLabel { get; set; }   // the matched target slot (label/slot)
+
+    /// <summary>Affix completeness with the enchant credit: one wrong affix is fixable at the Occultist, so a
+    /// 3/4 item competes in the 4/4 tier (roll quality then separates them).</summary>
+    public int EffectivePresent => SlotPresent + (Fixable ? 1 : 0);
 }
 
 /// <summary>
-/// Scores owned items against a target build for upgrade-hunting. Two-tier, per the design:
-///   1. PRIMARY — how well the item completes the perfect affix set for its own slot.
-///   2. SECONDARY — contribution of its affixes toward the overall combined-affix goal.
-/// Sorted best-upgrade-first so the most useful pieces float to the top. UI-free / testable.
+/// Scores owned items against a target build for upgrade-hunting. Ordering, per the user's model:
+///   1. Upgrades first — anything beating the equipped piece sorts above everything that doesn't.
+///   2. Affix COUNT dominates value: more correct affixes at any roll beats fewer at high rolls —
+///      EXCEPT one-affix-short items, which can be enchanted to complete the set and so compete in the
+///      complete tier (with roll quality as the separator).
+///   3. A unique can never be an upgrade over a non-unique when the build wants an aspect on that slot:
+///      aspects can't be imprinted onto uniques.
+/// UI-free / headlessly testable.
 /// </summary>
 public static class UpgradeScorer
 {
@@ -37,20 +48,26 @@ public static class UpgradeScorer
     }
 
     /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build.
-    /// The bar an upgrade must beat is the best equipped piece's met-count for that slot (from <paramref name="live"/>).</summary>
+    /// The bar an upgrade must beat is the equipped piece's effective presence for that slot.</summary>
     public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, double gate)
     {
         var goal = GoalWeights(target);
 
-        // best equipped met-count per slot base (the bar an upgrade must beat)
-        var eqMet = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // per slot base: the equipped piece's best (effective, real) presence + whether a non-unique sits there
+        var eqBest = new Dictionary<string, (int eff, int present)>(StringComparer.OrdinalIgnoreCase);
+        var eqNonUnique = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var g in target.Gear)
         {
             var sb = DiffEngine.SlotBaseName(g.Slot);
-            int best = live.Gear.Where(x => DiffEngine.SlotBaseName(x.Slot) == sb)
-                                .Select(x => DiffEngine.ScoreSlot(g, x, gate))
-                                .DefaultIfEmpty(0).Max();
-            if (best > eqMet.GetValueOrDefault(sb)) eqMet[sb] = best;
+            foreach (var x in live.Gear.Where(x => DiffEngine.SlotBaseName(x.Slot) == sb))
+            {
+                int present = DiffEngine.PresenceCount(g, x);
+                bool fix = !x.IsUnique && g.Affixes.Count > 1 && present == g.Affixes.Count - 1;
+                var pair = (eff: present + (fix ? 1 : 0), present);
+                var cur = eqBest.GetValueOrDefault(sb);
+                if (pair.eff > cur.eff || (pair.eff == cur.eff && pair.present > cur.present)) eqBest[sb] = pair;
+                if (!x.IsUnique) eqNonUnique[sb] = true;
+            }
         }
 
         var result = new List<ScoredItem>();
@@ -59,15 +76,21 @@ public static class UpgradeScorer
             var sb = DiffEngine.SlotBaseName(it.Slot);
 
             // best matching target slot for this item (rings / multi-weapon slots can have several)
-            TargetGear? bestSlot = null; int bestMet = -1; double bestQ = 0; int bestTarget = 0;
+            TargetGear? bestSlot = null; int bestPresent = -1; int bestMet = 0; double bestQ = 0;
             foreach (var g in target.Gear.Where(g => DiffEngine.SlotBaseName(g.Slot) == sb))
             {
-                int met = DiffEngine.ScoreSlot(g, it, gate);
+                int present = DiffEngine.PresenceCount(g, it);
                 double q = DiffEngine.SlotQuality(g, it);
-                if (met > bestMet || (met == bestMet && q > bestQ))
-                { bestSlot = g; bestMet = met; bestQ = q; bestTarget = g.Affixes.Count; }
+                if (present > bestPresent || (present == bestPresent && q > bestQ))
+                { bestSlot = g; bestPresent = present; bestMet = DiffEngine.ScoreSlot(g, it, gate); bestQ = q; }
             }
-            int slotMet = Math.Max(0, bestMet);
+            int slotPresent = Math.Max(0, bestPresent);
+            int slotTarget = bestSlot?.Affixes.Count ?? 0;
+            bool fixable = bestSlot != null && slotTarget > 1 && slotPresent == slotTarget - 1;
+            // a unique can't take an imprinted aspect — if the build wants one on this slot, the unique
+            // can never complete it (and enchanting uniques is off the table, so no fixable credit either)
+            bool aspectBlocked = it.IsUnique && !string.IsNullOrEmpty(bestSlot?.Aspect);
+            if (it.IsUnique) fixable = false;
 
             // overall-goal contribution: sum the build-wide weight of each affix the item carries (each affix once)
             double goalScore = 0;
@@ -75,20 +98,29 @@ public static class UpgradeScorer
                 foreach (var kv in goal)
                     if (DiffEngine.PhraseMatch(kv.Key, a.Text)) { goalScore += kv.Value; break; }
 
-            int eq = eqMet.GetValueOrDefault(sb);
+            var bar = eqBest.GetValueOrDefault(sb);
+            int effective = slotPresent + (fixable ? 1 : 0);
+            // beats the equipped piece when it's more complete (with the enchant credit), or equally
+            // complete but REALLY complete where the equipped one merely could be after an enchant
+            bool beats = effective > bar.eff || (effective == bar.eff && slotPresent > bar.present);
+            bool upgrade = bestSlot != null && beats
+                        && !(aspectBlocked && eqNonUnique.GetValueOrDefault(sb));
             result.Add(new ScoredItem
             {
-                Item = it, SlotMet = slotMet, SlotTarget = bestTarget, SlotQuality = bestQ,
-                GoalScore = goalScore, EquippedMet = eq,
-                IsUpgrade = bestSlot != null && slotMet > eq,
+                Item = it, SlotPresent = slotPresent, SlotMet = bestMet, SlotTarget = slotTarget,
+                SlotQuality = bestQ, GoalScore = goalScore, Fixable = fixable, AspectBlocked = aspectBlocked,
+                EquippedPresent = bar.present, IsUpgrade = upgrade,
                 SlotLabel = bestSlot?.Label ?? bestSlot?.Slot,
             });
         }
 
         return result
-            .OrderByDescending(s => s.SlotMet)         // perfect-set completion dominates
-            .ThenByDescending(s => s.GoalScore)        // then overall-goal contribution
-            .ThenByDescending(s => s.SlotQuality)      // then roll quality
+            .OrderByDescending(s => s.IsUpgrade)           // upgrades always above non-upgrades
+            .ThenByDescending(s => s.EffectivePresent)     // affix count (with the one-enchant credit) dominates
+            .ThenByDescending(s => s.SlotMet)              // within the tier: rolls that already meet thresholds…
+            .ThenByDescending(s => s.SlotQuality)          // …then raw roll quality (lets a hot 3/4 beat a cold 4/4)
+            .ThenByDescending(s => s.SlotPresent)          // …then real presence over the enchant credit
+            .ThenByDescending(s => s.GoalScore)            // then overall-goal contribution
             .ThenByDescending(s => s.Item.ItemPower ?? 0)
             .ThenBy(s => s.Item.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
