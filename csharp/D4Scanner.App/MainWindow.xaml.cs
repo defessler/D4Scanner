@@ -4486,11 +4486,10 @@ public partial class MainWindow : Window
         var bar = RollBar(p.ProgressPct, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
-        // value column: progress toward the combined goal as bare "current / target" numbers — the target
-        // is estimated ("~") when the build gives no explicit magnitude for some pieces, so the column
-        // always reads current/target rather than a lone number
+        // value column: current vs the PERFECT goal (max roll × pieces) — a real number, e.g. "x13% / x72%".
+        // Falls back to the bare current value only when no piece voiced a range to read the max from.
         string vtext =
-            p.WantsTotal > 0        ? $"{p.Fmt(p.HaveTotal)} / {(p.WantsEstimated ? "~" : "")}{p.Fmt(p.WantsTotal)}"
+            p.WantsTotal > 0        ? $"{p.Fmt(p.HaveTotal)} / {p.Fmt(p.WantsTotal)}"
           : p.HaveAny               ? p.Fmt(p.HaveTotal)
           : p.Status == "missing"   ? "missing"
           : "";
