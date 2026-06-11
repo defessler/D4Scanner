@@ -11,7 +11,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 | Command | What it does |
 |---|---|
 | `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
-| `/test` | Run the Core test suite (~543 assertions); report pass/fail and any failing names |
+| `/test` | Run the Core test suite (~563 assertions); report pass/fail and any failing names |
 | `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
 | `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
 | `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
@@ -24,7 +24,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 # Build (must be error-free before shipping)
 dotnet build csharp/D4Scanner.App --no-incremental -c Release
 
-# Tests (~543 assertions; must all pass)
+# Tests (~563 assertions; must all pass)
 dotnet run --project csharp/D4Scanner.Tests
 
 # Publish local exe (use to smoke-test before a release commit)
@@ -53,7 +53,9 @@ csharp/
     GearParser.cs           TTS log lines → Item objects; also ParseTooltipLines() for OCR
     LogWatcher.cs           tails d4_tts.log; emits LiveBuild; Diagnose() capture-health report
     LiveGearResolver.cs     pure live-gear merge (Tts>Ocr) + paper-doll weapon de-dup decision
-    DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring
+    DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring; Greater-Affix helpers
+    UpgradeScorer.cs        scores owned items vs the build (IsUpgrade/RawUpgrade/GA/salvage)
+    Verdicts.cs             per-item verdict: Equip/Fixable/KeepSalvage/KeepDupe/Stash/Junk + action
     BuildGuide.cs           prioritised "Do Next" steps (FIND/GET/IMPROVE/TEMPER/…)
     Substitutes.cs          best-owned stand-ins + Now/Better/Best ladder
     Activities.cs           farming/crafting recommendations (reads SeasonPack)

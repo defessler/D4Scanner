@@ -1854,6 +1854,78 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         !UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCandSafe }, 75)[0].FixDestroysGA);
 }
 
+// ---- v0.30: per-item verdicts ----
+{
+    ScoredItem SC(string name, Action<ScoredItem> set)
+    {
+        var s = new ScoredItem { Item = new Item { Name = name, Slot = "helm" }, SlotLabel = "Helm", SlotTarget = 4 };
+        set(s); return s;
+    }
+    var emptyCtx = new VerdictContext(new TargetBuild(), "Rogue", new List<Item>());
+
+    // 1. EQUIP — raw-beats the equipped piece
+    var vEquip = Verdicts.For(SC("Up", s => { s.RawUpgrade = true; s.IsUpgrade = true; s.SlotPresent = 4; s.EquippedEff = 2; }), emptyCtx);
+    Eq("Verdict EQUIP: raw upgrade ⇒ Equip", Verdict.Equip, vEquip.V);
+    Check("Verdict EQUIP: action says equip", vEquip.Action == "Equip it");
+
+    // 2. FIXABLE — wins only via the enchant credit (IsUpgrade but not RawUpgrade)
+    var vFix = Verdicts.For(SC("Fix", s => { s.IsUpgrade = true; s.RawUpgrade = false; s.Fixable = true; }), emptyCtx);
+    Eq("Verdict FIXABLE: credited-only upgrade ⇒ Fixable", Verdict.Fixable, vFix.V);
+    Check("Verdict FIXABLE: action is an enchant", vFix.Action!.Contains("Enchant"));
+    var vFixGA = Verdicts.For(SC("FixGA", s => { s.IsUpgrade = true; s.RawUpgrade = false; s.Fixable = true; s.FixDestroysGA = true; }), emptyCtx);
+    Check("Verdict FIXABLE: warns when the enchant would hit a Greater Affix", vFixGA.Action!.Contains("Greater Affix"));
+
+    // 3. KEEP-SALVAGE — aspect upgrades the Codex (not a gear upgrade)
+    var vSalv = Verdicts.For(SC("Salv", s => { s.SalvageAspect = "Edgemaster's Aspect"; }), emptyCtx);
+    Eq("Verdict SALVAGE: salvage aspect ⇒ KeepSalvage", Verdict.KeepSalvage, vSalv.V);
+    Check("Verdict SALVAGE: reason names the aspect", vSalv.Reason.Contains("Edgemaster"));
+
+    // 4. KEEP-DUPE — a duplicate Mythic → Spark
+    var mythicItem = new Item { Name = "Shroud of False Death", Slot = "chest", IsMythic = true, Rarity = "Mythic Unique" };
+    var dupeCtx = new VerdictContext(new TargetBuild(), "Rogue", new List<Item> { mythicItem, new Item { Name = "Shroud of False Death", Slot = "chest" } });
+    var vDupeM = Verdicts.For(new ScoredItem { Item = mythicItem, SlotLabel = "Chest" }, dupeCtx);
+    Eq("Verdict DUPE: duplicate Mythic ⇒ KeepDupe", Verdict.KeepDupe, vDupeM.V);
+    Check("Verdict DUPE: Mythic action mentions a Spark", vDupeM.Action!.Contains("Spark"));
+
+    // 4b. KEEP-DUPE — a build-relevant duplicate Unique → cube-recycle
+    var uniTarget = new TargetBuild { Uniques = { new TargetUnique { Name = "Etna's Lost Dagger" } } };
+    var uniItem = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", IsUnique = true, Rarity = "Unique" };
+    var uniCtx = new VerdictContext(uniTarget, "Rogue", new List<Item> { uniItem, new Item { Name = "Etna's Lost Dagger", Slot = "weapon" } });
+    var vDupeU = Verdicts.For(new ScoredItem { Item = uniItem, SlotLabel = "Weapon" }, uniCtx);
+    Eq("Verdict DUPE: 2 copies of a build Unique ⇒ KeepDupe", Verdict.KeepDupe, vDupeU.V);
+    Check("Verdict DUPE: Unique action mentions cube-recycle", vDupeU.Action!.Contains("cube-recycle"));
+
+    // 5. STASH — an unmodified tradeable 2-GA god-roll
+    var godItem = new Item { Name = "God Ring", Slot = "ring", TemperUsed = 0, Quality = 0 };
+    var vStash = Verdicts.For(new ScoredItem { Item = godItem, SlotLabel = "Ring", GreaterCount = 2 }, emptyCtx);
+    Eq("Verdict STASH: unmodified 2-GA roll ⇒ Stash", Verdict.Stash, vStash.V);
+    Check("Verdict STASH: warns that crafting binds it", vStash.Action!.Contains("binds"));
+    // 5b. STASH — an off-class item with a GA
+    var altItem = new Item { Name = "Druid Helm", Slot = "helm", ClassLock = "Druid" };
+    var vAlt = Verdicts.For(new ScoredItem { Item = altItem, SlotLabel = "Helm", GreaterCount = 1 }, emptyCtx);
+    Eq("Verdict STASH: off-class GA item ⇒ Stash", Verdict.Stash, vAlt.V);
+    Check("Verdict STASH: routes to the right alt", vAlt.Action!.Contains("Druid"));
+
+    // 6. JUNK — nothing the build needs
+    var vJunk = Verdicts.For(SC("Junk", _ => { }), emptyCtx);
+    Eq("Verdict JUNK: no signal ⇒ Junk", Verdict.Junk, vJunk.V);
+    Check("Verdict JUNK: action is salvage", vJunk.Action!.Contains("Salvage"));
+
+    // ladder ORDER: a fixable upgrade that ALSO has a salvage aspect resolves to Fixable (gear path wins)
+    var vOrder = Verdicts.For(SC("Both", s => { s.IsUpgrade = true; s.RawUpgrade = false; s.Fixable = true; s.SalvageAspect = "Some Aspect"; }), emptyCtx);
+    Eq("Verdict order: Fixable outranks KeepSalvage", Verdict.Fixable, vOrder.V);
+
+    // integration: RawUpgrade is set by the scorer — a clean 2/2 candidate over an empty slot equips now
+    var intTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Boots", Affixes = {
+        new TargetAffix { Name = "Movement Speed" }, new TargetAffix { Name = "Maximum Life" } } } } };
+    var intCand = new Item { Name = "Good Boots", Slot = "boots", Affixes = {
+        new Affix { Text = "Movement Speed", Value = 16 }, new Affix { Text = "Maximum Life", Value = 900 } } };
+    var intScored = UpgradeScorer.Score(intTarget, new LiveBuild(), new[] { intCand }, 75)[0];
+    Check("Verdict integration: scorer sets RawUpgrade for an empty-slot fill", intScored.RawUpgrade);
+    Eq("Verdict integration: it reads as Equip", Verdict.Equip,
+        Verdicts.For(intScored, new VerdictContext(intTarget, "Rogue", new[] { intCand })).V);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
