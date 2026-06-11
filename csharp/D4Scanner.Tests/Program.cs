@@ -2031,6 +2031,54 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("Verdict floor: reason cites the 900 Ancestral floor", vLow.Reason.Contains("900 Ancestral floor"));
 }
 
+// ---- v0.33: name-based item icons (BaseIconIndex) ----
+{
+    // inline data.min.json-shaped fixture replicating the verified catalog shapes (real handles where known)
+    const string iconJson = @"{ ""items"": {
+        ""1HSword_Unique_Generic_002"":            { ""type"": ""Sword"", ""image"": 2397813553, ""name"": ""El'Druin, Sword of Justice"" },
+        ""Talisman_Charm_Unique_1HSword_002"":     { ""type"": ""Charm"", ""image"": 1033042452, ""name"": ""El'Druin, Sword of Justice"" },
+        ""Warplans_Currency"":                     { ""type"": ""Currency"", ""image"": 3589037566, ""name"": ""Marks of El'Druin"" },
+        ""1HSword_Legendary_Generic_001"":         { ""type"": ""Sword"", ""image"": 2397813484, ""name"": ""Obsidian Blade"" },
+        ""1HSword_Blade_001"":                     { ""type"": ""Sword"", ""image"": 5004, ""name"": ""Blade"" },
+        ""ChestArmor_Tunic_001"":                  { ""type"": ""ChestArmor"", ""image"": 5001, ""name"": ""Tunic"" },
+        ""1HSword_Common_Generic_Normal_001"":     { ""type"": ""Sword"", ""image"": 5002, ""name"": ""Sword"" },
+        ""1HSword_Gambling"":                      { ""type"": ""Sword"", ""image"": 5003, ""name"": ""Sword"" },
+        ""S01_CagedHeart"":                        { ""type"": ""Ring"", ""image"": 7001, ""name"": ""Caged Heart"" },
+        ""MalignantOrb_CagedHeart"":               { ""type"": ""Ring"", ""image"": 7002, ""name"": ""Caged Heart"" },
+        ""TwinMapped"":                            { ""type"": ""Sword"", ""image"": 6001, ""name"": ""Twin Item"" },
+        ""TwinUnmapped"":                          { ""type"": ""Sword"", ""image"": 6002, ""name"": ""Twin Item"" }
+    } }";
+    BaseIconIndex.HasMapping = h => h != 6002;   // everything mapped except the unmapped twin
+    BaseIconIndex.FromJson(iconJson);
+
+    // a unique not in any build resolves to its OWN art by name (the El'Druin failure) — sword, not the
+    // charm or currency twin
+    Eq("Icon: unique resolves by name to its sword art", 2397813553L, BaseIconIndex.HandleFor("El'druin, Sword Of Justice", "Sword", "weapon") ?? -1);
+    Eq("Icon: with no type, equipment beats the charm/currency twin", 2397813553L, BaseIconIndex.HandleFor("El'Druin, Sword of Justice", null, null) ?? -1);
+
+    // a prefixed legendary resolves to its base-name art (the Crushing Obsidian Blade failure)
+    Eq("Icon: affix-prefixed legendary → base-name handle", 2397813484L, BaseIconIndex.HandleFor("Crushing Obsidian Blade", "Sword", "weapon") ?? -1);
+    // longest-first: 'obsidian blade' wins over the shorter 'blade' base
+    Check("Icon: longest base-name wins (obsidian blade, not blade)", BaseIconIndex.HandleFor("Crushing Obsidian Blade", "Sword", "weapon") == 2397813484L);
+
+    // a magic '<base> of <suffix>' resolves via the prefix path
+    Eq("Icon: magic '<base> of …' → base handle (prefix path)", 5001L, BaseIconIndex.HandleFor("Tunic of the Stalwart", "ChestArmor", "chest") ?? -1);
+
+    // a random rare name (no catalog entry) falls back to the representative base-type handle
+    Eq("Icon: unknown rare name → type fallback handle", 5002L, BaseIconIndex.HandleFor("Grasping Fang", "Sword", "weapon") ?? -1);
+    Check("Icon: wholly unknown item → null (silhouette)", BaseIconIndex.HandleFor("Zzqq Nonsense", "Bogus", null) == null);
+
+    // disambiguation: an unmapped same-name twin is demoted (HasMapping), seasonal id deprioritized
+    Eq("Icon: prefers the EXTRACTABLE twin over the unmapped one", 6001L, BaseIconIndex.HandleFor("Twin Item", "Sword", "weapon") ?? -1);
+    Eq("Icon: prefers the non-seasonal twin on a name tie", 7002L, BaseIconIndex.HandleFor("Caged Heart", "Ring", "ring") ?? -1);
+
+    // Reset clears the memo so a re-import is reflected
+    BaseIconIndex.FromJson(@"{ ""items"": { ""1HSword_Unique_Generic_002"": { ""type"": ""Sword"", ""image"": 99999, ""name"": ""El'Druin, Sword of Justice"" } } }");
+    Eq("Icon: re-import via FromJson clears the memo", 99999L, BaseIconIndex.HandleFor("El'Druin, Sword of Justice", "Sword", "weapon") ?? -1);
+    BaseIconIndex.Reset();
+    BaseIconIndex.HasMapping = h => GameDataIcons.HasMapping(h);   // restore the real predicate
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

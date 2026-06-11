@@ -96,6 +96,15 @@ public static class GameDataIcons
     /// not extractable. On a miss for a known item handle it kicks off a background extraction and raises
     /// <see cref="Changed"/> when the PNG lands (mirrors <see cref="IconResolver"/>'s download pattern).
     /// </summary>
+    /// <summary>True when this image handle is in the bundled atlas map — i.e. its art CAN be extracted
+    /// locally. Used to disambiguate same-name catalog entries toward one that can actually render.</summary>
+    public static bool HasMapping(long? image)
+    {
+        if (image is not long handle || handle <= 0 || handle > uint.MaxValue) return false;
+        LoadMap();
+        return _handleAtlas.ContainsKey((uint)handle);
+    }
+
     public static string? Get(long? image)
     {
         if (!Enabled || image is not long handle || handle <= 0 || handle > uint.MaxValue) return null;
