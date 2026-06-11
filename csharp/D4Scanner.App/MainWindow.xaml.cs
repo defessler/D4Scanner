@@ -2368,14 +2368,17 @@ public partial class MainWindow : Window
         bool scoring = _target != null;
         var scoreByFp = new Dictionary<string, ScoredItem>(StringComparer.Ordinal);
         var scoreOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+        var verdictByFp = new Dictionary<string, ItemVerdict>(StringComparer.Ordinal);
         if (scoring)
         {
             var ranked = UpgradeScorer.Score(_target!, live, items, _minRollPct);
+            var vctx = new VerdictContext(_target, activeClass, items);
             for (int i = 0; i < ranked.Count; i++)
             {
                 var fp = GearList.Fingerprint(ranked[i].Item);
                 scoreByFp[fp] = ranked[i];
                 scoreOrder[fp] = i;
+                verdictByFp[fp] = Verdicts.For(ranked[i], vctx);
             }
         }
 
@@ -2589,30 +2592,22 @@ public partial class MainWindow : Window
             var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center, MinWidth = 160 };
             var slotLbl = string.IsNullOrEmpty(item.Slot) ? "" : char.ToUpper(item.Slot[0]) + item.Slot[1..];
 
-            // build-aware header: slot + owner + (upgrade badge / slot-match caption) when a build is loaded
+            // build-aware header: slot + owner + verdict badge (equip / fix / keep / junk) when a build is loaded
             var fp = GearList.Fingerprint(item);
             scoreByFp.TryGetValue(fp, out var score);
+            verdictByFp.TryGetValue(fp, out var verdict);
             ownerByFp.TryGetValue(fp, out var owner);
             var headRow = new DockPanel();
-            if (score != null && score.IsUpgrade)
+            if (verdict != null)
             {
+                var (vlabel, vfg, vbg) = VerdictLook(verdict.V);
                 var badge = new Border
                 {
-                    Background = B("#1E3A24"), BorderBrush = Green, BorderThickness = new Thickness(1),
+                    Background = vbg, BorderBrush = vfg, BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(8, 0, 0, 0),
-                    Child = TB("▲ UPGRADE", Green, 9, true),
+                    Child = TB(vlabel, vfg, 9, true),
                 };
                 DockPanel.SetDock(badge, Dock.Right); headRow.Children.Add(badge);
-            }
-            if (score != null && score.SalvageAspect != null && !score.IsUpgrade)
-            {
-                var sBadge = new Border
-                {
-                    Background = B("#2A2418"), BorderBrush = Amber, BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(8, 0, 0, 0),
-                    Child = TB("♻ SALVAGE", Amber, 9, true),
-                };
-                DockPanel.SetDock(sBadge, Dock.Right); headRow.Children.Add(sBadge);
             }
             // at-a-glance delta vs the equipped piece this item would displace (the inline card has the detail)
             if (score != null && score.CompareSlotIndex != null)
@@ -2641,13 +2636,16 @@ public partial class MainWindow : Window
             details.Children.Add(nameBlock);
             if (score != null && score.SlotTarget > 0)
                 details.Children.Add(TB($"has {score.SlotPresent}/{score.SlotTarget} of this slot's affixes"
-                    + (score.Fixable ? "  ·  1 enchant from full" + (score.FixDestroysGA ? " — careful: it has a Greater Affix" : "") : "")
-                    + (score.AspectBlocked ? "  ·  unique — can't take the wanted aspect" : "")
-                    + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedPresent}" : ""),
-                    score.FixDestroysGA ? Amber : score.IsUpgrade ? Green : score.AspectBlocked ? Amber : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
-            if (score != null && score.SalvageAspect != null)
-                details.Children.Add(TB($"carries a wanted aspect: {score.SalvageAspect} — salvage to capture it",
-                    Amber, 9.5, false, new Thickness(0, 1, 0, 0)));
+                    + (score.AspectBlocked ? "  ·  unique — can't take the wanted aspect" : ""),
+                    Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
+            // the verdict's reason + concrete next action (the Phase-3 answer: equip / fix / keep / junk)
+            if (verdict != null)
+            {
+                var (_, vfg2, _) = VerdictLook(verdict.V);
+                var vline = TB(verdict.Reason + (verdict.Action != null ? $"  →  {verdict.Action}" : ""),
+                    verdict.V == Verdict.Junk ? Faint : vfg2, 9.5, verdict.V != Verdict.Junk, new Thickness(0, 1, 0, 0));
+                vline.TextWrapping = TextWrapping.Wrap; details.Children.Add(vline);
+            }
             if (item.ItemPower > 0 || ancestral || item.GreaterAffixCount > 0)
                 details.Children.Add(TB((ancestral ? "Ancestral  ·  " : "") + $"IP {item.ItemPower}"
                     + (item.GreaterAffixCount > 0 ? $"  ·  ★{item.GreaterAffixCount} GA" : "")
@@ -2846,6 +2844,18 @@ public partial class MainWindow : Window
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
         "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "RE-TEMPER" or "IMPROVE" => Amber, _ => Ink,
+    };
+
+    // Per-item verdict → badge label + foreground + background. Green = act now, amber = a cheap craft,
+    // steel = keep it, faint = junk.
+    (string label, Brush fg, Brush bg) VerdictLook(Verdict v) => v switch
+    {
+        Verdict.Equip       => ("▲ EQUIP",   Green, B("#1E3A24")),
+        Verdict.Fixable     => ("✚ FIXABLE", Amber, B("#2A2418")),
+        Verdict.KeepSalvage => ("♻ SALVAGE", Amber, B("#2A2418")),
+        Verdict.KeepDupe    => ("⧉ DUPE",    Steel, B("#1C2530")),
+        Verdict.Stash       => ("⌂ STASH",   Steel, B("#1C2530")),
+        _                   => ("✕ JUNK",    Faint, B("#1E1D24")),
     };
 
     // Verb chip: meaningful action verbs (FIND/EQUIP/IMPRINT/TEMPER/…) get a filled colour pill; the

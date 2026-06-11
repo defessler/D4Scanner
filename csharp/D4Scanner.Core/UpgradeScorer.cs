@@ -11,7 +11,8 @@ public sealed class ScoredItem
     public double GoalScore { get; set; }    // contribution toward the overall combined-affix goal
     public bool Fixable { get; set; }        // exactly ONE affix short of the perfect set — one enchant fixes it
     public bool AspectBlocked { get; set; }  // unique item where the build wants an imprinted aspect (can't imprint a unique)
-    public bool IsUpgrade { get; set; }      // beats the equipped piece it would displace
+    public bool IsUpgrade { get; set; }      // beats the equipped piece it would displace (enchant credit allowed)
+    public bool RawUpgrade { get; set; }     // beats it AS-IS, without spending an enchant (EQUIP-now)
     public string? SlotLabel { get; set; }   // the matched target slot (label/slot)
     /// <summary>The item carries an imprinted aspect the build WANTS — worth salvaging to capture the
     /// aspect into the codex even when its affixes aren't an upgrade. Null when not applicable.</summary>
@@ -159,6 +160,11 @@ public static class UpgradeScorer
                 || (effective == bar.eff && pickPresent > bar.present)
                 || (effective == bar.eff && pickPresent == bar.present && pickGaw > bar.gaw));
             bool upgrade = beats && !(aspectBlocked && bar.nonUnique);
+            // raw beat: better as-is, WITHOUT spending an enchant — more real presence (or, at a tie, more
+            // useful GAs). EQUIP-now items pass this; items that only win via the one-enchant credit don't.
+            bool rawBeats = pick >= 0 && (pickPresent > bar.present
+                || (pickPresent == bar.present && pickGaw > bar.gaw));
+            bool rawUpgrade = rawBeats && !(aspectBlocked && bar.nonUnique);
 
             // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping
             // even when its affixes aren't — salvaging captures the aspect into the codex. (Uniques can't
@@ -174,7 +180,7 @@ public static class UpgradeScorer
                 Item = it, SlotPresent = pickPresent, SlotMet = pickMet,
                 SlotTarget = bestSlot?.Affixes.Count ?? 0,
                 SlotQuality = pickQ, GoalScore = goalScore, Fixable = pickFix, AspectBlocked = aspectBlocked,
-                IsUpgrade = upgrade, SalvageAspect = salvage,
+                IsUpgrade = upgrade, RawUpgrade = rawUpgrade, SalvageAspect = salvage,
                 CompareSlotIndex = pick >= 0 ? pick : null,
                 EquippedPresent = bar.present, EquippedEff = bar.eff,
                 EquippedQuality = bar.quality, EquippedEmpty = pick >= 0 && bar.empty,
