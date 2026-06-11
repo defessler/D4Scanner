@@ -4383,24 +4383,20 @@ public partial class MainWindow : Window
                 // rather than a slot-by-slot breakdown. The roll-up lives in Core (AffixAggregate) for testing.
                 foreach (var p in AffixAggregate.ForGear(c))
                     sp.Children.Add(AggregateRow(p));
-                // sockets / runes rolled up across all slots — the value column reads "done / total"
-                // and the caption names WHAT should be socketed where (the runes the build wants)
-                int sockTotal = c.Groups.Count(g => g.WantSockets.Count > 0);
-                if (sockTotal > 0)
+                // sockets / runes: a roll-up header (N/M slots filled + bar) then one scannable row PER slot
+                // showing the slot, what the build wants socketed there, and whether it's filled
+                var sockGroups = c.Groups.Where(g => g.WantSockets.Count > 0).ToList();
+                if (sockGroups.Count > 0)
                 {
-                    int sockDone = c.Groups.Count(g => g.WantSockets.Count > 0 && g.SocketsDone);
-                    var missingSocks = c.Groups
-                        .Where(g => g.WantSockets.Count > 0 && !g.SocketsDone)
-                        .Select(g => g.Name + ":  " + string.Join(" + ",
-                            g.WantSockets.Select(s2 => s2.Replace("Rune: ", "").Replace("Gem: ", ""))))
-                        .ToList();
+                    int sockDone = sockGroups.Count(g => g.SocketsDone);
                     sp.Children.Add(AggregateRow(new AffixProgress
                     {
-                        Name = "Sockets / runes", CountNoun = "slots filled",
-                        TargetPieces = sockTotal, HavePieces = sockDone, MetPieces = sockDone,
-                        HaveTotal = sockDone, WantsTotal = sockTotal, HaveAny = true,
-                        ProgressPct = sockTotal > 0 ? 100.0 * sockDone / sockTotal : 0,
-                    }, missingSocks.Count > 0 ? "wants  " + string.Join("    ", missingSocks) : null));
+                        Name = "Sockets / Runes", CountNoun = "slots filled",
+                        TargetPieces = sockGroups.Count, HavePieces = sockDone, MetPieces = sockDone,
+                        HaveTotal = sockDone, WantsTotal = sockGroups.Count, HaveAny = true,
+                        ProgressPct = 100.0 * sockDone / sockGroups.Count,
+                    }));
+                    foreach (var sg in sockGroups) sp.Children.Add(SocketSlotRow(sg));
                 }
             }
             else   // aspects / uniques / skills — all trackable (untrackable categories are filtered out above)
@@ -4561,6 +4557,39 @@ public partial class MainWindow : Window
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
         var val = TB(g.SocketStatus ?? (done ? "filled" : "empty"), done ? col : Soft, 12, done);
         val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
+        Grid.SetColumn(val, 3); row.Children.Add(val);
+        return row;
+    }
+
+    // strip "Rune:" / "Gem:" prefixes and collapse duplicates ("Royal Emerald" ×2 → "Royal Emerald ×2")
+    static string CleanSockets(IEnumerable<string> sockets) =>
+        string.Join("   +   ", sockets
+            .Select(s => s.Replace("Rune: ", "").Replace("Gem: ", "").Trim())
+            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Select(grp => grp.Count() > 1 ? $"{grp.First()} ×{grp.Count()}" : grp.First()));
+
+    // one scannable build-progress row per socket-wanting slot: slot name + the runes/gems it wants + fill status.
+    // Indented so it reads as a sub-item under the "Sockets / Runes" roll-up header.
+    UIElement SocketSlotRow(Group g)
+    {
+        bool done = g.SocketsDone;
+        var col = done ? Green : Amber;
+        var row = ProgressRowGrid();
+        var mark = TB(done ? "◆" : "◇", col, 12, true);
+        mark.VerticalAlignment = VerticalAlignment.Center; mark.Margin = new Thickness(14, 0, 0, 0);
+        Grid.SetColumn(mark, 0); row.Children.Add(mark);
+
+        var lblSp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        lblSp.Children.Add(TB(g.Name, Ink, 12, false));
+        var wl = TB(CleanSockets(g.WantSockets), B("#7FA8DC"), 11, false); wl.TextWrapping = TextWrapping.Wrap;
+        lblSp.Children.Add(wl);
+        Grid.SetColumn(lblSp, 1); row.Children.Add(lblSp);
+
+        var bar = RollBar(done ? 100 : 0, col, 158, 9); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        Grid.SetColumn(bar, 2); row.Children.Add(bar);
+
+        var val = TB(g.SocketStatus ?? (done ? "filled" : "needs runes"), done ? col : Soft, 11.5, false);
+        val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
     }
