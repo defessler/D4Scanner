@@ -175,6 +175,7 @@ public partial class MainWindow : Window
     // Per-character separation: each character has its own saved loadout. _activeSlug == null means
     // "unidentified" — auto-identification (roster + paragon) is armed and will bind the next character.
     ProfileStore _profiles = new(Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "profiles"));
+    readonly TombstoneStore _tombstones = new(Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "profiles", "tombstones.json"));
     string? _activeSlug;
     List<RosterEntry> _roster = new();
     List<string> _pendingChars = new();   // ambiguous identity: candidate profile SLUGS awaiting a manual pick
@@ -532,9 +533,11 @@ public partial class MainWindow : Window
         // Inventory merges per channel (TTS / OCR each publish only their own list — a wholesale swap
         // made items flip in and out of All Items depending on which channel scanned last).
         var inv = LiveGearResolver.MergeInventory(_live.Inventory, b.Inventory);
-        var invFps = new HashSet<string>(inv.Select(GearList.Fingerprint), StringComparer.Ordinal);
-        foreach (var d in demoted)
-            if (invFps.Add(GearList.Fingerprint(d))) { d.Equipped = false; inv.Add(d); }
+        inv = LiveGearResolver.MergeDemoted(inv, demoted);   // name|slot-guarded so a re-parse can't duplicate
+        // Tombstones: a re-equip/re-hover of a removed item un-hides it (observe gear + inv sightings); items
+        // the player deleted and hasn't re-acquired stay out of the pool instead of resurrecting each poll.
+        _tombstones.ObserveSightings(gear);
+        inv = _tombstones.Apply(inv);
         var merged = new LiveBuild
         {
             Gear      = gear,
@@ -834,6 +837,8 @@ public partial class MainWindow : Window
             if (prof != null)
             {
                 _live = prof.Live; _roster = _live.Roster ?? new();
+                _live.Inventory = LiveGearResolver.DedupeInventory(_live.Inventory);   // collapse any persisted dupes
+                _tombstones.PurgeOlderThan(TimeSpan.FromDays(30), DateTime.UtcNow.Ticks);
                 // prefer the active character's bound build over the last-used global one
                 if (prof.TargetPath is string tp && File.Exists(tp)) { _targetPath = tp; _lastImportInput = prof.TargetSource; }
                 return;
@@ -1019,10 +1024,7 @@ public partial class MainWindow : Window
     void SanitizeLive(string? cls)
     {
         _live.Gear = LiveGearResolver.SanitizeEquipped(_live.Gear, cls, out var demoted);
-        if (demoted.Count == 0) return;
-        var invFps = new HashSet<string>(_live.Inventory.Select(GearList.Fingerprint), StringComparer.Ordinal);
-        foreach (var d in demoted)
-            if (invFps.Add(GearList.Fingerprint(d))) { d.Equipped = false; _live.Inventory.Add(d); }
+        _live.Inventory = LiveGearResolver.MergeDemoted(_live.Inventory, demoted);   // name|slot-guarded
     }
 
     void PickLog()
@@ -2356,7 +2358,8 @@ public partial class MainWindow : Window
         // character — excluding only what THIS character wears now, and anything its class can't equip.
         var activeClass = _profiles.Get(_activeSlug)?.Class ?? ClassDetector.Detect(live);
         var others = _profiles.All().Where(p => p.Slug != _activeSlug && CharSelectParser.IsValidCharName(p.Name)).ToList();
-        var owned = GearList.SharedCandidates(live, others, activeClass);
+        var owned = GearList.SharedCandidates(live, others, activeClass)
+            .Where(o => !_tombstones.ShouldHide(o.Item)).ToList();   // hide items the player cleared (until re-sighted)
         var items = owned.Select(o => o.Item).ToList();
         var ownerByFp = owned.Where(o => o.Owner != null)
             .ToDictionary(o => GearList.Fingerprint(o.Item), o => o.Owner!, StringComparer.Ordinal);
@@ -2390,6 +2393,7 @@ public partial class MainWindow : Window
         var sortMode = _invSort ?? (scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired);
         string? expandedFp = null;   // fingerprint of the row whose inline comparison is open
         FrameworkElement? expandedCard = null;   // the inserted compare card (for BringIntoView)
+        var currentView = new List<Item>();   // the currently-filtered/sorted rows (for "Clear shown")
 
         // the SAME equipped-piece-per-target-slot assignment the diff/badges use, so the inline
         // compare card and the upgrade badge always describe the same equipped item
@@ -2401,6 +2405,11 @@ public partial class MainWindow : Window
         var xb = MakeLink("✕", Soft); xb.FontSize = 15; DockPanel.SetDock(xb, Dock.Right);
         xb.MouseLeftButtonUp += (_, _) => Close();
         hd.Children.Add(xb);
+        // "Clear shown" — tombstone the currently-filtered rows so the app stops listing items you no longer
+        // own (salvaged / traded / dropped). With a search active it clears just that subset; otherwise all.
+        var clear = MakeLink("🗑 clear shown", Soft); clear.FontSize = 11.5; clear.Margin = new Thickness(0, 5, 18, 0);
+        DockPanel.SetDock(clear, Dock.Right); hd.Children.Add(clear);
+        clear.MouseLeftButtonUp += (_, _) => ClearShownItems(currentView, slugByFp);
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
@@ -2433,6 +2442,7 @@ public partial class MainWindow : Window
             var view = sortMode == GearSortMode.Upgrade && scoring
                 ? filtered.OrderBy(i => scoreOrder.GetValueOrDefault(GearList.Fingerprint(i), int.MaxValue)).ToList()
                 : GearList.Sort(filtered, sortMode);
+            currentView = view;
             listPanel.Children.Clear();
             expandedCard = null;
             foreach (var it in view)
@@ -2447,6 +2457,38 @@ public partial class MainWindow : Window
                 }
             }
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
+        }
+
+        // tombstone every currently-shown row (the filtered view) so items the player no longer owns stop
+        // listing — and can't resurrect on the next log poll. Physically removes them from the owning profile
+        // too; a re-hover in-game un-hides them.
+        void ClearShownItems(List<Item> view, Dictionary<string, string> slugMap)
+        {
+            if (view.Count == 0) return;
+            var ans = System.Windows.MessageBox.Show(
+                $"Remove {view.Count} item{(view.Count == 1 ? "" : "s")} from All Items?\n\nThey'll come back if you hover them in-game again.",
+                "Clear shown items", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+            if (ans != System.Windows.MessageBoxResult.Yes) return;
+
+            var profCache = new Dictionary<string, CharacterProfile>();
+            bool liveTouched = false;
+            foreach (var it in view)
+            {
+                var fp = GearList.Fingerprint(it);
+                _tombstones.Add(it);
+                if (slugMap.TryGetValue(fp, out var ownerSlug))
+                {
+                    if (!profCache.TryGetValue(ownerSlug, out var p)) { p = _profiles.Get(ownerSlug); if (p != null) profCache[ownerSlug] = p; }
+                    if (p != null) { p.Live.Gear.RemoveAll(x => GearList.Fingerprint(x) == fp); p.Live.Inventory.RemoveAll(x => GearList.Fingerprint(x) == fp); }
+                }
+                else { _live.Gear.RemoveAll(x => GearList.Fingerprint(x) == fp); _live.Inventory.RemoveAll(x => GearList.Fingerprint(x) == fp); liveTouched = true; }
+                var key = ItemToSection(it).Key;
+                _pinned.Remove(key); _inventorySections.Remove(key);
+            }
+            _tombstones.Save();
+            foreach (var p in profCache.Values) _profiles.Save(p);
+            if (liveTouched) SaveLive();
+            Close(); Render(); ShowInventoryModal();
         }
 
         void BuildChips()
@@ -2684,6 +2726,8 @@ public partial class MainWindow : Window
             delBtn.MouseLeftButtonUp += (_, e) =>
             {
                 e.Handled = true;   // a delete must not also toggle the row's inline comparison
+                _tombstones.Add(capturedItem);   // so the next log poll can't resurrect it (until re-sighted)
+                _tombstones.Save();
                 if (slugByFp.TryGetValue(fp, out var ownerSlug))
                 {
                     // the capture lives in ANOTHER character's profile — delete it there and persist

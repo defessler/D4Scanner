@@ -2079,6 +2079,80 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     BaseIconIndex.HasMapping = h => GameDataIcons.HasMapping(h);   // restore the real predicate
 }
 
+// ---- v0.34: tombstones + inventory dedup ----
+{
+    Item Mk(string name, string slot, long ticks, ItemSource src = ItemSource.Tts) =>
+        new() { Name = name, Slot = slot, LastScannedTicks = ticks, Source = src };
+    long t0 = 1_000_000_000L;
+    var tmpDir = Path.Combine(Path.GetTempPath(), "d4s_tomb_" + Guid.NewGuid().ToString("N"));
+    var tombPath = Path.Combine(tmpDir, "tombstones.json");
+
+    var ts = new TombstoneStore(tombPath);
+    var ring = Mk("Tal Ring", "ring", t0);
+    ts.Add(ring, t0 + 100);
+    Check("Tombstone: hides an item whose sighting is no newer than the tombstone", ts.ShouldHide(Mk("Tal Ring", "ring", t0)));
+    Check("Tombstone: a NEWER sighting is NOT hidden (player re-acquired it)", !ts.ShouldHide(Mk("Tal Ring", "ring", t0 + 500)));
+    // Add clamps the tombstone past the item's own sighting, so a same-tick re-emission can't slip through
+    var tsClamp = new TombstoneStore(Path.Combine(tmpDir, "b.json"));
+    tsClamp.Add(Mk("X", "helm", t0 + 9_000_000_000L), t0);   // 'now' is BEFORE the item's sighting
+    Check("Tombstone: Add clamps tick past the item's own sighting", tsClamp.ShouldHide(Mk("X", "helm", t0 + 9_000_000_000L)));
+
+    // ObserveSightings purges the tombstone when a newer sighting shows up (re-hover/re-equip)
+    Eq("Tombstone: a newer sighting purges the tombstone", 1, ts.ObserveSightings(new[] { Mk("Tal Ring", "ring", t0 + 500) }));
+    Check("Tombstone: …and the item is visible afterwards", !ts.ShouldHide(Mk("Tal Ring", "ring", t0)));
+
+    // Apply = observe + filter
+    var ts3 = new TombstoneStore(Path.Combine(tmpDir, "c.json"));
+    ts3.Add(Mk("Junk Boots", "boots", t0), t0 + 100);
+    var applied = ts3.Apply(new List<Item> { Mk("Junk Boots", "boots", t0), Mk("Good Helm", "helm", t0) });
+    Check("Tombstone Apply: hides the tombstoned item, keeps the rest", applied.Count == 1 && applied[0].Name == "Good Helm");
+
+    // cap at 500 — oldest evicted
+    var tsCap = new TombstoneStore(Path.Combine(tmpDir, "cap.json"));
+    for (int i = 0; i < 520; i++) tsCap.Add(Mk("Item" + i, "ring", t0 + i), t0 + 1000 + i);
+    Check("Tombstone: store caps at 500 entries", tsCap.Count <= 500);
+    Check("Tombstone: the oldest tombstone was evicted", !tsCap.ShouldHide(Mk("Item0", "ring", t0)));
+
+    // 30-day purge
+    var tsPurge = new TombstoneStore(Path.Combine(tmpDir, "purge.json"));
+    long now = t0 + TimeSpan.FromDays(40).Ticks;
+    tsPurge.Add(Mk("Old", "ring", t0), t0);                                   // 40 days old
+    tsPurge.Add(Mk("Recent", "ring", now - TimeSpan.FromDays(1).Ticks), now); // 1 day old
+    Eq("Tombstone: purge drops only the >30-day entry", 1, tsPurge.PurgeOlderThan(TimeSpan.FromDays(30), now));
+    Check("Tombstone: the recent tombstone survives the purge", tsPurge.ShouldHide(Mk("Recent", "ring", now - TimeSpan.FromDays(1).Ticks)));
+
+    // JSON round-trip
+    var tsRt = new TombstoneStore(Path.Combine(tmpDir, "rt.json"));
+    tsRt.Add(Mk("Persist Me", "amulet", t0), t0 + 50); tsRt.Save();
+    Check("Tombstone: survives a save/reload round-trip",
+        new TombstoneStore(Path.Combine(tmpDir, "rt.json")).ShouldHide(Mk("Persist Me", "amulet", t0)));
+
+    // RESURRECTION regression: a tombstoned item re-emitted by the merge path is still hidden by Apply
+    var tsRes = new TombstoneStore(Path.Combine(tmpDir, "res.json"));
+    var persisted = new List<Item> { Mk("Stash Item", "ring", t0) };
+    tsRes.Add(persisted[0], t0 + 100);
+    var merged = LiveGearResolver.MergeInventory(persisted, new List<Item> { Mk("Stash Item", "ring", t0) });
+    Check("Resurrection: the re-emitted tombstoned item is filtered back out", tsRes.Apply(merged).All(i => i.Name != "Stash Item"));
+    var mergedNewer = LiveGearResolver.MergeInventory(persisted, new List<Item> { Mk("Stash Item", "ring", t0 + 999) });
+    Check("Resurrection: a newer sighting returns the item and clears the tombstone",
+        tsRes.Apply(mergedNewer).Any(i => i.Name == "Stash Item"));
+
+    // DedupeInventory: same name|slot collapses, Tts over Ocr, newest wins
+    var deduped = LiveGearResolver.DedupeInventory(new List<Item> {
+        Mk("Dup Ring", "ring", t0, ItemSource.Ocr), Mk("Dup Ring", "ring", t0 + 200, ItemSource.Tts), Mk("Other", "helm", t0) });
+    Eq("DedupeInventory: collapses same name|slot", 2, deduped.Count);
+    Check("DedupeInventory: keeps the Tts copy over Ocr", deduped.First(i => i.Name == "Dup Ring").Source == ItemSource.Tts);
+
+    // MergeDemoted: name|slot guard prevents duplicate appends
+    var inv = new List<Item> { Mk("Demote Me", "boots", t0) };
+    Eq("MergeDemoted: a name|slot match is not appended twice", 1,
+        LiveGearResolver.MergeDemoted(inv, new List<Item> { Mk("Demote Me", "boots", t0 + 5) }).Count);
+    Eq("MergeDemoted: a genuinely new demoted item IS added", 2,
+        LiveGearResolver.MergeDemoted(inv, new List<Item> { Mk("New Boots", "boots", t0) }).Count);
+
+    try { Directory.Delete(tmpDir, recursive: true); } catch { }
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

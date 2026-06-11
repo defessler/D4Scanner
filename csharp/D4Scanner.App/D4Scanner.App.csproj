@@ -11,7 +11,7 @@
     <RootNamespace>D4Scanner.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.33.0</Version>
+    <Version>0.34.0</Version>
     <!-- AOT-compile published builds: cuts WPF cold-start JIT time substantially (publish-only; no effect on dotnet build) -->
     <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>

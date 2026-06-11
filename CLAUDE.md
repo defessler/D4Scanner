@@ -11,7 +11,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 | Command | What it does |
 |---|---|
 | `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
-| `/test` | Run the Core test suite (~597 assertions); report pass/fail and any failing names |
+| `/test` | Run the Core test suite (~614 assertions); report pass/fail and any failing names |
 | `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
 | `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
 | `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
@@ -24,7 +24,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 # Build (must be error-free before shipping)
 dotnet build csharp/D4Scanner.App --no-incremental -c Release
 
-# Tests (~597 assertions; must all pass)
+# Tests (~614 assertions; must all pass)
 dotnet run --project csharp/D4Scanner.Tests
 
 # Publish local exe (use to smoke-test before a release commit)
@@ -52,7 +52,8 @@ csharp/
     Models.cs               Item, Affix, LiveBuild, TargetBuild, UiContext, ItemSource
     GearParser.cs           TTS log lines → Item objects; also ParseTooltipLines() for OCR
     LogWatcher.cs           tails d4_tts.log; emits LiveBuild; Diagnose() capture-health report
-    LiveGearResolver.cs     pure live-gear merge (Tts>Ocr) + paper-doll weapon de-dup decision
+    LiveGearResolver.cs     live-gear merge (Tts>Ocr) + inventory dedup/merge + weapon de-dup
+    Tombstones.cs           account-wide name|slot record of items the player cleared (resurrect-proof)
     DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring; Greater-Affix helpers
     UpgradeScorer.cs        scores owned items vs the build (IsUpgrade/RawUpgrade/GA/salvage)
     Verdicts.cs             per-item verdict: Equip/Fixable/KeepSalvage/KeepDupe/Stash/Junk + action
