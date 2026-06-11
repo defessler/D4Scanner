@@ -11,7 +11,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 | Command | What it does |
 |---|---|
 | `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
-| `/test` | Run the Core test suite (~614 assertions); report pass/fail and any failing names |
+| `/test` | Run the Core test suite (~612 assertions); report pass/fail and any failing names |
 | `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
 | `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
 | `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
@@ -24,7 +24,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 # Build (must be error-free before shipping)
 dotnet build csharp/D4Scanner.App --no-incremental -c Release
 
-# Tests (~614 assertions; must all pass)
+# Tests (~612 assertions; must all pass)
 dotnet run --project csharp/D4Scanner.Tests
 
 # Publish local exe (use to smoke-test before a release commit)

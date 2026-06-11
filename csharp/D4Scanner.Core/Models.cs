@@ -293,6 +293,7 @@ public class ReqItem
     public bool Tempered { get; set; }        // this affix is a tempered (manually-forged) affix
     public double? ValueNum { get; set; }     // your rolled magnitude (numeric), for summing across pieces
     public double? TargetNum { get; set; }    // the magnitude the build wants on this piece (Min or threshold value); null if not derivable
+    public double? MaxNum { get; set; }       // the affix's MAX roll (perfect-roll ceiling) from the captured [min..max] range
     public bool IsMultiplier { get; set; }    // affix is an "x" multiplier (unit hint for aggregation)
     public bool IsPercent { get; set; }       // affix value is a percentage (unit hint for aggregation)
     public bool IsGreater { get; set; }       // the matched live affix is a Greater Affix (★)

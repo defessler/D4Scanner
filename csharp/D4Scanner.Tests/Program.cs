@@ -1064,55 +1064,53 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Id = "gear",
         Groups = new()
         {
-            // Helm: Max Life met (+1500, want +1000); DoT mult met (x50%, want x30%)
-            G(new ReqItem { Label = "Maximum Life", Status = "met", Done = true, ValueNum = 1500, TargetNum = 1000 },
-              new ReqItem { Label = "Damage Over Time Multiplier", Status = "met", Done = true, ValueNum = 50, TargetNum = 30, IsMultiplier = true, IsPercent = true }),
-            // Chest: Max Life under (+800, want +1000, 40% roll); DoT mult missing (no range -> no target)
-            G(new ReqItem { Label = "Maximum Life", Status = "under", Done = true, ValueNum = 800, TargetNum = 1000, RollPct = 40 },
+            // Helm: Max Life met (+1500, max roll 1600); DoT mult met (x50%, max roll 60)
+            G(new ReqItem { Label = "Maximum Life", Status = "met", Done = true, ValueNum = 1500, MaxNum = 1600 },
+              new ReqItem { Label = "Damage Over Time Multiplier", Status = "met", Done = true, ValueNum = 50, MaxNum = 60, IsMultiplier = true, IsPercent = true }),
+            // Chest: Max Life under (+800, max roll 1600, 40% roll); DoT mult missing (no range captured)
+            G(new ReqItem { Label = "Maximum Life", Status = "under", Done = true, ValueNum = 800, MaxNum = 1600, RollPct = 40 },
               new ReqItem { Label = "Damage Over Time Multiplier", Status = "missing", Done = false }),
         },
     };
     var agg = AffixAggregate.ForGear(cat);
     Eq("AffixAggregate: 2 distinct affixes", 2, agg.Count);
 
+    // Maximum Life: target = max roll (1600) × 2 pieces = 3200; have = 1500+800 = 2300
     var life = agg.First(a => a.Name == "Maximum Life");
     Eq("AffixAggregate: life target pieces", 2, life.TargetPieces);
     Eq("AffixAggregate: life have pieces (met+under)", 2, life.HavePieces);
     Eq("AffixAggregate: life met pieces", 1, life.MetPieces);
-    Eq("AffixAggregate: life under pieces", 1, life.UnderPieces);
     Eq("AffixAggregate: life haveTotal sum", 2300.0, life.HaveTotal);
-    Eq("AffixAggregate: life wantsTotal sum", 2000.0, life.WantsTotal);
-    Check("AffixAggregate: life wants fully known", life.WantsKnown);
+    Eq("AffixAggregate: life target = max roll × pieces (1600×2)", 3200.0, life.WantsTotal);
+    Check("AffixAggregate: life target is real (a max was captured)", life.WantsKnown);
     Eq("AffixAggregate: life status under (not all met)", "under", life.Status);
-    Eq("AffixAggregate: life progress (have/wants) clamps to 100", 100.0, life.ProgressPct);
+    Eq("AffixAggregate: life progress = 2300/3200", Math.Round(100.0 * 2300 / 3200, 6), Math.Round(life.ProgressPct, 6));
 
+    // DoT mult: target = max roll (60) × 2 pieces = 120 even though only 1 piece is owned; have = 50
     var dot = agg.First(a => a.Name == "Damage Over Time Multiplier");
     Eq("AffixAggregate: dot have pieces", 1, dot.HavePieces);
     Eq("AffixAggregate: dot haveTotal", 50.0, dot.HaveTotal);
-    Check("AffixAggregate: dot wants NOT fully known (a piece lacks a derivable target)", !dot.WantsKnown);
     Eq("AffixAggregate: dot multiplier prefix", "x", dot.Prefix);
     Eq("AffixAggregate: dot percent suffix", "%", dot.Suffix);
     Eq("AffixAggregate: dot fmt", "x50%", dot.Fmt(dot.HaveTotal));
-    // a PARTIALLY-known target is completed by extrapolation: the target-less piece is estimated at the
-    // known per-piece average (30), so wants = 30+30 = 60 and progress = 50/60 — flagged as estimated
-    Check("AffixAggregate: dot target marked estimated", dot.WantsEstimated);
-    Eq("AffixAggregate: dot estimated wantsTotal (30 known + 30 extrapolated)", 60.0, dot.WantsTotal);
-    Eq("AffixAggregate: dot progress vs estimated target (50/60)", Math.Round(100.0 * 50 / 60, 6), Math.Round(dot.ProgressPct, 6));
+    Check("AffixAggregate: dot target is the captured max roll (no estimate)", dot.WantsKnown);
+    Eq("AffixAggregate: dot target = max roll × pieces (60×2)", 120.0, dot.WantsTotal);
+    Eq("AffixAggregate: dot progress = 50/120", Math.Round(100.0 * 50 / 120, 6), Math.Round(dot.ProgressPct, 6));
 
-    // an affix with NO explicit target estimates from the rolls you HAVE: 1 of 2 pieces at +5 → target ~10
+    // an affix owned on one piece with a captured range: the max roll IS the target (10) on every wanted piece
     var q = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
-        { G(new ReqItem { Label = "Crit", Status = "met", Done = true, ValueNum = 5 },
+        { G(new ReqItem { Label = "Crit", Status = "met", Done = true, ValueNum = 5, MaxNum = 10 },
             new ReqItem { Label = "Crit", Status = "missing", Done = false }) } });
-    Check("AffixAggregate: no-target estimate flagged", q[0].WantsEstimated);
-    Eq("AffixAggregate: no-target estimate = per-piece have × pieces (5×2)", 10.0, q[0].WantsTotal);
-    Eq("AffixAggregate: no-target progress vs estimate (5/10)", 50.0, q[0].ProgressPct);
+    Check("AffixAggregate: max-roll target is real", q[0].WantsKnown);
+    Eq("AffixAggregate: target = max roll × pieces (10×2)", 20.0, q[0].WantsTotal);
+    Eq("AffixAggregate: progress vs max-roll goal (5/20)", 25.0, q[0].ProgressPct);
 
-    // an affix with no target AND no captured magnitudes still falls back to blended roll quality
+    // no captured range anywhere → no max target; the bar falls back to blended roll quality, value shows none
     var q2 = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()
         { G(new ReqItem { Label = "Crit", Status = "met", Done = true },
             new ReqItem { Label = "Crit", Status = "missing", Done = false }) } });
-    Check("AffixAggregate: no values at all -> no estimate", !q2[0].WantsEstimated);
-    Eq("AffixAggregate: no values at all -> quality-based progress (met 100, missing 0 -> 50)", 50.0, q2[0].ProgressPct);
+    Check("AffixAggregate: no range captured -> no max target", !q2[0].WantsKnown && q2[0].WantsTotal == 0);
+    Eq("AffixAggregate: no range -> quality-based progress (met 100, missing 0 -> 50)", 50.0, q2[0].ProgressPct);
 
     // a fully-missing affix reads as missing with zero progress
     var miss = AffixAggregate.ForGear(new Category { Id = "gear", Groups = new()

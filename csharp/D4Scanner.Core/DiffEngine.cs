@@ -120,6 +120,7 @@ public static class DiffEngine
                 req.Source = "tts";
                 req.Val = FmtVal(match);
                 req.ValueNum = match.Value;
+                req.MaxNum = match.Max;     // the perfect-roll ceiling, for the max-roll target comparison
                 req.IsMultiplier = match.IsMultiplier;
                 req.IsPercent = match.IsPercent;
                 req.IsGreater = match.IsGreater;
@@ -163,7 +164,7 @@ public static class DiffEngine
         (it.Affixes ?? new()).Select(a => new ReqItem
         {
             Label = a.Text, Done = true, Status = "met", Source = "tts",
-            Val = FmtVal(a), ValueNum = a.Value, IsMultiplier = a.IsMultiplier, IsPercent = a.IsPercent,
+            Val = FmtVal(a), ValueNum = a.Value, MaxNum = a.Max, IsMultiplier = a.IsMultiplier, IsPercent = a.IsPercent,
             RollPct = RollPct(a), IsGreater = a.IsGreater,
         }).ToList();
 
