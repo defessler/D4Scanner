@@ -1,0 +1,89 @@
+{
+  "season": 13,
+  "seasonName": "Season of Reckoning",
+  "expansion": "Lord of Hatred",
+  "patch": "3.0.3",
+  "verifiedUtc": "2026-06-10",
+  "activities": {
+    "uniques": {
+      "title": "Hunt your missing uniques",
+      "detail": "Every Unique has one dedicated Lair Boss — bring its Lair Key (or Greater Lair Key) and open the Hoard; bosses no longer need summon items. When you're chasing uniques from several bosses, run Belial (Lord of Lies): he mimics any boss's loot table and guarantees an Ancestral Unique. You can also gamble the slot at the Purveyor of Curiosities with Obols, or salvage-and-imprint to fill its aspect."
+    },
+    "aspects": {
+      "title": "Fill your Codex of Power",
+      "detail": "Salvage spare Legendaries at the Blacksmith — the Codex permanently stores the BEST roll you've ever salvaged, account-wide. Then Imprint from the Codex at the Occultist (unlimited, costs gold + materials). Target-farm aspect carriers with a Tribute of Armaments in the Kurast Undercity, or Obol-gamble the cheapest slot that can hold the aspect."
+    },
+    "affixes": {
+      "title": "Chase the missing affixes",
+      "detail": "One wrong innate affix is fixable: enchant it at the Occultist (one affix per item, forever — and enchanting can never make or keep a Greater Affix). Two or more wrong = replace the base. Farm fresh bases in Helltides, Nightmare Dungeons, or the Kurast Undercity, or gamble the slot at the Purveyor."
+    },
+    "temper": {
+      "title": "Temper at the Blacksmith",
+      "detail": "Tempering adds ONE affix you choose from a learned manual (only the value rolls). Uniques and Mythics can be tempered now too. You can't brick an item: a Scroll of Restoration refills its temper charges. Learn Legendary Temper Manuals from Tree of Whispers caches (they start dropping at Torment 2)."
+    },
+    "sockets": {
+      "title": "Socket gems & runes (Jeweler)",
+      "detail": "Add a missing socket for 1 Scattered Prism (from Treasure Goblins, World Bosses, Legion events), then craft the gem your build wants — or a runeword (a Ritual + Invocation rune pair) in a 2-socket Helm/Chest/Pants/2H weapon. Gems and runes can't share an item."
+    },
+    "masterwork": {
+      "title": "Masterwork to push rolls higher",
+      "detail": "Masterwork at the Blacksmith: each upgrade adds Quality (max 25), giving +1% to every affix; at Quality 25 a Capstone adds +50% to one affix. Farm Obducite in Nightmare Dungeons (Treasure Breach sigils / Strongrooms), the Kurast Undercity (Tribute of Refinement), or Infernal Hordes. Neathiron (to reroll the Capstone) comes from World Bosses and Bartuc / Astaroth / Belial."
+    },
+    "glyphs": {
+      "title": "Level your Glyphs",
+      "detail": "Glyphs level ONLY in The Pit — 3 upgrade attempts per clear (+1 if you finish deathless). An attempt is a guaranteed upgrade when the Pit tier is at least your glyph's level + 10. Leveling widens the glyph's radius and, around level 45, can upgrade a Rare glyph to Legendary."
+    },
+    "greaterAffixes": {
+      "title": "Hunt Greater Affixes",
+      "detail": "Greater Affix odds rise sharply at Torment 8+. The Tower's 'Treasures of the Artificer' caches give items with GUARANTEED Greater Affixes — the most reliable source. A Greater Tribute of Armaments in the Kurast Undercity drops Ancestral Legendaries."
+    },
+    "currency": {
+      "title": "Run Helltides for crafting currency",
+      "detail": "Helltides are the prime Forgotten Souls source (for enchanting) and drop Lair Keys and XP. Spend Cinders on Tortured Gifts for targeted-slot gear. Obducite and tempering mats also come from Infernal Hordes spoils."
+    },
+    "warPlans": {
+      "title": "Set a War Plan (Temis)",
+      "detail": "Queue a playlist of up to 5 of these activities as a War Plan in Temis for stacked bonus rewards (extra keys, Obducite, Obols, runes) on top of each activity's normal loot."
+    }
+  },
+  "hordesSpoils": [
+    { "name": "Spoils of Greater Equipment", "aether": 400, "yields": "an Ancestral Legendary plus Obducite, and often 1-2 Scrolls of Restoration", "for": "gear" },
+    { "name": "Spoils of Materials", "aether": 0, "yields": "Obducite, Gem Fragments, and Forgotten Souls", "for": "materials" },
+    { "name": "Spoils of Gold", "aether": 0, "yields": "a large pile of gold for enchant and Capstone rerolls", "for": "gold" },
+    { "name": "Bartuc, Lord of Chaos", "aether": 666, "yields": "Bartuc's unique table plus enhanced gear and Neathiron", "for": "bartuc" }
+  ],
+  "bossLadder": {
+    "initiate": { "key": "Lair Key", "bosses": ["Echo of Varshan", "Grigoire", "Beast in the Ice", "Lord Zir", "Urivar"] },
+    "greater": { "key": "Greater Lair Key", "bosses": ["Duriel", "Andariel", "Harbinger of Hatred", "The Butcher"] },
+    "exalted": { "bosses": ["Belial, Lord of Lies", "Astaroth", "Bartuc, Lord of Chaos", "Mephisto"] },
+    "universal": { "name": "Belial, Lord of Lies", "cost": "2 Betrayer's Husk", "note": "choose any boss's loot table; guarantees an Ancestral Unique and has the best Mythic chance" }
+  },
+  "obolPrices": {
+    "chest": 25, "pants": 25, "boots": 25,
+    "helm": 50, "gloves": 50, "ring": 50, "weapon1h": 50,
+    "amulet": 100, "weapon2h": 100, "ranged": 100
+  },
+  "obolCap": 2500,
+  "tormentGates": [
+    { "tier": 1, "unlocks": "Ancestral (900 Item Power) items" },
+    { "tier": 2, "unlocks": "Legendary Temper Manuals" },
+    { "tier": 4, "unlocks": "Neathiron" },
+    { "tier": 6, "unlocks": "Greater Lair Keys" },
+    { "tier": 8, "unlocks": "sharply higher Greater Affix odds" },
+    { "tier": 10, "unlocks": "Mythic Seals" },
+    { "tier": 11, "unlocks": "Resplendent Sparks" }
+  ],
+  "pitToTorment": [
+    { "torment": 1, "pit": 10 }, { "torment": 2, "pit": 15 }, { "torment": 3, "pit": 20 },
+    { "torment": 4, "pit": 25 }, { "torment": 5, "pit": 30 }, { "torment": 6, "pit": 40 },
+    { "torment": 7, "pit": 50 }, { "torment": 8, "pit": 60 }, { "torment": 9, "pit": 70 },
+    { "torment": 10, "pit": 80 }, { "torment": 11, "pit": 90 }, { "torment": 12, "pit": 100 }
+  ],
+  "masterwork": { "qualityCap": 25, "obduciteBase": 10, "obduciteSlope": 3.75, "twoHandMultiplier": 2 },
+  "socketCapacity": {
+    "helm": 2, "chest": 2, "pants": 2, "weapon2h": 2,
+    "weapon": 1, "weapon1h": 1, "offhand": 1, "amulet": 1, "ring": 1,
+    "gloves": 0, "boots": 0
+  },
+  "glyph": { "levelCap": 50, "legendaryUpgrade": 45, "radiusBump": 15, "note": "cap 50 vs 150 unresolved across sources — encoded conservatively" }
+}

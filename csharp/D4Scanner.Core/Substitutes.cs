@@ -82,8 +82,9 @@ public static class Substitutes
             var ladder = new List<string>
             {
                 "Now: "    + (best?.item.Name ?? equipped?.Name ?? "anything in the slot — even a placeholder"),
-                "Better: " + $"a Rare/Legendary with all {coreTotal} core affix{(coreTotal == 1 ? "" : "es")}" + (string.IsNullOrEmpty(g.Aspect) ? "" : $" + {g.Aspect}"),
-                "Best: "   + (uni?.Name ?? $"a perfect-roll {label}"),
+                "Better: " + $"a Rare/Legendary with the {coreTotal} core affix{(coreTotal == 1 ? "" : "es")} — temper one on if it's short"
+                           + (string.IsNullOrEmpty(g.Aspect) ? "" : $", then imprint {g.Aspect}"),
+                "Best: "   + (uni != null ? $"{uni.Name} (its secondaries roll randomly — chase a well-rolled copy)" : $"a perfect-roll {label}"),
             };
 
             result.Add(new SlotSub(label, wanted, affs, best?.item.Name, best?.item.Rarity,

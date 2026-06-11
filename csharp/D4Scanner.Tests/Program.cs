@@ -158,6 +158,51 @@ Check("Activities: chase the missing affixes", acts2.Any(a => a.Title.Contains("
 Check("Activities: hunt the missing uniques", acts2.Any(a => a.Title.Contains("missing uniques")));
 Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains("Masterwork")));
 
+// ---- SeasonPack: embedded data loads + typed accessors ----
+{
+    var sp = SeasonPack.Current;
+    Eq("SeasonPack: season 13", 13, sp.Season);
+    Check("SeasonPack: label names the season", sp.SeasonLabel.Contains("Season 13"));
+    Check("SeasonPack: activity copy present", sp.Activity("uniques").Title.Length > 0 && sp.Activity("masterwork").Detail.Length > 0);
+    Check("SeasonPack: gear spoil is Greater Equipment @400 Aether", sp.Spoil("gear").Name.Contains("Greater Equipment") && sp.Spoil("gear").Aether == 400);
+    Eq("SeasonPack: Bartuc costs 666 Aether", 666, sp.Spoil("bartuc").Aether);
+    Eq("SeasonPack: helm holds 2 sockets", 2, sp.SocketsFor("helm"));
+    Eq("SeasonPack: gloves hold 0 sockets", 0, sp.SocketsFor("gloves"));
+    Eq("SeasonPack: T1 ≈ Pit 10", 10, sp.PitForTorment(1) ?? -1);
+    Eq("SeasonPack: T12 ≈ Pit 100", 100, sp.PitForTorment(12) ?? -1);
+    Eq("SeasonPack: masterwork capped item needs 0 Obducite", 0, sp.ObduciteToCap(25));
+    Check("SeasonPack: Obducite cost falls as Quality rises", sp.ObduciteToCap(0) > sp.ObduciteToCap(20));
+    Check("SeasonPack: two-handers cost double Obducite", sp.ObduciteToCap(0, true) == sp.ObduciteToCap(0) * 2);
+    // a malformed/partial override parses without throwing and overrides what it specifies
+    var ov = SeasonPack.FromJson("{ \"season\": 99, \"seasonName\": \"Test\" }");
+    Eq("SeasonPack: override JSON parses", 99, ov.Season);
+}
+
+// ---- Stale-term tripwire: guidance output must never reintroduce pre-2026 mechanics ----
+{
+    string Gather(DiffReport rep, TargetBuild tgt, LiveBuild lv)
+    {
+        var parts = new List<string>();
+        foreach (var a in Activities.Recommend(rep)) { parts.Add(a.Title); parts.Add(a.Detail); }
+        var (off, reason) = InfernalHordesAdvisor.RecommendOffering(rep, rep.TargetClass);
+        parts.Add(off); parts.Add(reason);
+        foreach (var s in BuildGuide.Steps(rep)) { parts.Add(s.Text); parts.Add(s.Detail ?? ""); parts.Add(s.Headline); }
+        foreach (var sub in Substitutes.Plan(tgt, lv, 50)) { parts.Add(sub.Wanted); parts.AddRange(sub.Ladder); }
+        return string.Join(" ␟ ", parts);
+    }
+    var blob = Gather(rPart, target, livePartial);
+    string[] stale = {
+        "Ingolith", "summoning material", "Tormented Boss", "Sigil Powder",
+        "Spoils of the Realm", "Spoils of the Vault", "Spoils of Battle",
+        "Spoils of Darkness", "Spoils of Creation", "Spoils of Salvation",
+        "Legendary at 46", "Nightmare Dungeons to earn Glyph",
+    };
+    foreach (var term in stale)
+        Check($"Tripwire: guidance never says '{term}'", !blob.Contains(term, StringComparison.OrdinalIgnoreCase));
+    // positive: the corrected vocabulary IS present somewhere across the guidance
+    Check("Tripwire: guidance uses the real Lair Boss / Belial vocabulary", blob.Contains("Lair Boss") || blob.Contains("Belial"));
+}
+
 // ---- LootFilter: markdown checklist + D4Companion-shaped preset ----
 var md = LootFilter.Markdown(target);
 Check("LootFilter md: title", md.Contains("# T — Loot Filter"));
