@@ -2641,21 +2641,25 @@ public partial class MainWindow : Window
             details.Children.Add(nameBlock);
             if (score != null && score.SlotTarget > 0)
                 details.Children.Add(TB($"has {score.SlotPresent}/{score.SlotTarget} of this slot's affixes"
-                    + (score.Fixable ? "  ·  1 enchant from full" : "")
+                    + (score.Fixable ? "  ·  1 enchant from full" + (score.FixDestroysGA ? " — careful: it has a Greater Affix" : "") : "")
                     + (score.AspectBlocked ? "  ·  unique — can't take the wanted aspect" : "")
                     + (score.IsUpgrade ? $"  ·  equipped has {score.EquippedPresent}" : ""),
-                    score.IsUpgrade ? Green : score.AspectBlocked ? Amber : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
+                    score.FixDestroysGA ? Amber : score.IsUpgrade ? Green : score.AspectBlocked ? Amber : Faint, 9.5, false, new Thickness(0, 1, 0, 0)));
             if (score != null && score.SalvageAspect != null)
                 details.Children.Add(TB($"carries a wanted aspect: {score.SalvageAspect} — salvage to capture it",
                     Amber, 9.5, false, new Thickness(0, 1, 0, 0)));
-            if (item.ItemPower > 0 || ancestral)
+            if (item.ItemPower > 0 || ancestral || item.GreaterAffixCount > 0)
                 details.Children.Add(TB((ancestral ? "Ancestral  ·  " : "") + $"IP {item.ItemPower}"
-                    + (item.MasterworkRank > 0 ? $"  MW {item.MasterworkRank}" : ""), ancestral ? RAncestral : Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
-            // top 3 affixes
+                    + (item.GreaterAffixCount > 0 ? $"  ·  ★{item.GreaterAffixCount} GA" : "")
+                    + (item.Quality > 0 ? $"  ·  Q{item.Quality}" : ""), ancestral ? RAncestral : Soft, 10.5, false, new Thickness(0, 2, 0, 2)));
+            // top 3 affixes — Greater Affixes get a gold star
             foreach (var aff in item.Affixes.Take(3))
             {
                 var av = aff.Value.HasValue ? (aff.IsPercent ? $"+{aff.Value:0.#}%" : $"+{aff.Value:#,0.##}") : "";
-                details.Children.Add(TB($"{aff.Text}  {av}", Soft, 9.5, false));
+                var afLine = new StackPanel { Orientation = Orientation.Horizontal };
+                if (aff.IsGreater) { var st = TBs("★ ", Gold, 9.5, true); st.ToolTip = "Greater Affix"; afLine.Children.Add(st); }
+                afLine.Children.Add(TB($"{aff.Text}  {av}", aff.IsGreater ? Ink : Soft, 9.5, false));
+                details.Children.Add(afLine);
             }
             if (item.Affixes.Count > 3) details.Children.Add(TB($"…+{item.Affixes.Count - 3} more", Faint, 9, false));
             details.Children.Add(TB(age, Faint, 9, false, new Thickness(0, 3, 0, 0)));
@@ -3699,7 +3703,8 @@ public partial class MainWindow : Window
 
         string SubOf(Item? it2) => it2 == null ? "nothing equipped in this slot"
             : (it2.IsAncestral || IsAncestral(it2.Rarity) ? "Ancestral  ·  " : "")
-              + (it2.Rarity ?? "") + (it2.ItemPower > 0 ? $"  ·  IP {it2.ItemPower}" : "");
+              + (it2.Rarity ?? "") + (it2.ItemPower > 0 ? $"  ·  IP {it2.ItemPower}" : "")
+              + (it2.GreaterAffixCount > 0 ? $"  ·  ★{it2.GreaterAffixCount} GA" : "");
 
         // real game art whenever possible: resolve by name first, else by the item's base TYPE
         var candIcon = BaseIconIndex.HandleForType(cand.ItemType, cand.Slot);
@@ -4102,7 +4107,8 @@ public partial class MainWindow : Window
         var mid = new StackPanel();
         var line = new StackPanel { Orientation = Orientation.Horizontal };
         if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
-        line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : Ink, 13, false));
+        if (i.IsGreater) { var st = TBs("★ ", Gold, 12.5, true); st.ToolTip = "Greater Affix (1.5× max roll)"; st.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(st); }
+        line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : i.IsGreater ? Gold : Ink, 13, false));
         // the build's target for this affix is always visible — even when the item doesn't have it,
         // in the same current/target shape ("0 / 1,500") as the rows that do
         if (!string.IsNullOrEmpty(i.Need))

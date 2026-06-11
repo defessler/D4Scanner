@@ -1757,6 +1757,103 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
             .First().OwnerSlug == "heoki-barbarian");
 }
 
+// ---- v0.29: Greater Affix inference (Season 13 fixture) ----
+{
+    var s13Log = Path.Combine(AppContext.BaseDirectory, "sample_tts_s13.log");
+    Check("sample_tts_s13.log fixture present", File.Exists(s13Log));
+    var lb13 = LogWatcher.BuildFromFile(s13Log, equippedOnly: false);
+    var all13 = lb13.Gear.Concat(lb13.Inventory).ToList();
+    Item Find(string frag) => all13.First(i => i.Name.Contains(frag, StringComparison.OrdinalIgnoreCase));
+    bool AffGreater(Item it, string frag) => it.Affixes.First(a => a.Text.Contains(frag, StringComparison.OrdinalIgnoreCase)).IsGreater;
+
+    // 2-GA helm (Tempers 5/5, Quality 25): Life + Intelligence are the 1.5× rolls; CDR/Crit are max-but-not-GA
+    var helm = Find("Starless");
+    Eq("GA: Tempers 5/5 ⇒ 2 Greater Affixes", 2, helm.GreaterAffixCount ?? -1);
+    Check("GA: Maximum Life starred", AffGreater(helm, "Maximum Life"));
+    Check("GA: Intelligence starred", AffGreater(helm, "Intelligence"));
+    Check("GA: max-roll Cooldown Reduction is NOT a GA", !AffGreater(helm, "Cooldown"));
+    Check("GA: mid-roll Crit is NOT a GA", !AffGreater(helm, "Critical Strike"));
+    Check("GA: no capstone detected when candidates fit the budget", helm.CapstoneAffix == null);
+
+    // 1-GA gloves (Tempers 4/4): a Greater Damage Multiplier (× affix) at low Quality
+    var gloves = Find("Grasp");
+    Eq("GA: Tempers 4/4 ⇒ 1 Greater Affix", 1, gloves.GreaterAffixCount ?? -1);
+    Check("GA: a Damage Multiplier can be a GA", AffGreater(gloves, "Vulnerable Damage Multiplier"));
+    Check("GA: the multiplier flag survives GA detection", gloves.Affixes.First(a => a.Text.Contains("Vulnerable")).IsMultiplier);
+
+    // 0-GA chest (Tempers 3/3) with high-but-in-range rolls — nothing starred
+    var chest = Find("Penitent");
+    Eq("GA: Tempers 3/3 ⇒ 0 Greater Affixes", 0, chest.GreaterAffixCount ?? -1);
+    Check("GA: in-range rolls are never starred", chest.Affixes.All(a => !a.IsGreater));
+
+    // Rare (Tempers 0/1) — the denominator of 1 means Rare, no GA budget
+    var ring = Find("Novice");
+    Eq("GA: Rare (Tempers x/1) ⇒ 0 Greater Affixes", 0, ring.GreaterAffixCount ?? -1);
+
+    // capstone-excess: 1 GA budget (Tempers 4/4) but TWO 1.5× lines at Quality 25 → the lower one is the Capstone
+    var amu = Find("Liars");
+    Eq("GA: capstone case still reports 1 Greater Affix", 1, amu.GreaterAffixCount ?? -1);
+    Check("GA: the higher-ratio line is the real GA (Intelligence)", AffGreater(amu, "Intelligence"));
+    Check("GA: the excess 1.5× line is NOT starred (it's the capstone)", !AffGreater(amu, "All Damage Multiplier"));
+    Check("GA: the capstone affix is recorded", amu.CapstoneAffix != null && amu.CapstoneAffix.Contains("All Damage", StringComparison.OrdinalIgnoreCase));
+
+    // transfigure pushes Quality past 25 — the inference divides it out and still finds the GA
+    var boots = Find("Sundered");
+    Eq("GA: Quality>25 (transfigure) still ⇒ 1 GA", 1, boots.GreaterAffixCount ?? -1);
+    Check("GA: GA found despite Quality 34 inflation", AffGreater(boots, "Intelligence"));
+
+    // REAL-DATA SHAPE: an un-masterworked GA item (no Quality line) — the count is reliable from the temper
+    // denominator, but each GA value sits WITHIN its already-elevated displayed range, so no affix is provably
+    // starred. The honest behaviour: show "2 GA" from the count, star nothing (we can't pinpoint the lines).
+    var band = Find("Silent");
+    Eq("GA(real-shape): Tempers 5/5 ⇒ count 2 even with no Quality line", 2, band.GreaterAffixCount ?? -1);
+    Check("GA(real-shape): no affix is falsely starred on an un-masterworked item", band.Affixes.All(a => !a.IsGreater));
+
+    // ---- scoring: a GA on a wanted affix outranks an equal-presence item without it ----
+    var gaTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Intelligence" },
+        new TargetAffix { Name = "Cooldown Reduction" }, new TargetAffix { Name = "Critical Strike Chance" } } } } };
+    var plainHelm = new Item { Name = "Plain Helm", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1500, Min = 1300, Max = 1600 },
+        new Affix { Text = "Intelligence", Value = 85, Min = 70, Max = 90 },
+        new Affix { Text = "Cooldown Reduction", Value = 12, Min = 8, Max = 13.5, IsPercent = true },
+        new Affix { Text = "Critical Strike Chance", Value = 7, Min = 5, Max = 9, IsPercent = true } } };
+    var gaScored = UpgradeScorer.Score(gaTarget, new LiveBuild(), new[] { plainHelm, helm }, 75);
+    Check("GA scoring: the 2-GA helm outranks the equal-presence plain helm", gaScored[0].Item.Name.Contains("Starless"));
+    Check("GA scoring: useful-GA estimate is counted", gaScored.First(s => s.Item.Name.Contains("Starless")).GreaterOnWanted == 2);
+
+    // scoring works on the REAL-DATA SHAPE too: an un-masterworked 2-GA ring (no per-affix stars) still beats a
+    // 0-GA ring with the same presence — because scoring uses the reliable item-level count, not per-affix stars
+    var ringTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Ring", Affixes = {
+        new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "All Damage Multiplier" },
+        new TargetAffix { Name = "Vulnerable Damage Multiplier" } } } } };
+    var plainRing = new Item { Name = "Plain Ring", Slot = "ring", Affixes = {
+        new Affix { Text = "Dexterity", Value = 110 }, new Affix { Text = "All Damage Multiplier", Value = 15, IsMultiplier = true },
+        new Affix { Text = "Vulnerable Damage Multiplier", Value = 11, IsMultiplier = true } } };
+    var ringScored = UpgradeScorer.Score(ringTarget, new LiveBuild(), new[] { plainRing, band }, 75);
+    Check("GA scoring(real-shape): the un-masterworked 2-GA ring outranks the 0-GA ring", ringScored[0].Item.Name.Contains("Silent"));
+    Check("GA scoring(real-shape): useful-GA credited from the count despite zero stars",
+        ringScored.First(s => s.Item.Name.Contains("Silent")).GreaterOnWanted >= 2);
+
+    // ---- FixDestroysGA: completing the slot would enchant away the only extra, a Greater Affix ----
+    var fixTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Gloves", Affixes = {
+        new TargetAffix { Name = "Attack Speed" }, new TargetAffix { Name = "Critical Strike Chance" },
+        new TargetAffix { Name = "Lucky Hit Chance" }, new TargetAffix { Name = "Dexterity" } } } } };
+    var fixCand = new Item { Name = "Fix Gloves", Slot = "gloves", GreaterAffixCount = 1, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 },
+        new Affix { Text = "Lucky Hit Chance", Value = 10 },
+        new Affix { Text = "Vulnerable Damage", Value = 40 } } };   // item carries a GA somewhere
+    var fixScored = UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCand }, 75);
+    Check("FixDestroysGA: 3/4 item is fixable", fixScored[0].Fixable);
+    Check("FixDestroysGA: a fixable item with a Greater Affix trips the enchant caution", fixScored[0].FixDestroysGA);
+    var fixCandSafe = new Item { Name = "Safe Gloves", Slot = "gloves", GreaterAffixCount = 0, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 },
+        new Affix { Text = "Lucky Hit Chance", Value = 10 },
+        new Affix { Text = "Vulnerable Damage", Value = 40 } } };   // no GA on the item — safe to enchant
+    Check("FixDestroysGA: a fixable item with NO Greater Affix is safe",
+        !UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCandSafe }, 75)[0].FixDestroysGA);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

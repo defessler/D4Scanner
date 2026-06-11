@@ -26,12 +26,27 @@ public sealed class ScoredItem
     public double EquippedQuality { get; set; } // its avg roll quality (0-100)
     public bool EquippedEmpty { get; set; }    // nothing equipped fills the compared slot
 
+    /// <summary>The item's Greater Affix count (from the temper-charge denominator), capped at the number of
+    /// the slot's wanted affixes it actually carries — an estimate of "useful" GAs (we can't always tell per
+    /// affix which line is the GA, but a kept item's GAs tend to sit on the stats that matter). Ranks between
+    /// affix count and roll quality.</summary>
+    public int GreaterOnWanted { get; set; }
+    public int EquippedGreaterOnWanted { get; set; }   // same, for the equipped piece it would displace
+    /// <summary>Total Greater Affixes on the item (item-level, reliable). The "★N GA" badge.</summary>
+    public int GreaterCount { get; set; }
+    /// <summary>True when this item is one enchant from full AND carries a Greater Affix — enchanting the wrong
+    /// line destroys a GA forever, so surface a caution. Conservative (item-level): we can't always pinpoint
+    /// which affix is the GA, so warn whenever any GA is present on a fixable item.</summary>
+    public bool FixDestroysGA { get; set; }
+
     /// <summary>Affix completeness with the enchant credit: one wrong affix is fixable at the Occultist, so a
     /// 3/4 item competes in the 4/4 tier (roll quality then separates them).</summary>
     public int EffectivePresent => SlotPresent + (Fixable ? 1 : 0);
 
     /// <summary>Signed affix-count delta vs the equipped piece it would displace (enchant credit included).</summary>
     public int AffixDelta => EffectivePresent - EquippedEff;
+    /// <summary>Signed useful-Greater-Affix delta vs that piece.</summary>
+    public int GreaterDelta => GreaterOnWanted - EquippedGreaterOnWanted;
     /// <summary>Signed roll-quality delta vs that piece — the tiebreak when affix counts are even.</summary>
     public double QualityDelta => SlotQuality - EquippedQuality;
 }
@@ -72,8 +87,13 @@ public static class UpgradeScorer
 
         // The bar an upgrade must beat: the equipped item ASSIGNED to each target slot (same weapon-type
         // gated assignment the diff uses, so badge and compare card agree on what "equipped" means).
+        // "useful" Greater Affixes: the item's GA count (reliable, from the temper denominator) capped by how
+        // many of the slot's wanted affixes it carries — we can't always tell per-affix which line is the GA,
+        // but a kept item's GAs tend to land on the stats that matter, so this is a fair, real-data-safe estimate.
+        static int UsefulGA(TargetGear g, Item it) => Math.Min(it.GreaterAffixCount ?? 0, DiffEngine.PresenceCount(g, it));
+
         var assigned = DiffEngine.AssignSlots(target, live);
-        var bars = new (int eff, int present, double quality, bool nonUnique, bool empty)[target.Gear.Count];
+        var bars = new (int eff, int present, double quality, int gaw, bool nonUnique, bool empty)[target.Gear.Count];
         for (int gi = 0; gi < target.Gear.Count; gi++)
         {
             var g = target.Gear[gi];
@@ -81,9 +101,9 @@ public static class UpgradeScorer
             {
                 int present = DiffEngine.PresenceCount(g, x);
                 bool fix = !x.IsUnique && g.Affixes.Count > 1 && present == g.Affixes.Count - 1;
-                bars[gi] = (present + (fix ? 1 : 0), present, DiffEngine.SlotQuality(g, x), !x.IsUnique, false);
+                bars[gi] = (present + (fix ? 1 : 0), present, DiffEngine.SlotQuality(g, x), UsefulGA(g, x), !x.IsUnique, false);
             }
-            else bars[gi] = (0, 0, 0, false, true);
+            else bars[gi] = (0, 0, 0, 0, false, true);
         }
 
         var result = new List<ScoredItem>();
@@ -121,6 +141,11 @@ public static class UpgradeScorer
             bool aspectBlocked = it.IsUnique && !string.IsNullOrEmpty(bestSlot?.Aspect);
             if (it.IsUnique) pickFix = false;
             int effective = pickPresent + (pickFix ? 1 : 0);
+            int gaCount = it.GreaterAffixCount ?? 0;
+            int pickGaw = bestSlot != null ? UsefulGA(bestSlot, it) : 0;
+            // completing the slot means enchanting away one affix — if the item carries any Greater Affix, warn
+            // (we can't always pinpoint which line is the GA, so caution whenever a GA is present on a fixable item)
+            bool fixDestroysGA = pickFix && gaCount > 0;
 
             // overall-goal contribution: sum the build-wide weight of each affix the item carries (each affix once)
             double goalScore = 0;
@@ -128,9 +153,11 @@ public static class UpgradeScorer
                 foreach (var kv in goal)
                     if (DiffEngine.PhraseMatch(kv.Key, a.Text)) { goalScore += kv.Value; break; }
 
-            // beats the piece it would displace when it's more complete (with the enchant credit), or
-            // equally complete but REALLY complete where the equipped one merely could be after an enchant
-            bool beats = pick >= 0 && (effective > bar.eff || (effective == bar.eff && pickPresent > bar.present));
+            // beats the piece it would displace when it's more complete (with the enchant credit), or equally
+            // complete but with more REAL presence, or — at a true tie — more useful Greater Affixes
+            bool beats = pick >= 0 && (effective > bar.eff
+                || (effective == bar.eff && pickPresent > bar.present)
+                || (effective == bar.eff && pickPresent == bar.present && pickGaw > bar.gaw));
             bool upgrade = beats && !(aspectBlocked && bar.nonUnique);
 
             // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping
@@ -151,6 +178,8 @@ public static class UpgradeScorer
                 CompareSlotIndex = pick >= 0 ? pick : null,
                 EquippedPresent = bar.present, EquippedEff = bar.eff,
                 EquippedQuality = bar.quality, EquippedEmpty = pick >= 0 && bar.empty,
+                GreaterOnWanted = pickGaw, EquippedGreaterOnWanted = bar.gaw, GreaterCount = gaCount,
+                FixDestroysGA = fixDestroysGA,
                 SlotLabel = bestSlot?.Label ?? bestSlot?.Slot,
             });
         }
@@ -160,6 +189,7 @@ public static class UpgradeScorer
             .ThenByDescending(s => s.SalvageAspect != null)      // then wanted-aspect salvage upgrades
             .ThenByDescending(s => s.EffectivePresent)           // affix count (with the one-enchant credit)
             .ThenByDescending(s => s.SlotMet)                    // rolls already meeting thresholds…
+            .ThenByDescending(s => s.GreaterOnWanted)            // …then Greater Affixes on wanted stats (1.5× each)…
             .ThenByDescending(s => s.SlotQuality)                // …then raw roll quality
             .ThenByDescending(s => s.SlotPresent)                // …then real presence over the enchant credit
             .ThenByDescending(s => s.Item.ItemPower ?? 0)        // secondary: item power

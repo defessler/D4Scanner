@@ -122,6 +122,7 @@ public static class DiffEngine
                 req.ValueNum = match.Value;
                 req.IsMultiplier = match.IsMultiplier;
                 req.IsPercent = match.IsPercent;
+                req.IsGreater = match.IsGreater;
                 var pct = RollPct(match);
                 req.RollPct = pct;
                 // threshold: explicit absolute min > explicit minPercent > global gate
@@ -163,7 +164,7 @@ public static class DiffEngine
         {
             Label = a.Text, Done = true, Status = "met", Source = "tts",
             Val = FmtVal(a), ValueNum = a.Value, IsMultiplier = a.IsMultiplier, IsPercent = a.IsPercent,
-            RollPct = RollPct(a),
+            RollPct = RollPct(a), IsGreater = a.IsGreater,
         }).ToList();
 
     /// <summary>How many of a target slot's affixes are PRESENT on the item at ANY value (no roll/threshold
@@ -182,6 +183,41 @@ public static class DiffEngine
                 if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; present++; break; }
             }
         return present;
+    }
+
+    /// <summary>How many of the target slot's wanted affixes the item carries AS Greater Affixes (matched once
+    /// each). A GA on a wanted stat is worth 1.5× that affix's max — a distinct upgrade axis from raw presence.</summary>
+    public static int GreaterOnWanted(TargetGear g, Item item)
+    {
+        var pool = item.Affixes;
+        var used = new bool[pool.Count];
+        int n = 0;
+        foreach (var aff in g.Affixes)
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; if (pool[i].IsGreater) n++; break; }
+            }
+        return n;
+    }
+
+    /// <summary>The item's affixes that DON'T match any wanted affix on the slot (the "extras") — the lines an
+    /// enchant would reroll. Used to warn when completing a slot would destroy a Greater Affix. Skips the
+    /// "quality" meta line.</summary>
+    public static List<Affix> UnmatchedAffixes(TargetGear g, Item item)
+    {
+        var pool = item.Affixes;
+        var used = new bool[pool.Count];
+        foreach (var aff in g.Affixes)
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (used[i]) continue;
+                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; break; }
+            }
+        var res = new List<Affix>();
+        for (int i = 0; i < pool.Count; i++)
+            if (!used[i] && !Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) res.Add(pool[i]);
+        return res;
     }
 
     /// <summary>Average roll quality (0-100) of the target slot's affixes that <paramref name="item"/> actually

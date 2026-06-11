@@ -15,6 +15,9 @@ public class Affix
     public double? Max { get; set; }
     public bool IsPercent { get; set; }
     public bool IsMultiplier { get; set; }
+    /// <summary>Inferred Greater Affix: rolled ~1.5× the affix's max (after dividing out masterwork Quality),
+    /// and within the item's GA budget. The #1 community grading signal. Set by GearParser.FinalizeGreaterAffixes.</summary>
+    public bool IsGreater { get; set; }
 }
 
 public class Item
@@ -27,6 +30,12 @@ public class Item
     public bool IsUnique { get; set; }
     public bool IsMythic { get; set; }
     public bool IsAncestral { get; set; }
+    /// <summary>Number of Greater Affixes on the item, from the temper-charge denominator (3 base + 1 per GA).
+    /// Null = unknown (no temper line captured, e.g. a partial OCR scan). 0 = a confirmed non-GA item.</summary>
+    public int? GreaterAffixCount { get; set; }
+    /// <summary>Best-effort: the affix the Masterwork Quality-25 Capstone (+50%) appears to have landed on —
+    /// an affix that reads at ~1.5× max beyond the item's GA budget. Null when not detected.</summary>
+    public string? CapstoneAffix { get; set; }
     public int? ItemPower { get; set; }
     public double? Dps { get; set; }
     public int? MasterworkRank { get; set; }
@@ -285,6 +294,7 @@ public class ReqItem
     public double? TargetNum { get; set; }    // the magnitude the build wants on this piece (Min or threshold value); null if not derivable
     public bool IsMultiplier { get; set; }    // affix is an "x" multiplier (unit hint for aggregation)
     public bool IsPercent { get; set; }       // affix value is a percentage (unit hint for aggregation)
+    public bool IsGreater { get; set; }       // the matched live affix is a Greater Affix (★)
 }
 
 public class GearLiveItem
