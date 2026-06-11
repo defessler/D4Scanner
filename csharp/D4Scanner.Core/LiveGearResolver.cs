@@ -70,6 +70,33 @@ public static class LiveGearResolver
         return result;
     }
 
+    /// <summary>Collapse persisted inventory duplicates that share a name + base-slot (the same physical item
+    /// re-parsed with slightly different affixes, or across channels): keep the best — Tts over Ocr, then the
+    /// newest sighting. One-time hygiene for inventory already polluted with literal duplicates.</summary>
+    public static List<Item> DedupeInventory(List<Item> items)
+    {
+        static string Key(Item i) => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot);
+        return items
+            .GroupBy(Key, StringComparer.Ordinal)
+            .Select(g => g.OrderBy(i => i.Source == ItemSource.Tts ? 0 : 1)
+                          .ThenByDescending(GearList.AcquiredTicks).First())
+            .ToList();
+    }
+
+    /// <summary>Fold sanitize-demoted equipped items into the inventory list, guarding by name + base-slot
+    /// (NOT fingerprint) so a re-parse with different affixes can't append a literal duplicate — the bug that
+    /// produced duplicate persisted inventory entries.</summary>
+    public static List<Item> MergeDemoted(List<Item> inv, List<Item> demoted)
+    {
+        if (demoted.Count == 0) return inv;
+        static string Key(Item i) => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot);
+        var have = new HashSet<string>(inv.Select(Key), StringComparer.Ordinal);
+        var result = new List<Item>(inv);
+        foreach (var d in demoted)
+            if (have.Add(Key(d))) { d.Equipped = false; result.Add(d); }
+        return result;
+    }
+
     /// <summary>
     /// Equipped-gear sanity pass for a character whose class is known. Items that CANNOT be worn are
     /// demoted out of the equipped list (they're stale captures from another character's session, or a
