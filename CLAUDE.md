@@ -149,10 +149,17 @@ amber accent** — do not add warm brown or heavy gold fills to large areas.
 
 ## Season-specific notes
 
-- **Season 8**: Horadric Seals (`seal`), Charms (`charm`), Runes (`rune`) are typed in
-  `GearParser.TypeSlot`. These pass `LooksLikeItem` without an ItemPower line. Item
-  Quality score (`ReQuality`) supports both `"50 +50/25 Quality"` (no parens) and
-  `"50 (+30/25) Quality"` (parens) formats.
+- **Game-mechanics ground truth lives in `docs/d4-gearing-knowledge.md`** (researched June 2026,
+  Season 13 / Lord of Hatred expansion). Read it before touching guidance logic (`BuildGuide`,
+  `Activities`, `InfernalHordesAdvisor`, `Substitutes`, scoring) — its §8 gap table lists which
+  encoded assumptions are stale, and its tripwire list (IP 750/800 caps, Torment I–IV, 12-rank
+  masterworking, 2 temper slots, fixed unique affixes, …) flags pre-2026 data that must not be
+  (re-)introduced.
+- Item types `seal`/`charm`/`rune` in `GearParser.TypeSlot` were added for Season 8 but still
+  apply: seals/charms are now the permanent **Talisman** system's items (Lord of Hatred), runes
+  are permanent since Vessel of Hatred. These pass `LooksLikeItem` without an ItemPower line.
+  The Item Quality score (`ReQuality`, `"50 +50/25 Quality"` / `"50 (+30/25) Quality"`) is the
+  masterworking **Quality 0–25** system (Season 11 rework).
 - TTS format changes each season — the `GearParser` test against `sample_tts.log` is the
   primary regression net. Update the fixture when the live format changes.
 
