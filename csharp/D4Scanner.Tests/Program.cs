@@ -1336,6 +1336,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("CharSelectParser: confirmed name", "HEOKI", confirmed!.Name);
     Eq("CharSelectParser: confirmed CLASS (last highlighted before START GAME)", "Rogue", confirmed.Class);
     Eq("CharSelectParser: confirmed paragon", 186, confirmed.Paragon);
+    Eq("CharSelectParser: confirmed Torment tier (XI → 11)", 11, confirmed.Torment ?? -1);
     Eq("CharSelectParser: confirmed realm", "Seasonal", confirmed.Realm);
     Eq("CharSelectParser: both highlighted characters recorded", 2, cs.Seen.Count);
     Check("CharSelectParser: Barbarian detail block captured too",
@@ -1991,6 +1992,43 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var capPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } }, capItem, 50);
     Check("UpgradePath: off-build Capstone ⇒ reroll-Capstone step (Neathiron)",
         Step(capPath, "MASTERWORK")?.Text.Contains("Capstone") == true && Step(capPath, "MASTERWORK")!.Cost!.Contains("Neathiron"));
+}
+
+// ---- v0.32: Torment-tier gating + IP-tier rules ----
+{
+    // a build with a gap, at Torment 5 → a "push to the next gated tier" recommendation appears
+    var gapTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Intelligence" } } } } };
+    var gapLive = new LiveBuild { Gear = { new Item { Name = "Weak Helm", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 500 } } } } };   // Intelligence missing ⇒ build < 100%
+    var gapReport = DiffEngine.Diff(gapTarget, gapLive, 50);
+    var t5 = Activities.Recommend(gapReport, new GuideContext(5, "Rogue"));
+    Check("Tier gate: at Torment 5 a 'Push to Torment 6' rec appears (Greater Lair Keys)",
+        t5.Any(a => a.Title.Contains("Push to Torment 6") && a.Detail.Contains("Greater Lair Keys")));
+    Check("Tier gate: the push rec names the Pit tier to clear", t5.Any(a => a.Title.Contains("Pit 40")));
+    // no torment known ⇒ no push rec (graceful), and at T12 there's nothing higher to push to
+    Check("Tier gate: no push rec without a known Torment", !Activities.Recommend(gapReport).Any(a => a.Title.StartsWith("Push to Torment")));
+    Check("Tier gate: no push rec at Torment 12 (capped)", !Activities.Recommend(gapReport, new GuideContext(12, "Rogue")).Any(a => a.Title.StartsWith("Push to Torment")));
+
+    // IP-tier: at endgame, a 900 Ancestral candidate beats a sub-900 equipped piece at an otherwise-equal slot
+    var ipTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Gloves", Affixes = {
+        new TargetAffix { Name = "Attack Speed" }, new TargetAffix { Name = "Critical Strike Chance" } } } } };
+    var eq850 = new Item { Name = "Old Gloves", Slot = "gloves", ItemPower = 850, Equipped = true, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 } } };
+    var cand900 = new Item { Name = "New Gloves", Slot = "gloves", ItemPower = 900, IsAncestral = true, Affixes = {
+        new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 } } };
+    var ipLive = new LiveBuild { Gear = { eq850 } };
+    Check("IP-tier: WITHOUT a Torment context the equal-affix 900 item is not an upgrade",
+        !UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 75)[0].IsUpgrade);
+    Check("IP-tier: IN Torment the 900 Ancestral beats the equal-affix 850 equipped",
+        UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 75, 8)[0].RawUpgrade);
+
+    // Verdict: in Torment a sub-900 non-Ancestral off-build item reads as junk "below the floor"
+    var lowItem = new Item { Name = "Low Boots", Slot = "boots", ItemPower = 800, IsAncestral = false };
+    var vLow = Verdicts.For(new ScoredItem { Item = lowItem, SlotLabel = "Boots", SlotTarget = 2 },
+        new VerdictContext(new TargetBuild(), "Rogue", new List<Item>(), 8));
+    Eq("Verdict floor: sub-900 in Torment ⇒ Junk", Verdict.Junk, vLow.V);
+    Check("Verdict floor: reason cites the 900 Ancestral floor", vLow.Reason.Contains("900 Ancestral floor"));
 }
 
 // ---- report ----

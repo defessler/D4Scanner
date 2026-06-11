@@ -81,8 +81,10 @@ public static class UpgradeScorer
         return w;
     }
 
-    /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build.</summary>
-    public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, double gate)
+    /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build. When
+    /// <paramref name="torment"/> is set (the player is in Torment), a 900-IP Ancestral candidate breaks a tie
+    /// against a sub-900 equipped piece — at endgame, below-cap gear is strictly temporary.</summary>
+    public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, double gate, int? torment = null)
     {
         var goal = GoalWeights(target);
 
@@ -94,7 +96,7 @@ public static class UpgradeScorer
         static int UsefulGA(TargetGear g, Item it) => Math.Min(it.GreaterAffixCount ?? 0, DiffEngine.PresenceCount(g, it));
 
         var assigned = DiffEngine.AssignSlots(target, live);
-        var bars = new (int eff, int present, double quality, int gaw, bool nonUnique, bool empty)[target.Gear.Count];
+        var bars = new (int eff, int present, double quality, int gaw, int ip, bool nonUnique, bool empty)[target.Gear.Count];
         for (int gi = 0; gi < target.Gear.Count; gi++)
         {
             var g = target.Gear[gi];
@@ -102,9 +104,9 @@ public static class UpgradeScorer
             {
                 int present = DiffEngine.PresenceCount(g, x);
                 bool fix = !x.IsUnique && g.Affixes.Count > 1 && present == g.Affixes.Count - 1;
-                bars[gi] = (present + (fix ? 1 : 0), present, DiffEngine.SlotQuality(g, x), UsefulGA(g, x), !x.IsUnique, false);
+                bars[gi] = (present + (fix ? 1 : 0), present, DiffEngine.SlotQuality(g, x), UsefulGA(g, x), x.ItemPower ?? 0, !x.IsUnique, false);
             }
-            else bars[gi] = (0, 0, 0, 0, false, true);
+            else bars[gi] = (0, 0, 0, 0, 0, false, true);
         }
 
         var result = new List<ScoredItem>();
@@ -154,16 +156,21 @@ public static class UpgradeScorer
                 foreach (var kv in goal)
                     if (DiffEngine.PhraseMatch(kv.Key, a.Text)) { goalScore += kv.Value; break; }
 
+            // at a true tie, in Torment, a 900-IP Ancestral candidate beats a sub-900 equipped piece (below-cap
+            // gear is strictly temporary at endgame — its same affixes roll higher at 900)
+            bool ipBreaks = torment.HasValue && (it.ItemPower ?? 0) >= 900 && bar.ip > 0 && bar.ip < 900;
             // beats the piece it would displace when it's more complete (with the enchant credit), or equally
-            // complete but with more REAL presence, or — at a true tie — more useful Greater Affixes
+            // complete but with more REAL presence, more useful Greater Affixes, or — at endgame — a higher IP tier
             bool beats = pick >= 0 && (effective > bar.eff
                 || (effective == bar.eff && pickPresent > bar.present)
-                || (effective == bar.eff && pickPresent == bar.present && pickGaw > bar.gaw));
+                || (effective == bar.eff && pickPresent == bar.present && pickGaw > bar.gaw)
+                || (effective == bar.eff && pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks));
             bool upgrade = beats && !(aspectBlocked && bar.nonUnique);
             // raw beat: better as-is, WITHOUT spending an enchant — more real presence (or, at a tie, more
-            // useful GAs). EQUIP-now items pass this; items that only win via the one-enchant credit don't.
+            // useful GAs, or the IP-tier jump). EQUIP-now items pass; one-enchant-credit-only items don't.
             bool rawBeats = pick >= 0 && (pickPresent > bar.present
-                || (pickPresent == bar.present && pickGaw > bar.gaw));
+                || (pickPresent == bar.present && pickGaw > bar.gaw)
+                || (pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks));
             bool rawUpgrade = rawBeats && !(aspectBlocked && bar.nonUnique);
 
             // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping
