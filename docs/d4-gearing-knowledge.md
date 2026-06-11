@@ -244,6 +244,29 @@ parser format · weapon-type slot gating.
 7. **Priority model** — weight gaps per §5 (uniques/aspects > skill ranks > empty multiplier
    categories > capped stats > main stat/life > additive), and make completion % reflect it.
 
+## 10a. RESOLVED — how Greater Affixes actually show in TTS (v0.29, validated on the user's live log)
+
+There is **no per-affix GA marker** in the TTS text. Two signals, with very different reliability:
+
+- **Per-item GA count is reliable**: an item gets 3 temper charges + 1 per Greater Affix, so the
+  `Tempers: x/y` denominator gives `GreaterAffixCount = y − 3` (clamp 0–4; `y=1` ⇒ Rare, 0 GAs).
+  Validated against the user's real gear (a 2-GA ring, two 1-GA pieces — all correct). This is the
+  "★N GA" badge and the scoring signal.
+- **Per-affix attribution is mostly impossible from TTS alone.** A GA rolls at 1.5× the affix's base
+  max, but the tooltip's displayed `[min – max]` range is the affix's range *for that item* — for a
+  GA that range is already the elevated one, so the value sits *within* it (often near max), looking
+  identical to a high non-GA roll. The value-vs-range ratio only proves a GA when masterwork Quality
+  has inflated the value *past the base range* (then `value/(1+Quality/100)/max ≥ ~1.2` is a true GA,
+  no false positives) — i.e. it fires on **masterworked** GA items and stays silent on un-masterworked
+  ones. Pinpointing which affix is the GA on an un-masterworked item would need a base-affix-range
+  database (per affix × slot × item-power) we don't have.
+
+Design consequence (shipped): the item-level count drives the "★N GA" display and all GA **scoring**
+(`UsefulGA = min(count, wanted-affixes-present)` — a real-data-safe estimate, since a kept item's GAs
+tend to sit on stats that matter); per-affix ★ stars render only when *provable* (masterworked
+overflow). Enchant caution is conservative: any fixable item that carries a GA warns, since we can't
+always say the reroll target is safe.
+
 ## 10. Open questions to verify in-game (cheap TTS captures)
 
 - Exact composition of the `50 (+30/25) Quality` line under the Quality system.

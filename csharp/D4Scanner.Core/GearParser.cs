@@ -309,7 +309,40 @@ public class GearParser
             if (ln.Any(char.IsLower) && ln.Length > 8) item.PowerText.Add(ln);
         }
         item.IsComparison = afterPropertiesLost;   // bag/stash comparison — never worn
+        FinalizeGreaterAffixes(item);
         return item;
+    }
+
+    /// <summary>
+    /// Infer Greater Affixes once the whole block is parsed (the Quality line can appear before or after the
+    /// affix lines, so this can't run per-line). Two cross-checked signals:
+    ///   • per-item COUNT — the temper-charge denominator: an item gets 3 base charges + 1 per GA, so
+    ///     <c>GreaterAffixCount = TemperMax − 3</c> (clamped 0..4). TemperMax 1 ⇒ Rare (0 GAs); no temper line ⇒ unknown.
+    ///   • per-affix INFERENCE — a GA rolls at 1.5× the affix's max. Displayed values are inflated by masterwork
+    ///     Quality (+1%/rank, parsed into <see cref="Item.Quality"/>, can exceed 25 via transfigure), so divide
+    ///     that out first; a normalized value ≥ 1.2× max is a GA candidate.
+    /// The count caps how many affixes get the star (a Quality-25 Capstone adds +50% to one affix and is
+    /// indistinguishable per-affix — the highest candidate beyond the GA budget is recorded as the capstone).
+    /// </summary>
+    static void FinalizeGreaterAffixes(Item item)
+    {
+        int? count = item.TemperMax.HasValue ? Math.Clamp(item.TemperMax.Value - 3, 0, 4) : (int?)null;
+
+        double infl = 1.0 + (item.Quality ?? 0) / 100.0;
+        var ranked = item.Affixes
+            .Select(a => (a, ratio: a.Value is double v && a.Max is double mx && mx > 0 ? (v / infl) / mx : 0.0))
+            .Where(t => t.ratio >= 1.2)
+            .OrderByDescending(t => t.ratio)
+            .ToList();
+
+        int stars = count ?? ranked.Count;   // cap by the authoritative count when known; else trust the inference
+        for (int i = 0; i < ranked.Count && i < stars; i++) ranked[i].a.IsGreater = true;
+
+        // the first candidate beyond the GA budget, at Quality 25+, is the Masterwork Capstone (+50% to one affix)
+        if ((item.Quality ?? 0) >= 25 && ranked.Count > stars)
+            item.CapstoneAffix = ranked[stars].a.Text;
+
+        item.GreaterAffixCount = count ?? (ranked.Count > 0 ? ranked.Count : (int?)null);
     }
 
     public static bool LooksLikeItem(Item? it)

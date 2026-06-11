@@ -18,5 +18,7 @@
     <None Include="..\..\samples\sample_tts.log" Link="sample_tts.log" CopyToOutputDirectory="PreserveNewest" />
     <!-- a real, full-loadout S8 Rogue capture (bow + dual-wield melee, amulet, pants, runewords, double-hover) -->
     <None Include="..\..\samples\sample_tts_rogue_s8.log" Link="sample_tts_rogue_s8.log" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Season 13 / Lord of Hatred: Greater Affixes, Quality system, Tempers denominators, Damage Multipliers -->
+    <None Include="..\..\samples\sample_tts_s13.log" Link="sample_tts_s13.log" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
