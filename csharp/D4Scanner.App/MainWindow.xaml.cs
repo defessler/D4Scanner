@@ -2843,7 +2843,9 @@ public partial class MainWindow : Window
     Brush VerbColor(string verb) => verb switch
     {
         "EQUIP" => Green, "FIND" => RUnique, "IMPRINT" => RLegend,
-        "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel, "TEMPER" or "RE-TEMPER" or "IMPROVE" => Amber, _ => Ink,
+        "SKILL" or "PARAGON" or "CAPTURE" or "MERC" => Steel,
+        "TEMPER" or "RE-TEMPER" or "IMPROVE" or "MASTERWORK" or "ENCHANT" => Amber,
+        "SOCKET" => Steel, _ => Ink,
     };
 
     // Per-item verdict → badge label + foreground + background. Green = act now, amber = a cheap craft,
@@ -3873,6 +3875,45 @@ public partial class MainWindow : Window
             sp.Children.Add(CompareCard(g, it, label, sectionKey));
             if (g.UpgradeItems.Count > 0) sp.Children.Add(StashUpgrades(g.UpgradeItems));
         }
+        // "how do I upgrade what I'm wearing" — the ordered crafting plan for THIS equipped item
+        if (it != null && _target != null && sectionKey.StartsWith("gear:")
+            && int.TryParse(sectionKey.AsSpan(5), out var gi) && gi >= 0 && gi < _target.Gear.Count)
+        {
+            var liveItem = EffectiveLive().Gear.FirstOrDefault(x =>
+                DiffEngine.PhraseMatch(x.Name, it.Name) && DiffEngine.SlotBaseName(x.Slot) == DiffEngine.SlotBaseName(_target.Gear[gi].Slot));
+            if (liveItem != null)
+            {
+                var path = UpgradePath.ForSlot(_target.Gear[gi], liveItem, _target.MinRollPercent ?? _minRollPct);
+                if (path.Count > 0) sp.Children.Add(UpgradePathBlock(path));
+            }
+        }
+    }
+
+    // the ordered "upgrade this item" crafting plan: verb chip + action + cost + caution per step
+    UIElement UpgradePathBlock(List<PathStep> steps)
+    {
+        var inner = new StackPanel();
+        inner.Children.Add(TBs("↗  UPGRADE THIS ITEM", Gold, 12, true, new Thickness(0, 0, 0, 7)));
+        foreach (var s in steps)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, s == steps[0] ? 0 : 7, 0, 0) };
+            var head = new DockPanel();
+            var chip = VerbChip(s.Verb, 9.5, new Thickness(6, 1, 6, 2), 78); DockPanel.SetDock(chip, Dock.Left); chip.Margin = new Thickness(0, 0, 8, 0);
+            head.Children.Add(chip);
+            var txt = TB(s.Text, Ink, 12, false); txt.TextWrapping = TextWrapping.Wrap; txt.VerticalAlignment = VerticalAlignment.Center;
+            head.Children.Add(txt);
+            row.Children.Add(head);
+            if (s.Cost != null) { var c = TB(s.Cost, Soft, 10.5, false, new Thickness(86, 1, 0, 0)); c.TextWrapping = TextWrapping.Wrap; row.Children.Add(c); }
+            if (s.Warning != null) { var w = TB("⚠ " + s.Warning, Amber, 10, false, new Thickness(86, 1, 0, 0)); w.TextWrapping = TextWrapping.Wrap; row.Children.Add(w); }
+            inner.Children.Add(row);
+        }
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x16, 0xD4, 0xA7, 0x30)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x44, 0xD4, 0xA7, 0x30)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 11, 14, 12), Margin = new Thickness(0, 10, 0, 0), Child = inner,
+        };
     }
 
     // per-slot substitute analysis for a gear section (matched by group index in the target)

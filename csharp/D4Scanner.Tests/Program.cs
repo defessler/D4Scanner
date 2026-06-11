@@ -1926,6 +1926,73 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Verdicts.For(intScored, new VerdictContext(intTarget, "Rogue", new[] { intCand })).V);
 }
 
+// ---- v0.31: per-slot upgrade path ----
+{
+    PathStep? Step(List<PathStep> ps, string verb) => ps.FirstOrDefault(s => s.Verb == verb);
+
+    // a needy ancestral helm: missing one temper affix + one enchant affix, un-masterworked, empty socket, no aspect
+    var upTarget = new TargetGear { Slot = "Helm", Aspect = "Aspect of Disobedience", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 1000 },
+        new TargetAffix { Name = "Dexterity" },
+        new TargetAffix { Name = "Attack Speed", Tempered = true } } };
+    var upItem = new Item { Name = "Needy Helm", Slot = "helm", IsAncestral = true, Quality = 0,
+        SocketCount = 1, EmptySockets = 1, TemperUsed = 0, TemperMax = 3,
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
+    var path = UpgradePath.ForSlot(upTarget, upItem, 50);
+    var verbs = path.Select(s => s.Verb).ToList();
+    Check("UpgradePath: temper before enchant before masterwork before socket before imprint",
+        verbs.IndexOf("TEMPER") < verbs.IndexOf("ENCHANT")
+        && verbs.IndexOf("ENCHANT") < verbs.IndexOf("MASTERWORK")
+        && verbs.IndexOf("MASTERWORK") < verbs.IndexOf("SOCKET")
+        && verbs.IndexOf("SOCKET") < verbs.IndexOf("IMPRINT"));
+    Check("UpgradePath: TEMPER targets the wanted tempered affix", Step(path, "TEMPER")!.Text.Contains("Attack Speed"));
+    Check("UpgradePath: TEMPER shows the temper counter verbatim", Step(path, "TEMPER")!.Text.Contains("0/3"));
+    Check("UpgradePath: TEMPER mentions the Scroll of Restoration", Step(path, "TEMPER")!.Warning!.Contains("Scroll of Restoration"));
+    Check("UpgradePath: ENCHANT targets the missing non-temper affix", Step(path, "ENCHANT")!.Text.Contains("Dexterity"));
+    Check("UpgradePath: ENCHANT warns it binds the item", Step(path, "ENCHANT")!.Warning!.Contains("binds"));
+    Check("UpgradePath: MASTERWORK estimates Obducite", Step(path, "MASTERWORK")!.Cost!.Contains("Obducite"));
+    Check("UpgradePath: SOCKET fills the empty socket", Step(path, "SOCKET")!.Text.Contains("empty socket"));
+    Check("UpgradePath: IMPRINT names the wanted aspect", Step(path, "IMPRINT")!.Text.Contains("Aspect of Disobedience"));
+
+    // a finished item: all wanted affixes present, masterworked to cap, socket filled, aspect carried ⇒ no steps
+    var doneTarget = new TargetGear { Slot = "Boots", Aspect = "Aspect of the Expectant", Affixes = {
+        new TargetAffix { Name = "Movement Speed" }, new TargetAffix { Name = "Maximum Life" } } };
+    var doneItem = new Item { Name = "Boots of the Expectant", Slot = "boots", IsAncestral = true, Quality = 25,
+        SocketCount = 0, EmptySockets = 0, Aspect = "Aspect of the Expectant",
+        Affixes = { new Affix { Text = "Movement Speed", Value = 16 }, new Affix { Text = "Maximum Life", Value = 900 } } };
+    Eq("UpgradePath: a finished item needs no steps", 0, UpgradePath.ForSlot(doneTarget, doneItem, 50).Count);
+
+    // GA caution on enchant; 2+ wrong affixes ⇒ replace/Focused-Reroll guidance
+    var gaItem = new Item { Name = "GA Helm", Slot = "helm", IsAncestral = true, GreaterAffixCount = 1, Quality = 25,
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
+    var gaPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 1000 }, new TargetAffix { Name = "Dexterity" } } }, gaItem, 50);
+    Check("UpgradePath: ENCHANT on a GA item warns the Greater Affix is at risk", Step(gaPath, "ENCHANT")!.Warning!.Contains("Greater Affix"));
+    var twoWrong = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Intelligence" } } },
+        new Item { Name = "Bad", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+    Check("UpgradePath: 2+ wrong affixes ⇒ replace or Focused Reroll", Step(twoWrong, "ENCHANT")!.Text.Contains("Focused Reroll"));
+
+    // a unique can't be imprinted, so no IMPRINT step even when the slot wants an aspect
+    var uniPath = UpgradePath.ForSlot(new TargetGear { Slot = "Chest", Aspect = "Aspect of Y", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
+        new Item { Name = "Shroud", Slot = "chest", IsUnique = true, Rarity = "Unique", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+    Check("UpgradePath: uniques get no IMPRINT step (can't imprint a unique)", Step(uniPath, "IMPRINT") == null);
+
+    // add-a-socket when below capacity (helm holds 2; item has 1, none empty)
+    var addSock = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
+        new Item { Name = "H", Slot = "helm", IsAncestral = true, Quality = 25, SocketCount = 1, EmptySockets = 0,
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+    Check("UpgradePath: SOCKET suggests adding one when below the slot's capacity",
+        Step(addSock, "SOCKET")!.Text.Contains("Add a socket") && Step(addSock, "SOCKET")!.Cost!.Contains("Scattered Prism"));
+
+    // capstone reroll when masterworked to cap but the +50% landed off-build
+    var capItem = new Item { Name = "Cap Helm", Slot = "helm", IsAncestral = true, Quality = 25, CapstoneAffix = "Thorns",
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } };
+    var capPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } }, capItem, 50);
+    Check("UpgradePath: off-build Capstone ⇒ reroll-Capstone step (Neathiron)",
+        Step(capPath, "MASTERWORK")?.Text.Contains("Capstone") == true && Step(capPath, "MASTERWORK")!.Cost!.Contains("Neathiron"));
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
