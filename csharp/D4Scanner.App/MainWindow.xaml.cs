@@ -1109,7 +1109,7 @@ public partial class MainWindow : Window
                 GameDataIcons.GameDir = CaptureSetup.GameDir();
                 foreach (var u in _target?.Uniques ?? new()) GameDataIcons.Get(u.Image);
                 foreach (var g in _target?.Gear ?? new()) GameDataIcons.Get(g.Image);
-                foreach (var it in _live.Gear) GameDataIcons.Get(BaseIconIndex.HandleForType(it.ItemType, it.Slot));
+                foreach (var it in _live.Gear) GameDataIcons.Get(BaseIconIndex.HandleFor(it.Name, it.ItemType, it.Slot));
                 System.Threading.Thread.Sleep(12000);   // let the single extraction worker drain
                 Render();
             }
@@ -2095,7 +2095,7 @@ public partial class MainWindow : Window
                 () => { try { File.Delete(IconResolver.IndexPath); } catch { } }),
             ("Maxroll data",     "Planner item/affix data — re-fetched on next import",
                 () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
-                () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } }),
+                () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }),
             ("Live gear cache",  "Last-known equipped items — hover new items to rebuild from scratch",
                 () => File.Exists(liveJsonPath) || _live.Gear.Count > 0,
                 () =>
@@ -2586,7 +2586,7 @@ public partial class MainWindow : Window
                 });
             // real game art whenever possible: by item name first, else by the item's base TYPE handle
             var art = SlotOrItemIcon(item.Name, SlotKey(item.Slot ?? ""), rcol, 42, 62,
-                null, BaseIconIndex.HandleForType(item.ItemType, item.Slot));
+                null, BaseIconIndex.HandleFor(item.Name, item.ItemType, item.Slot));
             art.HorizontalAlignment = HorizontalAlignment.Center; art.VerticalAlignment = VerticalAlignment.Center;
             iconGrid.Children.Add(art);
 
@@ -3544,15 +3544,12 @@ public partial class MainWindow : Window
         var tg = _target?.Gear.FirstOrDefault(x =>
             !string.IsNullOrEmpty(x.ItemId) && DiffEngine.PhraseMatch(x.ItemId, it.Name) && x.Image.HasValue);
         if (tg != null) return (it.Name, rcol, it.Name, tg.ItemId, tg.Image);
-        // 3. No build match: for a normal item, resolve a REAL game-data icon by its base item type.
-        //    Legendaries/rares carry no handle of their own, so without this they fall back to the
-        //    tinted slot silhouette. The art is still extracted from the local D4 install (game data).
-        if (!it.IsUnique)
-        {
-            var liveItem = EffectiveLive().Gear.FirstOrDefault(g => DiffEngine.PhraseMatch(g.Name, it.Name));
-            if (BaseIconIndex.HandleForType(liveItem?.ItemType, liveItem?.Slot) is long h)
-                return (it.Name, rcol, it.Name, null, h);
-        }
+        // 3. No build match: resolve a REAL game-data icon by the item's NAME (its own art, even when the
+        //    build doesn't list it — e.g. an equipped Mythic), falling back to its base item type. This now
+        //    covers UNIQUES too: their name resolves to the specific item's handle in the catalog.
+        var liveItem = EffectiveLive().Gear.FirstOrDefault(g => DiffEngine.PhraseMatch(g.Name, it.Name));
+        if (BaseIconIndex.HandleFor(it.Name, liveItem?.ItemType, liveItem?.Slot) is long h)
+            return (it.Name, rcol, it.Name, null, h);
         // 4. Nothing resolved — IconResolver falls back to the tinted slot silhouette.
         return (it.Name, rcol, it.Name, null, null);
     }
@@ -3724,8 +3721,8 @@ public partial class MainWindow : Window
               + (it2.GreaterAffixCount > 0 ? $"  ·  ★{it2.GreaterAffixCount} GA" : "");
 
         // real game art whenever possible: resolve by name first, else by the item's base TYPE
-        var candIcon = BaseIconIndex.HandleForType(cand.ItemType, cand.Slot);
-        var eqIcon = equipped != null ? BaseIconIndex.HandleForType(equipped.ItemType, equipped.Slot) : null;
+        var candIcon = BaseIconIndex.HandleFor(cand.Name, cand.ItemType, cand.Slot);
+        var eqIcon = equipped != null ? BaseIconIndex.HandleFor(equipped.Name, equipped.ItemType, equipped.Slot) : null;
         var left = TooltipPanel("THIS ITEM", cand.Name, RarityBrush(cand.Rarity), SubOf(cand),
             RarityColor(cand.Rarity), RowsFor(cand, equipped), cand.Name, SlotKey(cand.Slot ?? ""), null, candIcon);
         var right = TooltipPanel("EQUIPPED", equipped?.Name ?? "(empty)",
