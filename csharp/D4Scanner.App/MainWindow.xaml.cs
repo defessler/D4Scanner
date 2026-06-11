@@ -34,7 +34,7 @@ public partial class MainWindow : Window
     // item-rarity colors (tuned to match D4's in-game slot coloring)
     // Rare must NOT equal the amber UI accent (#D4A730) — loot must read apart from chrome; legendary reconciled to one hex.
     static readonly Brush RMagic  = B("#4A8FE0"), RRare   = B("#ECE07C"), RLegend = B("#E08A3C"),
-                          RUnique = B("#C4935A"), RMythic = B("#C92B2B"), RAncestral = B("#66D0F8");
+                          RUnique = B("#C4935A"), RMythic = B("#CB7BD9"), RAncestral = B("#66D0F8");  // mythic = D4's purple-pink
     static readonly FontFamily Serif = new(new Uri("pack://application:,,,/"), "./Assets/Fonts/#Cinzel");
     const double UI = 1.3;   // body scale — denser than the old 1.55 large-print, still comfortably readable
 
@@ -2407,9 +2407,17 @@ public partial class MainWindow : Window
         hd.Children.Add(xb);
         // "Clear shown" — tombstone the currently-filtered rows so the app stops listing items you no longer
         // own (salvaged / traded / dropped). With a search active it clears just that subset; otherwise all.
-        var clear = MakeLink("🗑 clear shown", Soft); clear.FontSize = 11.5; clear.Margin = new Thickness(0, 5, 18, 0);
-        DockPanel.SetDock(clear, Dock.Right); hd.Children.Add(clear);
-        clear.MouseLeftButtonUp += (_, _) => ClearShownItems(currentView, slugByFp);
+        // A prominent pill button, disabled (dimmed, no-op) when there's nothing to clear.
+        var clearLbl = TB("🗑  Clear shown", Crimson, 12, true); clearLbl.VerticalAlignment = VerticalAlignment.Center;
+        var clearBtn = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x26, 0xC9, 0x2B, 0x2B)),
+            BorderBrush = Crimson, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(11, 3, 11, 4), Margin = new Thickness(0, 0, 16, 0),
+            VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand, Child = clearLbl,
+        };
+        DockPanel.SetDock(clearBtn, Dock.Right); hd.Children.Add(clearBtn);
+        clearBtn.MouseLeftButtonUp += (_, _) => { if (currentView.Count > 0) ClearShownItems(currentView, slugByFp); };
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
@@ -2457,6 +2465,12 @@ public partial class MainWindow : Window
                 }
             }
             countLbl.Text = view.Count == items.Count ? $"{items.Count} items" : $"{view.Count} of {items.Count} items";
+            // reflect the clearable count; disable the button (dim + no hit test) when there's nothing to clear
+            bool any = view.Count > 0;
+            clearBtn.Opacity = any ? 1.0 : 0.35;
+            clearBtn.IsHitTestVisible = any;
+            clearBtn.Cursor = any ? System.Windows.Input.Cursors.Hand : System.Windows.Input.Cursors.Arrow;
+            clearLbl.Text = any ? $"🗑  Clear shown ({view.Count})" : "🗑  Clear shown";
         }
 
         // tombstone every currently-shown row (the filtered view) so items the player no longer owns stop
@@ -4138,7 +4152,7 @@ public partial class MainWindow : Window
                                                    || SlotKey(u.Slot ?? "") == SlotKey(label))
             : null;
         bool myth = wantUnique?.Mythic == true;
-        Color wrc = wantUnique != null ? (myth ? Col("#D1492E") : Col("#C9A45C")) : Col("#C8A24E");
+        Color wrc = wantUnique != null ? (myth ? Col("#CB7BD9") : Col("#C9A45C")) : Col("#C8A24E");
         Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
         var wp = new StackPanel();
         // unique sections carry the EQUIPPED item's own affixes in g.Items (SelfRows) — those are details
