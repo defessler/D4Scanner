@@ -161,6 +161,7 @@ public sealed class CharacterProfile
     public string Name { get; set; } = "";
     public string? Class { get; set; }            // best-effort, detected from gear (display only)
     public int? Paragon { get; set; }             // last-seen paragon level (for roster matching/display)
+    public int? Torment { get; set; }             // last-seen Torment tier (1-12), for gating drop recommendations
     public long LastSeenUtcTicks { get; set; }
     public LiveBuild Live { get; set; } = new();
     public string? TargetPath { get; set; }       // the target build file this character compares against

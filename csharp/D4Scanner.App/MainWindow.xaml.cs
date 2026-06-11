@@ -927,7 +927,7 @@ public partial class MainWindow : Window
 
         if (id.Class is string cls)
         {
-            BindProfile(ProfileStore.Slugify(id.Name + "-" + cls), id.Name, cls, id.Paragon);
+            BindProfile(ProfileStore.Slugify(id.Name + "-" + cls), id.Name, cls, id.Paragon, id.Torment);
         }
         else
         {
@@ -942,7 +942,7 @@ public partial class MainWindow : Window
 
     // Bind the active character to a profile (creating it if new). Merges freshly-scanned gear OVER the
     // profile's stored loadout so partial scans fill in from last-known state.
-    void BindProfile(string slug, string name, string? cls, int? paragon = null)
+    void BindProfile(string slug, string name, string? cls, int? paragon = null, int? torment = null)
     {
         _activeSlug = slug;
         var stored = _profiles.Get(slug);
@@ -973,6 +973,7 @@ public partial class MainWindow : Window
         prof.Name = name; if (cls != null) prof.Class = cls;
         prof.Live = _live; prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
         if ((_live.Character?.ParagonLevel ?? paragon) is int pl) prof.Paragon = pl;   // char-sheet first, else the char-select read
+        if (torment is int tt) prof.Torment = tt;   // last-seen Torment tier, for gating drop recommendations
         _profiles.Save(prof);
         _profiles.ActiveSlug = slug;
         ApplyProfileTarget(stored);   // load this character's build (or adopt the current one)
@@ -2371,8 +2372,9 @@ public partial class MainWindow : Window
         var verdictByFp = new Dictionary<string, ItemVerdict>(StringComparer.Ordinal);
         if (scoring)
         {
-            var ranked = UpgradeScorer.Score(_target!, live, items, _minRollPct);
-            var vctx = new VerdictContext(_target, activeClass, items);
+            var torment = _activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null;
+            var ranked = UpgradeScorer.Score(_target!, live, items, _minRollPct, torment);
+            var vctx = new VerdictContext(_target, activeClass, items, torment);
             for (int i = 0; i < ranked.Count; i++)
             {
                 var fp = GearList.Fingerprint(ranked[i].Item);
@@ -3088,7 +3090,9 @@ public partial class MainWindow : Window
     // Rendered as a collapsible accordion so it doesn't crowd the guidance rail (collapsed by default).
     FrameworkElement? ActivitiesPanel(DiffReport r)
     {
-        var acts = Activities.Recommend(r);
+        var actCtx = new GuideContext(_activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null,
+                                      _profiles.Get(_activeSlug)?.Class);
+        var acts = Activities.Recommend(r, actCtx);
         var sp = new StackPanel();
 
         // clickable header row: chevron + title + count
@@ -3116,8 +3120,9 @@ public partial class MainWindow : Window
                 row.Children.Add(d);
                 sp.Children.Add(row);
             }
-            // staleness stamp: which season's guidance data these recommendations come from
-            var stamp = TB("Guidance data: " + SeasonPack.Current.SeasonLabel, Faint, 10, false, new Thickness(0, 12, 0, 0));
+            // staleness stamp: which season's guidance data these recommendations come from (+ captured tier)
+            var stamp = TB("Guidance data: " + SeasonPack.Current.SeasonLabel
+                + (actCtx.Torment is int tt ? $"   ·   your Torment: {tt}" : ""), Faint, 10, false, new Thickness(0, 12, 0, 0));
             stamp.TextWrapping = TextWrapping.Wrap; sp.Children.Add(stamp);
         }
         return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 13, 18, _activitiesOpen ? 14 : 13), Margin = new Thickness(0, 0, 0, 14) };

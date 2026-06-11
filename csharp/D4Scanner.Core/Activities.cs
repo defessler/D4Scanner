@@ -3,6 +3,10 @@ namespace D4Scanner.Core;
 /// <summary>A recommended in-game activity / crafting action, tailored to what the build still needs.</summary>
 public sealed record Activity(string Title, string Detail);
 
+/// <summary>What the guidance engine knows about the player beyond the diff: their Torment tier (for gating
+/// drop recommendations) and class. Both optional — guidance degrades gracefully when unknown.</summary>
+public sealed record GuideContext(int? Torment = null, string? Class = null);
+
 /// <summary>
 /// Turns the remaining gaps in a <see cref="DiffReport"/> into a short, build-specific list of what to go DO in
 /// Diablo IV — which activities to run for loot and which crafter to visit — so the guidance answers not just
@@ -11,7 +15,7 @@ public sealed record Activity(string Title, string Detail);
 /// </summary>
 public static class Activities
 {
-    public static List<Activity> Recommend(DiffReport r)
+    public static List<Activity> Recommend(DiffReport r, GuideContext? ctx = null)
     {
         var pack = SeasonPack.Current;
         var acts = new List<Activity>();
@@ -40,6 +44,19 @@ public static class Activities
         if (under && !missAffix && !needTemper) Add("greaterAffixes");
 
         if (missGlyph) Add("glyphs");
+
+        // Torment gating: when we know the player's tier and the build still wants gear, point them at the
+        // next tier that unlocks better drops (Greater Lair Keys, sharper Greater-Affix odds, Sparks…).
+        if (ctx?.Torment is int t && t < 12 && r.Pct < 100)
+        {
+            var nextGate = pack.TormentGates.FirstOrDefault(g => g.Tier > t);
+            if (nextGate != null)
+            {
+                var pit = pack.PitForTorment(nextGate.Tier);
+                acts.Add(new($"Push to Torment {nextGate.Tier}" + (pit is int p ? $" — clear Pit {p}" : ""),
+                    $"You're on Torment {t}. Torment {nextGate.Tier} unlocks {nextGate.Unlocks}; higher tiers also raise Greater Affix odds and item rolls."));
+            }
+        }
 
         // When several different activities are recommended, suggest bundling them into a War Plan.
         if (acts.Count >= 3) Add("warPlans");

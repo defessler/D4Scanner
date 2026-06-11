@@ -10,6 +10,7 @@ public sealed class CharSelectIdentity
     public string? Realm { get; set; }     // "Seasonal" / "Eternal" (+ hardcore variants)
     public int? Paragon { get; set; }      // from "Paragon N"; null for low-level characters voiced as "Level N"
     public int? Level { get; set; }
+    public int? Torment { get; set; }      // from the "Torment XI" line that follows Paragon/Level (1-12); null if not voiced
 }
 
 /// <summary>
@@ -37,6 +38,20 @@ public sealed class CharSelectParser
 
     static readonly Regex ReParagon = new(@"^Paragon\s+(\d{1,4})$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     static readonly Regex ReLevel = new(@"^Level\s+(\d{1,3})$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // the difficulty line voiced in the detail block after Paragon/Level, e.g. "Torment XI" (Roman I-XII)
+    static readonly Regex ReTorment = new(@"^Torment\s+([IVXLC]+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    static int? RomanToInt(string s)
+    {
+        int total = 0, prev = 0;
+        foreach (var ch in s.ToUpperInvariant().Reverse())
+        {
+            int v = ch switch { 'I' => 1, 'V' => 5, 'X' => 10, 'L' => 50, 'C' => 100, _ => 0 };
+            if (v == 0) return null;
+            if (v < prev) total -= v; else { total += v; prev = v; }
+        }
+        return total is > 0 and <= 12 ? total : (int?)null;
+    }
     // D4 character names are a single word of letters only (2-16); rejects nameplate/clan-decorated text.
     static readonly Regex ReName = new(@"^[A-Za-z]{2,16}$", RegexOptions.Compiled);
 
@@ -110,7 +125,18 @@ public sealed class CharSelectParser
         // ---- detail-block state machine (only meaningful while at character-select) ----
         if (InCharSelect)
         {
-            if (_pendingBlock != null)
+            if (ReTorment.IsMatch(line))
+            {
+                // the difficulty line follows the just-completed block — stamp it onto the highlighted character
+                if (Highlighted != null && Highlighted.Torment == null)
+                {
+                    Highlighted.Torment = RomanToInt(ReTorment.Match(line).Groups[1].Value);
+                    var seen = Seen.LastOrDefault(s => s.Name.Equals(Highlighted.Name, StringComparison.OrdinalIgnoreCase)
+                                                    && s.Class == Highlighted.Class && s.Realm == Highlighted.Realm);
+                    if (seen != null) seen.Torment = Highlighted.Torment;
+                }
+            }
+            else if (_pendingBlock != null)
             {
                 // the line right after the class decides: "Paragon N" / "Level N" completes the block
                 var pm = ReParagon.Match(line); var lm = ReLevel.Match(line);
