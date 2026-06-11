@@ -3100,6 +3100,9 @@ public partial class MainWindow : Window
                 row.Children.Add(d);
                 sp.Children.Add(row);
             }
+            // staleness stamp: which season's guidance data these recommendations come from
+            var stamp = TB("Guidance data: " + SeasonPack.Current.SeasonLabel, Faint, 10, false, new Thickness(0, 12, 0, 0));
+            stamp.TextWrapping = TextWrapping.Wrap; sp.Children.Add(stamp);
         }
         return new Border { Child = sp, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(18, 13, 18, _activitiesOpen ? 14 : 13), Margin = new Thickness(0, 0, 0, 14) };
     }

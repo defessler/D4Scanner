@@ -54,8 +54,11 @@ public static class BuildGuide
             }
 
         // tier 1 — build-defining: missing uniques, aspects, skills/passives, paragon
+        var belial = SeasonPack.Current.BossLadder.Universal.Name;
+        string uniqueHint = string.IsNullOrEmpty(belial) ? "its dedicated Lair Boss · Obol gamble"
+                                                          : $"its dedicated Lair Boss · {belial} (any table) · Obol gamble";
         foreach (var (_, i) in CatItems(r, "uniques").Where(x => !x.i.Done))
-            acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have: " + i.Have + " — equip it" : "boss drop / Tormented Boss / Obol gamble", $"Track down {i.Label}", "cat:uniques"));
+            acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have: " + i.Have + " — equip it" : uniqueHint, $"Track down {i.Label}", "cat:uniques"));
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
             acts.Add(new GuideStep(1, "IMPRINT", i.Label, "at the Occultist", $"Imprint the {i.Label}", "cat:aspects"));
         // Note: seals/charms have no target in the build schema yet — when added, route here

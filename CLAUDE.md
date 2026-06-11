@@ -11,7 +11,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 | Command | What it does |
 |---|---|
 | `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
-| `/test` | Run the 92-assertion Core test suite; report pass/fail and any failing names |
+| `/test` | Run the Core test suite (~515 assertions); report pass/fail and any failing names |
 | `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
 | `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
 | `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
@@ -24,7 +24,7 @@ These live in `.claude/commands/` and are available in any Claude Code session i
 # Build (must be error-free before shipping)
 dotnet build csharp/D4Scanner.App --no-incremental -c Release
 
-# Tests (92 assertions; must all pass)
+# Tests (~515 assertions; must all pass)
 dotnet run --project csharp/D4Scanner.Tests
 
 # Publish local exe (use to smoke-test before a release commit)
@@ -56,8 +56,9 @@ csharp/
     DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring
     BuildGuide.cs           prioritised "Do Next" steps (FIND/GET/IMPROVE/TEMPER/…)
     Substitutes.cs          best-owned stand-ins + Now/Better/Best ladder
-    Activities.cs           farming/crafting recommendations (Season 8)
-    InfernalHordesAdvisor.cs  offering heuristic based on build gaps
+    Activities.cs           farming/crafting recommendations (reads SeasonPack)
+    InfernalHordesAdvisor.cs  Hordes-spoil heuristic based on build gaps (reads SeasonPack)
+    SeasonPack.cs           season-volatile guidance data (Assets/season_pack.json + local override)
     LootFilter.cs           export: markdown checklist + D4Companion JSON
     GameDataIcons.cs        real item icons from the local D4 install (CASC + BCn decode)
     IconResolver.cs         multi-source icon resolver (game-data → GitHub CDN → silhouette)

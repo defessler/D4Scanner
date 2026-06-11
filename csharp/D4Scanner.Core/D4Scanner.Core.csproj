@@ -18,5 +18,7 @@
   <ItemGroup>
     <!-- bundled handle->atlas map for game-data icon extraction (generated from DiabloTools/d4data) -->
     <EmbeddedResource Include="Assets\icon_atlas_map.json" />
+    <!-- season-volatile guidance data (activity copy, spoils, boss ladder, tier gates, crafting constants) -->
+    <EmbeddedResource Include="Assets\season_pack.json" />
   </ItemGroup>
 </Project>

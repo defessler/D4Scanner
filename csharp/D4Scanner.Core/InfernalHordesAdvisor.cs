@@ -1,66 +1,52 @@
 namespace D4Scanner.Core;
 
 /// <summary>
-/// Recommends the optimal Infernal Hordes reward chest ("offering") based on the current build gaps.
-/// Each offering provides different loot types; the advisor picks whichever maximises build progress.
-/// Offerings are evaluated in priority order — the first matching heuristic wins.
+/// Recommends the best Infernal Hordes end-of-run reward ("spoil") for the player's current build gaps.
+/// The live game offers four spoils — Greater Equipment, Materials, Gold, and summoning Bartuc — purchased
+/// with the Burning Aether earned during the run; the advisor picks whichever most advances the build.
+/// Spoil names and Aether costs come from <see cref="SeasonPack"/>; heuristics are evaluated in priority
+/// order, first match wins.
 /// </summary>
 public static class InfernalHordesAdvisor
 {
-    /// <summary>All known Infernal Hordes offering names (canonical Season 8 names).</summary>
-    public static class Offerings
-    {
-        public const string Realm    = "Spoils of the Realm";    // legendary gear → best for missing uniques
-        public const string Vault    = "Spoils of the Vault";    // gold + crafting mats (Forgotten Souls, Manuals)
-        public const string Battle   = "Spoils of Battle";       // summoning materials / boss keys
-        public const string Darkness = "Spoils of Darkness";     // Nightmare Sigils for NMD farming
-        public const string Creation = "Spoils of Creation";     // gems and runes for socketing
-        public const string Salvation = "Spoils of Salvation";   // consumables (potions); lowest value
-    }
-
     /// <summary>
-    /// Recommends the best Infernal Hordes offering for the player's current build state.
+    /// Recommends the best Infernal Hordes spoil for the player's current build state.
     /// </summary>
     public static (string Offering, string Reason) RecommendOffering(DiffReport report, string? targetClass = null)
     {
+        var pack = SeasonPack.Current;
         var gear    = report.Categories.FirstOrDefault(c => c.Id == "gear");
         var uniques = report.Categories.FirstOrDefault(c => c.Id == "uniques");
-        var paragon = report.Categories.FirstOrDefault(c => c.Id == "paragon");
 
-        // 1. Missing uniques → legendary gear chest (HIGH confidence)
+        var gearSpoil = pack.Spoil("gear");        // Spoils of Greater Equipment (≥1 Ancestral Legendary + scrolls)
+        var matSpoil  = pack.Spoil("materials");   // Spoils of Materials (Obducite / Forgotten Souls / Gem Fragments)
+        var goldSpoil = pack.Spoil("gold");        // Spoils of Gold
+        var bartuc    = pack.Spoil("bartuc");      // summon Bartuc (his unique table + Neathiron)
+
+        // 1. Empty slots / many missing uniques → the Ancestral-gear chest fills slots fastest.
         if (UniquesNeedFarming(gear, uniques))
-            return (Offerings.Realm,
-                "Missing key uniques — legendary drops from Realm chests improve unique drop rates.");
+            return (gearSpoil.Name,
+                $"Slots still empty — {gearSpoil.Name} ({gearSpoil.Aether} Aether) guarantees an Ancestral Legendary plus Scrolls of Restoration.");
 
-        // 2. Affixes need crafting/enchanting (HIGH confidence)
+        // 2. Affixes to enchant / temper → crafting materials.
         var (craftNeeded, craftCount) = CraftingAffixesNeeded(gear);
         if (craftNeeded)
-            return (Offerings.Vault,
-                $"{craftCount} affix{(craftCount == 1 ? "" : "es")} need enchanting or tempering — Vault chests provide Forgotten Souls and Tempering Manuals.");
+            return (matSpoil.Name,
+                $"{craftCount} affix{(craftCount == 1 ? "" : "es")} to enchant or temper — {matSpoil.Name} yields Forgotten Souls and Obducite for the work.");
 
-        // 3. Sockets need filling with gems/runes (MEDIUM-HIGH confidence)
+        // 3. Sockets to fill → Gem Fragments from the materials spoil.
         if (SocketsNeeded(gear))
-            return (Offerings.Creation,
-                "Multiple gear slots want gems or runes — Creation chests drop raw gems and runes for crafting at the Jeweler.");
+            return (matSpoil.Name,
+                $"Multiple slots want gems — {matSpoil.Name} drops the Gem Fragments to craft them at the Jeweler.");
 
-        // 4. Glyphs need leveling (MEDIUM confidence)
-        if (GlyphsNeedLeveling(paragon))
-            return (Offerings.Darkness,
-                "Glyphs need leveling — Darkness chests provide Nightmare Sigils to run Nightmare Dungeons for glyph XP.");
-
-        // 5. Boss summoning needed (MEDIUM confidence, broad class coverage)
-        if (BossSummoningNeeded(uniques, targetClass))
-            return (Offerings.Battle,
-                "Farm Tormented Bosses for uniques — Battle chests provide summoning materials for boss key crafting.");
-
-        // 6. Build mostly complete, roll polishing active (MEDIUM confidence)
+        // 4. Gear in place but under-rolled → push Quality, and chase Neathiron from Bartuc for Capstones.
         if (gear != null && gear.Under >= 3 && gear.Pct >= 70)
-            return (Offerings.Vault,
-                "Most gear is present but under-rolled — Vault materials support Masterwork and enchanting for roll improvements.");
+            return (bartuc.Name,
+                $"Gear's in place but under-rolled — spend {bartuc.Aether} Aether on {bartuc.Name} for Neathiron (rerolls Masterwork Capstones) and his unique table.");
 
-        // Fallback: legendary gear is always useful
-        return (Offerings.Realm,
-            "Legendary gear drops are broadly useful for backup slots and affix rerolling.");
+        // Fallback: gold funds enchant and Capstone rerolls and is never a wasted pick.
+        return (goldSpoil.Name,
+            $"{goldSpoil.Name} funds the gold cost of enchanting and Capstone rerolls — never wasted while you're still crafting.");
     }
 
     // ---- Heuristic helpers ----
@@ -86,21 +72,5 @@ public static class InfernalHordesAdvisor
     {
         if (gear == null) return false;
         return gear.Groups.Count(g => g.WantSockets.Count > 0) >= 2;
-    }
-
-    static bool GlyphsNeedLeveling(Category? paragon)
-    {
-        if (paragon == null) return false;
-        var glyphs = paragon.Groups.FirstOrDefault(g =>
-            g.Name.Equals("Glyphs", StringComparison.OrdinalIgnoreCase));
-        return glyphs?.Items.Any(i => !i.Done) == true;
-    }
-
-    static bool BossSummoningNeeded(Category? uniques, string? targetClass)
-    {
-        if (uniques == null || uniques.Pct >= 80) return false;
-        // All classes benefit from boss farming, but especially summoner archetypes
-        var cls = (targetClass ?? "").ToLowerInvariant();
-        return cls is "necromancer" or "barbarian" or "druid" or "spiritborn";
     }
 }
