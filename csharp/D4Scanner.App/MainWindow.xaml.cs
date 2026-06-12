@@ -185,7 +185,6 @@ public partial class MainWindow : Window
     string _log = TargetLoader.DefaultLogPath();
     string? _targetPath;
     DateTime _targetMtime;
-    double _minRollPct = 75;
     double _uiScale = 1.0;    // body zoom factor (Ctrl +/-/0), on top of the base UI scale
     string? _lastUrl;
     string? _selectedKey;    // which slot/category tile is expanded in the detail panel
@@ -247,15 +246,7 @@ public partial class MainWindow : Window
         HelpBtn.Click += (_, _) => ToggleHelp();
         // NextBtn removed from header — "View all steps" link lives inside the DO NEXT panel
         SettingsBtn.Click += (_, _) => ShowSettings();
-        ThreshSlider.Value = _minRollPct;          // reflect the persisted threshold
-        ThreshLbl.Text = ((int)_minRollPct) + "%";
-        ThreshSlider.ValueChanged += (_, _) =>
-        {
-            _minRollPct = ThreshSlider.Value;
-            ThreshLbl.Text = ((int)_minRollPct) + "%";
-            SaveSettings();                        // remember the user's choice
-            Render();
-        };
+        // (the roll-quality threshold slider is gone — max roll is the universal display baseline)
 
         // ---- smart import box: placeholder + fuzzy autocomplete ----
         UrlBox.TextChanged += (_, _) =>
@@ -451,8 +442,6 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("log", out var l) && !string.IsNullOrEmpty(l)) _log = l;
                     if (s.TryGetValue("url", out var u)) _lastUrl = u;
                     if (s.TryGetValue("detailView", out var dv) && !string.IsNullOrEmpty(dv)) _detailView = dv;
-                    if (s.TryGetValue("minRoll", out var mr) && double.TryParse(mr, System.Globalization.CultureInfo.InvariantCulture, out var mrv))
-                        _minRollPct = Math.Clamp(mrv, 0, 100);
                     if (s.TryGetValue("zoom", out var z) && double.TryParse(z, System.Globalization.CultureInfo.InvariantCulture, out var zv))
                         _uiScale = Math.Clamp(zv, 0.7, 1.6);
                     if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
@@ -494,7 +483,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["minRoll"] = ((int)_minRollPct).ToString(inv), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["invSort"] = _invSort?.ToString() }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["invSort"] = _invSort?.ToString() }));
         }
         catch { }
     }
@@ -1187,7 +1176,7 @@ public partial class MainWindow : Window
             Status.Text = $"waiting for first scan  ·  {Updater.RunningVersion()}";
             return;
         }
-        var r = DiffEngine.Diff(_target, EffectiveLive(), _minRollPct);
+        var r = DiffEngine.Diff(_target, EffectiveLive());
         UpdateBuildNamePlaceholder();
         // Only count requirements we can actually detect from the screen reader. Skills / paragon boards+glyphs /
         // mercenary aren't trackable, so counting them as "missing" would permanently cap the build below 100%.
@@ -1197,7 +1186,7 @@ public partial class MainWindow : Window
         int tPct = tTotal > 0 ? (int)Math.Round(100.0 * tMatched / tTotal) : 0;
         OverallPct.Text = tPct + "%";
         OverallCount.Text = $"{tMatched} / {tTotal} met  ·  {_live.Gear.Count} equipped items"
-            + (tUnder > 0 ? $"  ·  ⚠ {tUnder} under-rolled" : "");
+            + (tUnder > 0 ? $"  ·  ⚠ {tUnder} below build min" : "");
         OverallBar.Value = tPct;
 
         if (_rawView)
@@ -1278,7 +1267,7 @@ public partial class MainWindow : Window
                 // so the slot shows what's still missing on it; fall back to the item's own affixes when the
                 // build lists no specific unique affixes.
                 grp.Items = u.Affixes.Count > 0
-                    ? DiffEngine.EvalSlot(new TargetGear { Slot = u.Slot ?? "", Affixes = u.Affixes }, eq, _target!.MinRollPercent ?? _minRollPct, out _)
+                    ? DiffEngine.EvalSlot(new TargetGear { Slot = u.Slot ?? "", Affixes = u.Affixes }, eq, out _)
                     : DiffEngine.SelfRows(eq);
             }
             sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
@@ -2078,18 +2067,8 @@ public partial class MainWindow : Window
 
         // ── DISPLAY section ───────────────────────────────────────────────────
         Section("DISPLAY");
-
-        // affix roll quality slider
-        sp.Children.Add(TBs("Affix roll quality threshold", Ink, 13, true, new Thickness(0, 0, 0, 4)));
-        var thrDesc = TB("Affixes whose roll falls below this % of their range are flagged ⚠ under-rolled.", Soft, 11.5, false);
-        thrDesc.TextWrapping = TextWrapping.Wrap; thrDesc.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(thrDesc);
-        var thrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var thrLbl = TBs(((int)_minRollPct) + "%", Gold, 13.5, true);   // neutral readout — crimson is for errors only
-        thrLbl.VerticalAlignment = VerticalAlignment.Center; thrLbl.MinWidth = 38; thrLbl.TextAlignment = TextAlignment.Right;
-        DockPanel.SetDock(thrLbl, Dock.Right); thrRow.Children.Add(thrLbl);
-        var thrSlider = new System.Windows.Controls.Slider { Minimum = 0, Maximum = 100, Value = _minRollPct, TickFrequency = 5, IsSnapToTickEnabled = true, VerticalAlignment = VerticalAlignment.Center };
-        thrSlider.ValueChanged += (_, _) => { _minRollPct = thrSlider.Value; ThreshSlider.Value = _minRollPct; ThreshLbl.Text = thrLbl.Text = ((int)_minRollPct) + "%"; SaveSettings(); Render(); };
-        thrRow.Children.Add(thrSlider); sp.Children.Add(thrRow);
+        // (the affix roll-quality threshold slider is gone: roll bars measure toward the MAX roll —
+        //  the 100% baseline — and "below build min" warnings come only from the build's own minimums)
 
         ToggleRow("Debug info", "Show last-scan time and slot key diagnostics on each paper-doll cell.", _debugMode, on => { _debugMode = on; SaveSettings(); Render(); });
 
@@ -2403,7 +2382,7 @@ public partial class MainWindow : Window
             grp.Items.Add(new ReqItem
             {
                 Label = aff.Text, Val = val, Need = need,
-                Done = true, Status = string.IsNullOrEmpty(need) ? "met" : (pct >= 75 ? "met" : "under"),
+                Done = true, Status = "met",   // a raw item has no build minimum — presence is met; the bar shows roll quality
                 RollPct = pct, Tempered = false,
             });
         }
@@ -2462,7 +2441,7 @@ public partial class MainWindow : Window
         if (scoring)
         {
             var torment = _activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null;
-            var ranked = UpgradeScorer.Score(_target!, live, items, _minRollPct, torment);
+            var ranked = UpgradeScorer.Score(_target!, live, items, torment);
             var vctx = new VerdictContext(_target, activeClass, items, torment);
             for (int i = 0; i < ranked.Count; i++)
             {
@@ -3426,7 +3405,7 @@ public partial class MainWindow : Window
         }
         Entry("↑", Green, "upgrade in bags");
         Entry("#1", Amber, "priority");
-        Entry("⚠", Amber, "under-rolled");
+        Entry("⚠", Amber, "below build min");
         return row;
     }
 
@@ -3454,7 +3433,7 @@ public partial class MainWindow : Window
         var gear = sections.Where(s => s.Gear != null).ToList();
         var cats = sections.Where(s => s.Cat != null).ToList();
 
-        // equipment priority: missing first, then under-rolled, then met; number 1..N
+        // equipment priority: missing first, then below-build-min, then met; number 1..N
         var ordered = gear
             .OrderBy(s => s.Status == "missing" ? 0 : s.Status == "under" ? 1 : 2)
             .ThenByDescending(s => s.Total - s.Matched)
@@ -3873,15 +3852,13 @@ public partial class MainWindow : Window
                 .OrderBy(x => tg != null ? DiffEngine.PresenceCount(tg, x) : 0)
                 .FirstOrDefault();
         }
-        double gate = _target?.MinRollPercent ?? _minRollPct;
-
         StackPanel RowsFor(Item? item, Item? other)
         {
             var rows = new StackPanel();
             if (tg != null)
             {
-                var mine = DiffEngine.EvalSlot(tg, item, gate, out _);
-                var theirs = DiffEngine.EvalSlot(tg, other, gate, out _);
+                var mine = DiffEngine.EvalSlot(tg, item, out _);
+                var theirs = DiffEngine.EvalSlot(tg, other, out _);
                 for (int i = 0; i < mine.Count; i++)
                 {
                     double? delta = mine[i].ValueNum != null && theirs[i].ValueNum != null
@@ -4037,7 +4014,7 @@ public partial class MainWindow : Window
         var hi = s.Gear != null ? SlotIcon(SlotKey(s.Label), col, 30) : null;
         if (hi != null) { hi.Margin = new Thickness(0, 0, 12, 0); DockPanel.SetDock(hi, Dock.Left); hdr.Children.Add(hi); }
         hdr.Children.Add(TBs((hi == null ? glyph + "  " : "") + s.Label + $"     {s.Matched} / {s.Total} met"
-            + (s.Under > 0 ? $"  ·  ⚠ {s.Under} under-rolled" : ""), col, 17, true));
+            + (s.Under > 0 ? $"  ·  ⚠ {s.Under} below build min" : ""), col, 17, true));
         sp.Children.Add(hdr);
 
         if (s.Gear != null)
@@ -4085,7 +4062,7 @@ public partial class MainWindow : Window
                 DiffEngine.PhraseMatch(x.Name, it.Name) && DiffEngine.SlotBaseName(x.Slot) == DiffEngine.SlotBaseName(_target.Gear[gi].Slot));
             if (liveItem != null)
             {
-                var path = UpgradePath.ForSlot(_target.Gear[gi], liveItem, _target.MinRollPercent ?? _minRollPct);
+                var path = UpgradePath.ForSlot(_target.Gear[gi], liveItem);
                 if (path.Count > 0) sp.Children.Add(UpgradePathBlock(path));
             }
         }
@@ -4122,7 +4099,7 @@ public partial class MainWindow : Window
     SlotSub? SubFor(Section s)
     {
         if (_target == null || s.Gear == null || !s.Key.StartsWith("gear:") || !int.TryParse(s.Key.AsSpan(5), out var gi)) return null;
-        var plan = Substitutes.Plan(_target, EffectiveLive(), _target.MinRollPercent ?? _minRollPct);
+        var plan = Substitutes.Plan(_target, EffectiveLive());
         return gi >= 0 && gi < plan.Count ? plan[gi] : null;
     }
 
@@ -4380,9 +4357,9 @@ public partial class MainWindow : Window
         {
             if (wantUnique != null && wantUnique.Affixes.Count > 0)
             {
-                var uwTg = new TargetGear { Slot = wantUnique.Slot ?? "", Affixes = wantUnique.Affixes };
-                foreach (var i in DiffEngine.EvalSlot(uwTg, null, _target!.MinRollPercent ?? _minRollPct, out _))
-                    wp.Children.Add(WantedRow(i));
+                var uniRows = DiffEngine.EvalSlot(new TargetGear { Slot = wantUnique.Slot ?? "", Affixes = wantUnique.Affixes }, null, out _);
+                AnnotateMaxTargets(uniRows);
+                foreach (var i in uniRows) wp.Children.Add(WantedRow(i));
                 wp.Children.Add(TB("secondary affixes roll per copy — chase a better copy from its Lair Boss", Soft, 11, false));
             }
             else
@@ -4390,7 +4367,10 @@ public partial class MainWindow : Window
                                                       : "any unique that fits this slot", Soft, 11.5, false));
         }
         else
+        {
+            AnnotateMaxTargets(g.Items);   // BUILD WANTS shows a VALUE on every row it can source
             foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
+        }
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
         // Real icon: the unique's own art when targeted, else the build's gear-slot template (id/image).
@@ -4435,24 +4415,44 @@ public partial class MainWindow : Window
         };
     }
 
+    /// <summary>Status → row treatment under the 100% baseline: "below build min" rows get a red→yellow
+    /// urgency ramp toward the explicit minimum; a Greater Affix EXCEEDS the normal ceiling and gets the
+    /// orange→purple treatment; met rows stay green; extras/missing keep their muted look. The bar fill
+    /// may be a gradient — RollBar handles both.</summary>
+    (string glyph, Brush col, Brush barFill) RampLook(ReqItem i)
+    {
+        if (i.Status == "extra")   return ("◇", Faint, Faint);
+        if (i.Status == "missing") return ("◇", Miss, Miss);
+        if (i.IsGreater)           return ("◆", RMythic, new LinearGradientBrush(Col("#E08A3C"), Col("#B469D6"), 0));
+        if (i.Status == "under")   return ("◆", Amber, new LinearGradientBrush(Col("#C84B4B"), Col("#E0C25A"), 0));
+        return ("◆", Green, Green);
+    }
+
     // left panel row: your rolled value + roll quality, colored by how it compares to the target
     UIElement EquippedRow(ReqItem i, double? ghostPct = null, double? delta = null, bool deltaPercent = false)
     {
-        var (glyph, col) = Look(i.Status);
+        var (glyph, col, barFill) = RampLook(i);
         var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var mk = TB(glyph, col, 12.5, true); mk.VerticalAlignment = VerticalAlignment.Top; mk.Margin = new Thickness(0, 1, 0, 0);
+        // umbrella-satisfied "All …" rows glow softly — the broad affix is quietly doing several jobs
+        if (!string.IsNullOrEmpty(i.ViaUmbrella))
+            mk.Effect = new System.Windows.Media.Effects.DropShadowEffect
+            { Color = Col("#D4A730"), BlurRadius = 9, ShadowDepth = 0, Opacity = 0.9 };
         Grid.SetColumn(mk, 0); g.Children.Add(mk);
         var mid = new StackPanel();
         var line = new StackPanel { Orientation = Orientation.Horizontal };
         if (i.Status != "missing" && !string.IsNullOrEmpty(i.Val)) line.Children.Add(TB(i.Val + "  ", col, 13, true));
-        if (i.IsGreater) { var st = TBs("★ ", Gold, 12.5, true); st.ToolTip = "Greater Affix (1.5× max roll)"; st.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(st); }
+        if (i.IsGreater) { var st = TBs("★ ", Gold, 12.5, true); st.ToolTip = "Greater Affix (1.5× max roll) — exceeds the normal ceiling"; st.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(st); }
         line.Children.Add(TB(i.Status == "missing" ? "— " + i.Label : i.Label, i.Status == "missing" ? Faint : i.IsGreater ? Gold : Ink, 13, false));
-        // the build's target for this affix is always visible — even when the item doesn't have it,
-        // in the same current/target shape ("0 / 1,500") as the rows that do
+        // the target for this affix is always visible: "/ ≥ 1,500" for a build minimum; "· max 1,600"
+        // for the 100%-baseline display target (a goal, not a requirement)
         if (!string.IsNullOrEmpty(i.Need))
-            line.Children.Add(TB(i.Status == "missing" ? "   " + MissingCurrentTarget(i.Need!) : $"   / {i.Need}", Faint, 11, false));
+            line.Children.Add(TB(
+                i.NeedIsMax ? "   · " + i.Need
+                : i.Status == "missing" ? "   " + MissingCurrentTarget(i.Need!)
+                : $"   / {i.Need}", Faint, 11, false));
         if (delta is double d && Math.Abs(d) > 0.0001)
             line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (deltaPercent ? "%" : ""),
                 d > 0 ? Green : Crimson, 11.5, true));
@@ -4464,16 +4464,34 @@ public partial class MainWindow : Window
             via.ToolTip = "Covered by an umbrella affix"; line.Children.Add(via);
         }
         mid.Children.Add(line);
-        // every affix row carries the bar: real roll quality when measurable, full/half for met/under
-        // presence without a range, empty (threshold tick only) when missing — current vs target at a glance
+        // every affix row carries the bar: real roll quality toward the MAX roll (the 100% baseline);
+        // the tick marks the build's explicit minimum when it has one — never a global gate
         double pct = i.RollPct ?? (i.Status == "met" ? 100 : i.Status == "under" ? 55 : 0);
-        var bar = RollBar(pct, col, 200, 7, _minRollPct, ghostPct); bar.Margin = new Thickness(0, 4, 0, 0);
+        var bar = RollBar(pct, barFill, 200, 7, i.ThresholdPct, ghostPct); bar.Margin = new Thickness(0, 4, 0, 0);
         mid.Children.Add(bar);
         Grid.SetColumn(mid, 1); g.Children.Add(mid);
         return g;
     }
 
-    // right panel row: what the build asks for + its threshold
+    /// <summary>Fill the "max X" display target on rows that have no value yet: the ceiling is harvested
+    /// from ANY owned copy of the affix (equipped, bags, other characters) — so BUILD WANTS shows a real
+    /// number even for an affix the evaluated item doesn't carry. Rows that still have nothing render an
+    /// em-dash (honest "ceiling unknown") rather than a blank.</summary>
+    void AnnotateMaxTargets(IReadOnlyList<ReqItem> rows)
+    {
+        var blank = rows.Where(r => string.IsNullOrEmpty(r.Need)).ToList();
+        if (blank.Count == 0) return;
+        var live = EffectiveLive();
+        var ceil = AffixCeilings.Harvest(blank.Select(r => r.Label), (live.Gear ?? new()).Concat(live.Inventory ?? new()));
+        foreach (var r in blank)
+            if (ceil.TryGetValue(r.Label, out var c) && c > 0)
+            {
+                r.Need = "max " + c.ToString(r.IsPercent ? "#,0.#" : "#,0") + (r.IsPercent ? "%" : "");
+                r.NeedIsMax = true;
+            }
+    }
+
+    // right panel row: what the build asks for + the VALUE it wants (explicit minimum, else max-roll target)
     UIElement WantedRow(ReqItem i)
     {
         var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
@@ -4486,7 +4504,9 @@ public partial class MainWindow : Window
         nmline.Children.Add(TB(i.Label, Ink, 13, false));
         if (i.Tempered) nmline.Children.Add(TemperedBadge());
         Grid.SetColumn(nmline, 1); g.Children.Add(nmline);
-        var nd = TB(i.Need ?? "", Soft, 11.5, false); nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
+        var nd = TB(i.Need ?? "—", i.NeedIsMax || i.Need == null ? Faint : Soft, 11.5, false);
+        if (i.NeedIsMax) nd.ToolTip = "max-roll target (the 100% baseline) — a goal, not a build requirement";
+        nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
         Grid.SetColumn(nd, 2); g.Children.Add(nd);
         return g;
     }
@@ -4520,7 +4540,7 @@ public partial class MainWindow : Window
 
     UIElement AffixRow(ReqItem i)
     {
-        var (glyph, col) = Look(i.Status);
+        var (glyph, col, barFill) = RampLook(i);
         var row = new Grid { Margin = new Thickness(0, 5, 0, 5) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });               // mark
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label
@@ -4528,13 +4548,16 @@ public partial class MainWindow : Window
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });              // value (fixed → aligned)
 
         var mark = TB(glyph, col, 14, true); mark.VerticalAlignment = VerticalAlignment.Center;
+        if (!string.IsNullOrEmpty(i.ViaUmbrella))
+            mark.Effect = new System.Windows.Media.Effects.DropShadowEffect
+            { Color = Col("#D4A730"), BlurRadius = 9, ShadowDepth = 0, Opacity = 0.9 };
         Grid.SetColumn(mark, 0); row.Children.Add(mark);
         var lbl = TB(i.Label, i.Status == "met" ? Soft : Ink, 14, false); lbl.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
 
         if (i.Status != "missing" && i.RollPct != null)
         {
-            var bar = RollBar(i.RollPct.Value, col, 190, 12, _minRollPct);
+            var bar = RollBar(i.RollPct.Value, barFill, 190, 12, i.ThresholdPct);
             bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
         }
 
@@ -4551,13 +4574,16 @@ public partial class MainWindow : Window
 
     // a roll-quality bar: inset track + gradient fill at pct% of width, with an optional
     // target-threshold tick so you can see how far the roll is from where the build wants it.
+    // The fill may itself be a gradient (the under/exceeds ramps) — solid brushes get the
+    // classic lighten-to-color sheen, anything else fills as supplied.
     FrameworkElement RollBar(double pct, Brush fill, double w = 190, double h = 12, double? threshold = null, double? ghostPct = null)
     {
         var g = new Grid { Width = w, Height = h, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         g.Children.Add(new Border { Background = B("#1A1B20"), BorderBrush = B("#0A0A0C"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(h / 2) });
 
-        var fc = ((SolidColorBrush)fill).Color;
-        var grad = new LinearGradientBrush(Lighten(fc, 0.22), fc, 0);
+        Brush grad = fill is SolidColorBrush sc
+            ? new LinearGradientBrush(Lighten(sc.Color, 0.22), sc.Color, 0)
+            : fill;
         if (pct > 0)
             g.Children.Add(new Border
             {
@@ -4593,7 +4619,7 @@ public partial class MainWindow : Window
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         var tCats = r.Categories.Where(c => !IsUntrackableCat(c.Id)).ToList();
         int tm = tCats.Sum(c => c.Matched), tt = tCats.Sum(c => c.Total), tu = tCats.Sum(c => c.Under);
-        var tot = TB($"{tm} / {tt} met" + (tu > 0 ? $"   ·   ⚠ {tu} under-rolled" : ""), Soft, 12.5, false);
+        var tot = TB($"{tm} / {tt} met" + (tu > 0 ? $"   ·   ⚠ {tu} below build min" : ""), Soft, 12.5, false);
         tot.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(tot, Dock.Right); hdr.Children.Add(tot);
         hdr.Children.Add(TBs("BUILD PROGRESS", Gold, 15, true));
         sp.Children.Add(hdr);
@@ -4752,7 +4778,7 @@ public partial class MainWindow : Window
         lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
 
-        var bar = RollBar(pct, col, 158, 11, valued ? _minRollPct : (double?)null);
+        var bar = RollBar(pct, col, 158, 11);
         bar.HorizontalAlignment = HorizontalAlignment.Left; Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
         // value column always reads current / target, not just the current value — a MISSING affix shows

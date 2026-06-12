@@ -14,7 +14,7 @@ dotnet run --project csharp/D4Scanner.Cli -- \
 ```
 
 The CLI output shows:
-- Per-slot HAVE vs NEED with matched / missing / under-rolled affixes
+- Per-slot HAVE vs NEED with matched / missing / below-build-min affixes
 - Overall completion percentage
 - "Do Next" steps in impact order
 

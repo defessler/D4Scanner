@@ -38,25 +38,25 @@ public static class Substitutes
     static bool IsCore(TargetAffix a, HashSet<string> core) =>
         a.Min != null || a.MinPercent != null || core.Contains(Norm(a.Name));
 
-    static int CoreMet(TargetGear g, Item item, HashSet<string> core, double gate) =>
-        g.Affixes.Count(a => IsCore(a, core) && DiffEngine.AffixMet(a, item, gate));
+    static int CoreMet(TargetGear g, Item item, HashSet<string> core) =>
+        g.Affixes.Count(a => IsCore(a, core) && DiffEngine.AffixMet(a, item));
 
     /// <summary>Best item the player owns (equipped or in bags) for the slot, scored core-affixes-first.</summary>
-    public static (Item item, int coreMet, int totalMet)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core, double gate)
+    public static (Item item, int coreMet, int totalMet)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core)
     {
         var bs = DiffEngine.SlotBaseName(g.Slot);
         var pool = live.Gear.Concat(live.Inventory).Where(it => DiffEngine.SlotBaseName(it.Slot) == bs).ToList();
         (Item it, int c, int m)? best = null;
         foreach (var it in pool)
         {
-            int c = CoreMet(g, it, core, gate), m = DiffEngine.ScoreSlot(g, it, gate);
+            int c = CoreMet(g, it, core), m = DiffEngine.ScoreSlot(g, it);
             if (best == null || c > best.Value.c || (c == best.Value.c && m > best.Value.m)) best = (it, c, m);
         }
         return best == null ? null : (best.Value.it, best.Value.c, best.Value.m);
     }
 
     /// <summary>The whole-build substitute plan, one entry per target gear slot.</summary>
-    public static List<SlotSub> Plan(TargetBuild t, LiveBuild live, double gate)
+    public static List<SlotSub> Plan(TargetBuild t, LiveBuild live)
     {
         var core = CoreAffixNames(t);
         var result = new List<SlotSub>();
@@ -68,15 +68,15 @@ public static class Substitutes
             string wanted = uni?.Name ?? (!string.IsNullOrEmpty(g.Aspect) ? g.Aspect! : "Any " + label);
 
             var equipped = live.Gear.Where(it => DiffEngine.SlotBaseName(it.Slot) == bs)
-                .OrderByDescending(it => DiffEngine.ScoreSlot(g, it, gate)).FirstOrDefault();
+                .OrderByDescending(it => DiffEngine.ScoreSlot(g, it)).FirstOrDefault();
 
             var affs = g.Affixes
-                .Select(a => new SubAffix(a.Name, IsCore(a, core), equipped != null && DiffEngine.AffixMet(a, equipped, gate)))
+                .Select(a => new SubAffix(a.Name, IsCore(a, core), equipped != null && DiffEngine.AffixMet(a, equipped)))
                 .ToList();
             int coreTotal = affs.Count(x => x.Core);
             int eqCoreMet = affs.Count(x => x.Core && x.Met);
 
-            var best = BestOwned(g, live, core, gate);
+            var best = BestOwned(g, live, core);
             bool isUpgrade = best != null && !ReferenceEquals(best.Value.item, equipped) && best.Value.coreMet > eqCoreMet;
 
             var ladder = new List<string>

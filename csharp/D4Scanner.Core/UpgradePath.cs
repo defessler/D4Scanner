@@ -19,11 +19,11 @@ public static class UpgradePath
             || (t.Contains("staff") && !t.Contains("quarter")) || t.Contains("bow");   // bows/crossbows are 2H
     }
 
-    public static List<PathStep> ForSlot(TargetGear g, Item it, double gate)
+    public static List<PathStep> ForSlot(TargetGear g, Item it)
     {
         var pack = SeasonPack.Current;
         var steps = new List<PathStep>();
-        var rows = DiffEngine.EvalSlot(g, it, gate, out _);
+        var rows = DiffEngine.EvalSlot(g, it, out _);
         bool anc = it.IsAncestral || (it.Rarity ?? "").Contains("ancestral", StringComparison.OrdinalIgnoreCase);
         var sb = DiffEngine.SlotBaseName(it.Slot);
 

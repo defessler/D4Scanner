@@ -119,12 +119,6 @@
                          VerticalAlignment="Center" Margin="28,0,0,4"/>
           </Grid>
 
-          <!-- hidden slider — kept for code-behind refs; controlled via ⚙ Settings panel -->
-          <Grid Visibility="Collapsed">
-            <Slider x:Name="ThreshSlider" Minimum="0" Maximum="100" Value="75" TickFrequency="5" IsSnapToTickEnabled="True"/>
-            <TextBlock x:Name="ThreshLbl" Text="75%"/>
-          </Grid>
-
           <!-- also keep BuildName for any remaining code-behind references -->
           <TextBlock x:Name="BuildName" Visibility="Collapsed"/>
         </StackPanel>
