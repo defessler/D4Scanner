@@ -14,9 +14,9 @@
 - [ ] EQUIPPED tooltip (and a general rule for similar spots): special progress-bar/text
       treatment when a roll EXCEEDS the wanted amount — e.g. reddish→yellow while below
       target, orange→purple when exceeding, and a glow treatment for "All …" umbrella affixes.
-- [ ] Move the "Build spec" button inline, aligned to the left of the "My Gear" tab.
-- [ ] The "Builds" button should just switch between builds we've already been working on.
-- [ ] "Search builds" should scope the shown categories to the selected class.
+- [x] Move the "Build spec" button inline, aligned to the left of the "My Gear" tab. *(v0.40.0)*
+- [x] The "Builds" button should just switch between builds we've already been working on. *(v0.40.0)*
+- [x] "Search builds" should scope the shown categories to the selected class. *(v0.40.0)*
 
 ## Settings
 

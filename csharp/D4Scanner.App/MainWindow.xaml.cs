@@ -211,6 +211,7 @@ public partial class MainWindow : Window
     const double TwoColMin = 1200;         // below this width the overview reflows to a single column so the
                                            // guidance rail never starves below a comfortable width (doll ~672 + rail ~400 + chrome)
     string? _classFilter;                  // active class chip in the search dropdown
+    bool _classFilterUserSet;              // user clicked a chip — stop auto-seeding from the active character
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
     readonly HashSet<string> _pinned = new();   // slot keys pinned for side-by-side compare
@@ -237,7 +238,7 @@ public partial class MainWindow : Window
         ImportBtn.Click += async (_, _) => await DoImport();
         TargetBtn.Click += (_, _) => ShowBuilds();
         // LogBtn removed from header — log actions live in Settings
-        RawBtn.Click += (_, _) => { _rawView = !_rawView; RawBtn.Content = _rawView ? "← Overview" : "Build spec"; Render(); };
+        // ("Build spec" moved from the header into the doll tab strip — see DollToggle)
         TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
@@ -280,6 +281,7 @@ public partial class MainWindow : Window
         UrlBox.PreviewKeyDown += UrlBox_PreviewKeyDown;
         AcList.PreviewKeyDown += AcList_PreviewKeyDown;
         AcList.MouseLeftButtonUp += async (_, _) => { ChooseAutocomplete(); await DoImport(); };
+        AcOpenFile.MouseLeftButtonUp += (_, _) => { AcPopup.IsOpen = false; PickTarget(); };
         ProfileBtn.Click += (_, _) => ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
         CharBtn.Click += (_, _) => { ApplyCharacterUi(); CharPopup.IsOpen = !CharPopup.IsOpen; };
 
@@ -341,10 +343,24 @@ public partial class MainWindow : Window
         "paladin" => B("#E0C060"), "warlock" => B("#B05B7A"), _ => B("#9C907C"),
     };
 
+    /// <summary>The active character's class, canonicalized against the build index's class strings —
+    /// the default scope for build search. Null when unknown (no character bound, empty index).</summary>
+    string? ActiveClassForSearch()
+    {
+        var cls = (_activeSlug != null ? _profiles.Get(_activeSlug)?.Class : null) ?? _target?.Class;
+        if (string.IsNullOrEmpty(cls)) return null;
+        return _buildIndex.Select(b => b.Class)
+            .FirstOrDefault(c => string.Equals(c, cls, StringComparison.OrdinalIgnoreCase));
+    }
+
     void UpdateAutocomplete()
     {
         var q = UrlBox.Text.Trim();
         if (LooksLikeUrl(q) || _buildIndex.Count == 0) { AcPopup.IsOpen = false; return; }
+
+        // Scope to the active character's class by default (the user can always chip away from it);
+        // an explicit chip click pins the choice for the session.
+        if (!_classFilterUserSet && _classFilter == null) _classFilter = ActiveClassForSearch();
 
         BuildClassChips();
         IEnumerable<BuildEntry> pool = _classFilter == null ? _buildIndex : _buildIndex.Where(b => b.Class == _classFilter);
@@ -354,6 +370,11 @@ public partial class MainWindow : Window
                     .Cast<BuildEntry>().Where(b => _classFilter == null || b.Class == _classFilter).Take(8).ToList();
         else
             hits = BuildIndex.Search(pool.ToList(), q, 8);
+
+        // Auto-scope must never hide everything: when the AUTO-chosen class yields no hits for a real
+        // query, widen to all classes (a user-pinned chip is respected even when empty).
+        if (hits.Count == 0 && _classFilter != null && !_classFilterUserSet && q.Length >= 2)
+            hits = BuildIndex.Search(_buildIndex, q, 8);
 
         AcList.Items.Clear();
         foreach (var b in hits) AcList.Items.Add(MakeAcItem(b));
@@ -386,7 +407,7 @@ public partial class MainWindow : Window
             Background = on ? (cls == null ? Gold : ClassColor(cls)) : B("#0C0C0F"),
             BorderBrush = Edge, BorderThickness = new Thickness(1), Cursor = System.Windows.Input.Cursors.Hand,
         };
-        b.MouseLeftButtonUp += (_, _) => { _classFilter = on ? null : cls; UpdateAutocomplete(); };
+        b.MouseLeftButtonUp += (_, _) => { _classFilter = on ? null : cls; _classFilterUserSet = true; UpdateAutocomplete(); };
         return b;
     }
 
@@ -482,6 +503,14 @@ public partial class MainWindow : Window
     {
         try { _buildIndex = await BuildIndex.LoadAsync(); }
         catch { _buildIndex = new(); }
+        // Re-seed the class scope now that the index exists: on a stale/missing cache LoadAsync goes
+        // async to the network, and the GotFocus seed (which fired before this completed) resolved
+        // against an EMPTY index — leaving the whole first search session unscoped.
+        if (!_classFilterUserSet && _classFilter == null)
+        {
+            _classFilter = ActiveClassForSearch();
+            if (_classFilter != null && AcPopup.IsOpen) UpdateAutocomplete();
+        }
     }
 
     bool _iconRefreshQueued;
@@ -766,9 +795,14 @@ public partial class MainWindow : Window
             };
             BuildsList.Items.Add(item);
         }
-        var open = new ListBoxItem { Content = TB("＋ Open a .json file…", Steel, 13, false) };
-        open.MouseLeftButtonUp += (_, _) => { BuildsPopup.IsOpen = false; PickTarget(); };
-        BuildsList.Items.Add(open);
+        // Pure SWITCHER between builds already worked on — importing/opening lives in the search box
+        // (the autocomplete footer carries the open-a-file affordance for local .json builds).
+        if (BuildsList.Items.Count == 0)
+        {
+            var none = TB("No saved builds yet — search a build name above or paste a Maxroll URL.", Faint, 12, false);
+            none.TextWrapping = TextWrapping.Wrap; none.MaxWidth = 230; none.Margin = new Thickness(10, 8, 10, 8);
+            BuildsList.Items.Add(new ListBoxItem { Content = none, IsEnabled = false });
+        }
         BuildsPopup.IsOpen = true;
     }
 
@@ -1891,7 +1925,7 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    void GoOverview() { _stepsView = false; _rawView = false; RawBtn.Content = "Build spec"; Render(); }
+    void GoOverview() { _stepsView = false; _rawView = false; Render(); }
 
     // keyboard-shortcut cheatsheet: a centered overlay over a dimmed backdrop, toggled by "?" / F1 / button
     void ToggleHelp()
@@ -2933,7 +2967,7 @@ public partial class MainWindow : Window
         else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.O && _target != null) { GoOverview(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.N && _target != null) { _stepsView = !_stepsView; if (_stepsView) _rawView = false; Render(); e.Handled = true; }
-        else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; RawBtn.Content = _rawView ? "← Overview" : "Build spec"; Render(); e.Handled = true; }
+        else if (alt && k == System.Windows.Input.Key.B && _target != null) { _rawView = !_rawView; if (_rawView) _stepsView = false; Render(); e.Handled = true; }
         else if (alt && k == System.Windows.Input.Key.I) { ShowInventoryModal(); e.Handled = true; }
         else if (k == System.Windows.Input.Key.Oem2 && !UrlBox.IsFocused) { UrlBox.Focus(); UrlBox.SelectAll(); e.Handled = true; }   // "/" focuses search
         else if (k == System.Windows.Input.Key.Escape)
@@ -3018,6 +3052,10 @@ public partial class MainWindow : Window
         s1Content.Children.Add(TBs("Import a build", s1 ? Soft : Ink, 13.5, true));
         var s1Desc = TB("Paste a Maxroll build-guide URL above, or just type the build name and hit Import.", Soft, 12, false, new Thickness(0, 1, 0, 0));
         s1Desc.TextWrapping = TextWrapping.Wrap; s1Content.Children.Add(s1Desc);
+        var s1Open = MakeLink("＋ or open a build .json file…", Steel);
+        s1Open.Margin = new Thickness(0, 3, 0, 0);
+        s1Open.MouseLeftButtonUp += (_, _) => PickTarget();
+        s1Content.Children.Add(s1Open);
         Step(s1, s1Content);
 
         // Step 2: Gear capture — explain the two options clearly
@@ -3592,6 +3630,16 @@ public partial class MainWindow : Window
         Tab("mine",   "My Gear",   "◆");
         Tab("target", "Target",    "◎");
         Tab("all",    "All Items",  "⊞");
+
+        // "Build spec" lives inline at the strip's left (it used to be a header toolbar button):
+        // it's a sibling VIEW of the doll tabs, not a global action. Overlaid so the tabs stay
+        // exactly centered regardless of the link's width.
+        var spec = MakeLink("⛭  Build spec", Steel);
+        spec.HorizontalAlignment = HorizontalAlignment.Left;
+        spec.VerticalAlignment = VerticalAlignment.Center;
+        spec.Margin = new Thickness(2, 0, 0, 6);
+        spec.MouseLeftButtonUp += (_, _) => { _rawView = true; _stepsView = false; Render(); };
+        wrapper.Children.Add(spec);
         return wrapper;
     }
 
@@ -4852,7 +4900,12 @@ public partial class MainWindow : Window
     {
         var t = _target!;
         var sp = new StackPanel();
-        sp.Children.Add(TBs("BUILD SPEC", Gold, 16, true, new Thickness(0, 0, 0, 2)));
+        var specHdr = new DockPanel { Margin = new Thickness(0, 0, 0, 2) };
+        var back = TB("← Overview", Steel, 13, false); back.Cursor = System.Windows.Input.Cursors.Hand; back.VerticalAlignment = VerticalAlignment.Center;
+        back.MouseLeftButtonUp += (_, _) => GoOverview();
+        DockPanel.SetDock(back, Dock.Right); specHdr.Children.Add(back);
+        specHdr.Children.Add(TBs("BUILD SPEC", Gold, 16, true));
+        sp.Children.Add(specHdr);
         var meta = new[] { t.Class, t.Profile, t.Source }.Where(x => !string.IsNullOrEmpty(x));
         sp.Children.Add(TB(t.Name + (meta.Any() ? "   ·   " + string.Join("   ·   ", meta) : ""), Soft, 12.5, false, new Thickness(0, 0, 0, 4)));
         sp.Children.Add(TB("Everything this build wants — independent of your current gear.", Faint, 11.5, false, new Thickness(0, 0, 0, 2)));
