@@ -251,6 +251,7 @@ public class TargetUnique
     public bool Mythic { get; set; }
     public long? Image { get; set; }
     public string? ItemId { get; set; }
+    public List<TargetAffix> Affixes { get; set; } = new();   // the build's wanted secondary affixes (S13 uniques roll per copy)
 }
 
 public class TargetSkill
@@ -297,6 +298,7 @@ public class ReqItem
     public bool IsMultiplier { get; set; }    // affix is an "x" multiplier (unit hint for aggregation)
     public bool IsPercent { get; set; }       // affix value is a percentage (unit hint for aggregation)
     public bool IsGreater { get; set; }       // the matched live affix is a Greater Affix (★)
+    public string? ViaUmbrella { get; set; }  // satisfied by an umbrella affix (e.g. "All Stats") — its text, for a "· via X" note
 }
 
 public class GearLiveItem
@@ -327,6 +329,9 @@ public class Group
     /// <summary>Live socket fill summary for this slot, e.g. "1/2 filled (1 empty)"; null when target wants none.</summary>
     public string? SocketStatus { get; set; }
     public bool SocketsDone { get; set; }                    // all wanted sockets filled (no empties / runeword present)
+    public int SocketsWanted { get; set; }                   // sockets the build wants here (drives the bar's denominator)
+    public int SocketsFilled { get; set; }                   // sockets actually filled (clamped 0..wanted); 0 when unknown
+    public bool SocketsKnown { get; set; }                   // socket fill was actually captured (false ⇒ bar/text honest about "not captured")
 }
 
 public class Category

@@ -1590,15 +1590,33 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("Sort: rarity breaks the IP tie (legendary over rare)", "C TieLeg", tScored[1].Item.Name);
     Eq("Sort: rare tie follows", "D TieRare", tScored[2].Item.Name);
 
-    // stale-copy guard: a re-scan of the EQUIPPED item (different fingerprint after masterworking) is excluded
+    // stale-copy guard, refined: only an OLDER MASTERWORK capture of the equipped item (a value pushed past
+    // its own [min..max] max, dominated by the equipped copy) is excluded — NOT a fresh base-roll spare.
     var eqNow = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", Equipped = true,
-        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 10 } } };   // post-masterwork values
-    var stale = new Item { Name = "Etna's Lost Dagger", Slot = "weapon",
-        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 9 } } };    // older scan, different fingerprint
-    var scur = new LiveBuild { Gear = { eqNow }, Inventory = { stale } };
-    var sPool = GearList.SharedCandidates(scur, Array.Empty<CharacterProfile>(), "Rogue");
-    Check("SharedCandidates: stale copy of the equipped item is excluded (was a false upgrade)",
+        Affixes = { new Affix { Text = "Dexterity", Value = 176, Min = 125, Max = 149 } } };   // masterworked above max
+    var staleMw = new Item { Name = "Etna's Lost Dagger", Slot = "weapon",
+        Affixes = { new Affix { Text = "Dexterity", Value = 160, Min = 125, Max = 149 } } };   // older, lower-MW capture (still > max)
+    var sPool = GearList.SharedCandidates(new LiveBuild { Gear = { eqNow }, Inventory = { staleMw } },
+        Array.Empty<CharacterProfile>(), "Rogue");
+    Check("SharedCandidates: older masterwork re-scan of the equipped item is excluded (was a false upgrade)",
         !sPool.Any(o => o.Item.Name == "Etna's Lost Dagger"));
+
+    // …but a genuine base-roll duplicate you own (values within range, even if lower than your masterworked
+    // equipped copy) MUST show, so you can compare it. This is the user-reported "extra Etna's dagger" case.
+    var freshSpare = new Item { Name = "Etna's Lost Dagger", Slot = "weapon",
+        Affixes = { new Affix { Text = "Dexterity", Value = 140, Min = 125, Max = 149 } } };   // fresh base roll, within range
+    var sPool2 = GearList.SharedCandidates(new LiveBuild { Gear = { eqNow }, Inventory = { freshSpare } },
+        Array.Empty<CharacterProfile>(), "Rogue");
+    Check("SharedCandidates: a fresh base-roll duplicate of an equipped item IS shown (for comparison)",
+        sPool2.Any(o => o.Item.Name == "Etna's Lost Dagger"));
+    // a duplicate that ROLLS HIGHER on an affix (a real potential upgrade) is never suppressed
+    var betterSpare = new Item { Name = "Etna's Lost Dagger", Slot = "weapon",
+        Affixes = { new Affix { Text = "Dexterity", Value = 149, Min = 125, Max = 149 },
+                    new Affix { Text = "Maximum Life", Value = 1800, Min = 1526, Max = 1830 } } };  // extra affix the equipped lacks
+    var sPool3 = GearList.SharedCandidates(new LiveBuild { Gear = { eqNow }, Inventory = { betterSpare } },
+        Array.Empty<CharacterProfile>(), "Rogue");
+    Check("SharedCandidates: a duplicate with an affix the equipped lacks IS shown",
+        sPool3.Any(o => o.Item.Name == "Etna's Lost Dagger"));
 }
 
 // ---- v0.27: weapon-gated upgrades, per-slot bars, channel-merged inventory, gear sanitizing, aspect matching ----
@@ -2205,6 +2223,121 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     // back-compat: no live build → plain Occultist detail, no presence note
     var plain = BuildGuide.Steps(bgRep).FirstOrDefault(s => s.Verb == "IMPRINT");
     Check("BuildGuide: without a live build the IMPRINT detail stays plain", plain != null && plain.Detail == "at the Occultist");
+}
+
+// ---- v0.37: umbrella-affix matching (an umbrella ON THE ITEM satisfies a SPECIFIC want, one-directional) ----
+{
+    // AffixSatisfies (boolean, non-consuming) — the table, isolated from PhraseMatch where possible
+    Check("Umbrella: All Stats → Dexterity", DiffEngine.AffixSatisfies("Dexterity", new Affix { Text = "All Stats" }));
+    Check("Umbrella: All Stats → Willpower", DiffEngine.AffixSatisfies("Willpower", new Affix { Text = "All Stats" }));
+    Check("Umbrella: All Damage Multiplier → Shadow Damage Multiplier",
+        DiffEngine.AffixSatisfies("Shadow Damage Multiplier", new Affix { Text = "All Damage Multiplier" }));
+    Check("Umbrella: All Damage Multiplier → Damage Over Time Multiplier",
+        DiffEngine.AffixSatisfies("Damage Over Time Multiplier", new Affix { Text = "All Damage Multiplier" }));
+    Check("Umbrella: Resistance to All Elements → Shadow Resistance",
+        DiffEngine.AffixSatisfies("Shadow Resistance", new Affix { Text = "Resistance to All Elements" }));
+    Check("Umbrella: +1 to All Skills → Ranks to Dance of Knives",
+        DiffEngine.AffixSatisfies("Ranks to Dance of Knives", new Affix { Text = "+1 to All Skills" }));
+    Check("Umbrella: bare Damage → Fire Damage", DiffEngine.AffixSatisfies("Fire Damage", new Affix { Text = "Damage" }));
+    // one-directional: a SPECIFIC affix never satisfies an umbrella want
+    Check("Umbrella: reverse never matches (Dexterity does NOT grant All Stats)",
+        !DiffEngine.AffixSatisfies("All Stats", new Affix { Text = "Dexterity" }));
+    Check("Umbrella: unrelated miss (All Stats does NOT grant Armor)",
+        !DiffEngine.AffixSatisfies("Armor", new Affix { Text = "All Stats" }));
+    Check("Umbrella: All Damage Multiplier does NOT grant a non-multiplier (Shadow Resistance)",
+        !DiffEngine.AffixSatisfies("Shadow Resistance", new Affix { Text = "All Damage Multiplier" }));
+
+    // EvalSlot: value flows from the umbrella + ViaUmbrella note set + NON-consumption (one covers many)
+    var uTg = new TargetGear { Slot = "Amulet", Affixes = {
+        new TargetAffix { Name = "Strength" }, new TargetAffix { Name = "Dexterity" } } };
+    var uItem = new Item { Name = "All-Stat Amulet", Slot = "amulet", Affixes = {
+        new Affix { Text = "All Stats", Value = 80, Min = 50, Max = 100 } } };
+    var uRows = DiffEngine.EvalSlot(uTg, uItem, 50, out var uExtras);
+    Check("Umbrella EvalSlot: All Stats satisfies Strength", uRows.First(r => r.Label == "Strength").Done);
+    Check("Umbrella EvalSlot: same All Stats also satisfies Dexterity (non-consuming)", uRows.First(r => r.Label == "Dexterity").Done);
+    Eq("Umbrella EvalSlot: ViaUmbrella note carries the umbrella text", "All Stats", uRows.First(r => r.Label == "Dexterity").ViaUmbrella);
+    Eq("Umbrella EvalSlot: the umbrella value flows into the row", 80d, uRows.First(r => r.Label == "Strength").ValueNum);
+    Check("Umbrella EvalSlot: a load-bearing umbrella is NOT listed as an off-build extra", !uExtras.Any(e => e.Contains("All Stats")));
+
+    // preference: a real specific affix is consumed for its want; the umbrella stays an extra when it covered nothing
+    var pTg = new TargetGear { Slot = "Ring", Affixes = { new TargetAffix { Name = "Dexterity" } } };
+    var pItem = new Item { Name = "R", Slot = "ring", Affixes = {
+        new Affix { Text = "All Stats", Value = 60 },
+        new Affix { Text = "Dexterity", Value = 90, Min = 10, Max = 100 } } };
+    var pRows = DiffEngine.EvalSlot(pTg, pItem, 50, out var pExtras);
+    Check("Umbrella preference: the specific Dexterity is used, not the umbrella", pRows.First(r => r.Label == "Dexterity").ViaUmbrella == null);
+    Eq("Umbrella preference: the specific value flows (90, not 60)", 90d, pRows.First(r => r.Label == "Dexterity").ValueNum);
+    Check("Umbrella preference: the unused All Stats shows as an extra", pExtras.Any(e => e.Contains("All Stats")));
+
+    // scorer integration: an item whose only match is via an umbrella still scores the slot
+    var sTg = new TargetGear { Slot = "Amulet", Affixes = { new TargetAffix { Name = "Intelligence" } } };
+    var sItem = new Item { Slot = "amulet", Affixes = { new Affix { Text = "All Stats", Value = 80, Min = 50, Max = 100 } } };
+    Eq("Umbrella ScoreSlot: an umbrella-only match counts toward the slot", 1, DiffEngine.ScoreSlot(sTg, sItem, 50));
+}
+
+// ---- v0.37: unique/mythic requirements (TargetUnique now carries the build's wanted secondary affixes) ----
+{
+    // round-trips through the saved-build serializer (back-compatible: empty list omits cleanly)
+    var u = new TargetUnique { Name = "Etna's Lost Dagger", Slot = "weapon", Affixes = {
+        new TargetAffix { Name = "Dexterity", Min = 125 }, new TargetAffix { Name = "Maximum Life" } } };
+    var json = System.Text.Json.JsonSerializer.Serialize(u, Json.Opts);
+    var back = System.Text.Json.JsonSerializer.Deserialize<TargetUnique>(json, Json.Opts)!;
+    Eq("Unique round-trip: affix count preserved", 2, back.Affixes.Count);
+    Eq("Unique round-trip: affix name preserved", "Dexterity", back.Affixes[0].Name);
+    Eq("Unique round-trip: affix min preserved", 125d, back.Affixes[0].Min);
+
+    // an OWNED unique is compared against the build's wanted secondaries via a synthesized TargetGear
+    var synth = new TargetGear { Slot = u.Slot ?? "", Affixes = u.Affixes };
+    var ownedHigh = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", Affixes = {
+        new Affix { Text = "Dexterity", Value = 140 },           // ≥ 125 → met
+        new Affix { Text = "Maximum Life", Value = 1800 } } };   // present → met
+    var rOwned = DiffEngine.EvalSlot(synth, ownedHigh, 50, out _);
+    Check("Unique compare: met affix shows met", rOwned.First(r => r.Label == "Dexterity").Status == "met");
+    Check("Unique compare: present affix (no threshold) shows met", rOwned.First(r => r.Label == "Maximum Life").Status == "met");
+
+    // a MISSING / under-rolled unique shows exactly what the build wants (the panel's BUILD-WANTS rows)
+    var rMissing = DiffEngine.EvalSlot(synth, null, 50, out _);
+    Eq("Unique want-rows: one row per wanted affix even when unowned", 2, rMissing.Count);
+    Check("Unique want-rows: unowned affix is missing", rMissing.All(r => r.Status == "missing"));
+    Check("Unique want-rows: the threshold is still shown", rMissing.First(r => r.Label == "Dexterity").Need != null);
+}
+
+// ---- v0.37: socket truth — filled/wanted/known ints drive BOTH the text and the bar ----
+{
+    TargetBuild SockTarget() => new TargetBuild { Gear = { new TargetGear {
+        Slot = "Helm", Sockets = { "Rune: A", "Rune: B" }, Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
+    Group SockGroup(Item it) => DiffEngine.Diff(SockTarget(), new LiveBuild { Gear = { it } }, 50)
+        .Categories.First(c => c.Id == "gear").Groups[0];
+
+    // 1. capacity known, one empty → 1/2 filled
+    var sg1 = SockGroup(new Item { Name = "H", Slot = "helm", SocketCount = 2, EmptySockets = 1,
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } });
+    Eq("Socket cap-known: wanted 2", 2, sg1.SocketsWanted);
+    Eq("Socket cap-known: filled 1", 1, sg1.SocketsFilled);
+    Check("Socket cap-known: known", sg1.SocketsKnown);
+    Check("Socket cap-known: status reads 1/2", sg1.SocketStatus!.Contains("1/2"));
+
+    // 2. runeword present → fully filled, done
+    var sg2 = SockGroup(new Item { Name = "H", Slot = "helm", RunewordName = "Graceful Heart",
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } });
+    Eq("Socket runeword: filled == wanted", 2, sg2.SocketsFilled);
+    Check("Socket runeword: known and done", sg2.SocketsKnown && sg2.SocketsDone);
+
+    // 3. empties voiced, no capacity line → 0/2 filled (honest, not a lie)
+    var sg3 = SockGroup(new Item { Name = "H", Slot = "helm", EmptySockets = 2,
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } });
+    Eq("Socket empties: filled 0", 0, sg3.SocketsFilled);
+    Check("Socket empties: known", sg3.SocketsKnown);
+    Check("Socket empties: status reads 0/2 (not '2/2 filled')", sg3.SocketStatus!.Contains("0/2"));
+
+    // 4. nothing captured at all → NOT known, bar empty, text says so (the v0.37 bug fix)
+    var sg4 = SockGroup(new Item { Name = "H", Slot = "helm",
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } });
+    Check("Socket no-info: not known", !sg4.SocketsKnown);
+    Eq("Socket no-info: filled 0", 0, sg4.SocketsFilled);
+    Eq("Socket no-info: wanted still 2 (denominator for the bar)", 2, sg4.SocketsWanted);
+    Check("Socket no-info: status says not captured", sg4.SocketStatus!.Contains("not captured"));
+    Check("Socket no-info: status never claims it's filled", !sg4.SocketStatus!.Contains("2/2 filled"));
 }
 
 // ---- report ----

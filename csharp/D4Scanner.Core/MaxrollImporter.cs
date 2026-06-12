@@ -230,6 +230,13 @@ public static class MaxrollImporter
     static string? AspectName(long nid, Maps m) =>
         m.AspectNameById.TryGetValue(nid, out var n) ? n : AffixName(nid, m);
 
+    /// <summary>True when a resolved affix name is really an unmapped item-id key (a unique's inherent power
+    /// fell through to Humanize(itemId), e.g. "1HDagger Unique Rogue 003 2") rather than a real rollable affix.
+    /// A genuine affix never carries a rarity word alongside a number.</summary>
+    static bool LooksLikeItemId(string name) =>
+        Regex.IsMatch(name, @"\b(Unique|Legendary|Mythic|Set)\b", RegexOptions.IgnoreCase)
+        && Regex.IsMatch(name, @"\d");
+
     static string? CleanAffix(string? name)
     {
         if (string.IsNullOrEmpty(name)) return null;
@@ -299,6 +306,27 @@ public static class MaxrollImporter
         var aspects = new List<string>();
         int ringN = 0;
 
+        // parse an item's wanted affixes (explicits + tempered) — shared by gear and unique items
+        List<TargetAffix> ParseItemAffixes(JsonElement itemEl)
+        {
+            var affs = new List<TargetAffix>();
+            var seen = new HashSet<string>();
+            foreach (var (coll, tempered) in new[] { ("explicits", false), ("tempered", true) })
+                if (itemEl.TryGetProperty(coll, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    foreach (var af in arr.EnumerateArray())
+                    {
+                        var nid = Nid(af);
+                        if (nid == null) continue;
+                        var an = AffixName(nid.Value, m);
+                        // a unique's inherent power sits in `explicits` but its nid has no affix token, so AffixName
+                        // falls back to the humanized item-id key ("1HDagger Unique Rogue 003 2"). Skip those —
+                        // they're the unique's fixed power, not a rollable secondary affix the player chases.
+                        if (an != null && !LooksLikeItemId(an) && seen.Add(an))
+                            affs.Add(new TargetAffix { Name = an, Tempered = tempered });
+                    }
+            return affs;
+        }
+
         if (prof.TryGetProperty("items", out var pitems) && pitems.ValueKind == JsonValueKind.Object)
             foreach (var slotProp in pitems.EnumerateObject())
             {
@@ -317,7 +345,7 @@ public static class MaxrollImporter
                 bool isUnique = itemId.Contains("Unique", StringComparison.OrdinalIgnoreCase) || magicType is 4 or 5 or 6;
                 bool isMythic = itemId.Contains("Mythic", StringComparison.OrdinalIgnoreCase) || itemId.ToUpperInvariant().Contains("UBER");
 
-                if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic, Image = image, ItemId = itemId }); continue; }
+                if (isUnique) { uniques.Add(new TargetUnique { Name = name, Slot = slot, Mythic = isMythic, Image = image, ItemId = itemId, Affixes = ParseItemAffixes(item) }); continue; }
 
                 // the planner stores the imprinted aspect under "aspects" (an ARRAY) in the current format;
                 // older payloads used a single "aspect" object — accept both (the object-only read silently
@@ -336,17 +364,7 @@ public static class MaxrollImporter
                     if (an != null) { aspects.Add(an); aspectName ??= an; }
                 }
 
-                var affixes = new List<TargetAffix>();
-                var seenAff = new HashSet<string>();
-                foreach (var (coll, tempered) in new[] { ("explicits", false), ("tempered", true) })
-                    if (item.TryGetProperty(coll, out var arr) && arr.ValueKind == JsonValueKind.Array)
-                        foreach (var af in arr.EnumerateArray())
-                        {
-                            var nid = Nid(af);
-                            if (nid == null) continue;
-                            var an = AffixName(nid.Value, m);
-                            if (an != null && seenAff.Add(an)) affixes.Add(new TargetAffix { Name = an, Tempered = tempered });
-                        }
+                var affixes = ParseItemAffixes(item);
 
                 var sockets = new List<string>();
                 if (item.TryGetProperty("sockets", out var sk) && sk.ValueKind == JsonValueKind.Array)
