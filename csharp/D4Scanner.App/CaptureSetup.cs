@@ -252,11 +252,15 @@ public static class CaptureSetup
         "Then relaunch Diablo IV and hover an equipped item — the scanner will start filling in.";
 
     /// <summary>Full removal: delete saapi64.dll from all install locations, remove its cert from the
-    /// user Root store (guarded to CN=D4Scanner TTS Shim only), and strip BinDir from User PATH.</summary>
+    /// user Root store (guarded to CN=D4Scanner TTS Shim only), strip BinDir from User PATH, and clear
+    /// the D4TTS_LOG redirect a log move may have set (an uninstalled shim must not leave a stale
+    /// redirect for a future reinstall to silently follow).</summary>
     public static (bool ok, string msg) Uninstall()
     {
         if (Process.GetProcessesByName("Diablo IV").Length > 0 || Process.GetProcessesByName("Diablo IV Launcher").Length > 0)
             return (false, "Diablo IV is running, which locks the DLL. Fully quit the game, then try again.");
+
+        try { Environment.SetEnvironmentVariable("D4TTS_LOG", null, EnvironmentVariableTarget.User); } catch { }
 
         var removed = new List<string>();
         var failed  = new List<string>();

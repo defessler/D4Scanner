@@ -81,6 +81,10 @@ public sealed class LogWatcher : IDisposable
     /// <summary>Fires when the player enters the world from character-select, carrying the picked
     /// character's identity (name; class/realm/paragon when the detail block was voiced).</summary>
     public event Action<CharSelectIdentity>? CharacterConfirmed;
+    /// <summary>Fires on a LIVE "shim detached" marker (the game just exited) — the safe moment to
+    /// rotate the log: the session is complete and nothing new is being written. Never fired during
+    /// the initial catch-up replay of historical sessions.</summary>
+    public event Action? SessionEnded;
 
     public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
     {
@@ -196,6 +200,9 @@ public sealed class LogWatcher : IDisposable
             // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
             if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
             { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); }
+            // LIVE session end (game exited) — the rotation-safe moment; replayed history never fires it.
+            if (IsCaughtUp && rawLine.StartsWith("=== d4scanner tts shim detached", StringComparison.OrdinalIgnoreCase))
+                SessionEnded?.Invoke();
 
             // Character-select screen tracking (visit start → gear wipe + CharacterSelectDetected;
             // world entry → CharacterConfirmed with the picked name/class). Identity comes ONLY from
@@ -489,8 +496,27 @@ public sealed class LogWatcher : IDisposable
 
     public void Dispose() => _timer?.Dispose();
 
+    /// <summary>Feed whole ARCHIVED log files through the live parsing pipeline before tailing begins —
+    /// the full-replay path when rotation has split history across files (without this, "rebuild gear
+    /// by replaying the log" would silently replay only the post-rotation tail). Call before
+    /// <see cref="Start"/>; safe from any thread (Start only arms the timer).</summary>
+    public void Prefeed(IEnumerable<string> archiveFiles)
+    {
+        foreach (var f in archiveFiles)
+        {
+            string[] lines;
+            try { lines = File.ReadAllLines(f); } catch { continue; }
+            FeedChunk(lines);
+        }
+    }
+
     /// <summary>One-shot parse of an entire log file into a LiveBuild (used by the CLI / tests).</summary>
-    public static LiveBuild BuildFromFile(string path, bool equippedOnly = true)
+    public static LiveBuild BuildFromFile(string path, bool equippedOnly = true) =>
+        BuildFromLines(File.ReadAllLines(path), equippedOnly);
+
+    /// <summary>One-shot parse of raw log LINES into a LiveBuild — the file-free core of
+    /// <see cref="BuildFromFile"/>, so session slices from archived logs replay identically.</summary>
+    public static LiveBuild BuildFromLines(string[] allLines, bool equippedOnly = true)
     {
         var seg = new GearParser();
         var ch = new CharacterParser();
@@ -503,7 +529,6 @@ public sealed class LogWatcher : IDisposable
         var ordered = new List<Item>();
         // back at character-select: prior character's gear/sheet/skills are stale (matches Poll)
         charSel.VisitStarted += () => { ordered.Clear(); ch.Reset(); sk.Reset(); };
-        var allLines = File.ReadAllLines(path);
         for (int i = 0; i < allLines.Length; i++)
         {
             // A new shim-session "attached" marker drops the prior session's accumulated gear (matches LogWatcher.Poll).

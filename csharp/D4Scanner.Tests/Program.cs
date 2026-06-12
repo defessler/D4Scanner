@@ -2727,6 +2727,71 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     finally { try { Directory.Delete(tmpProf, recursive: true); } catch { } }
 }
 
+// ---- v0.44: LogStore — rotation, retention, session index; BuildFromLines parity; archive prefeed ----
+{
+    var tmpLog = Path.Combine(Path.GetTempPath(), "d4s_logstore_" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tmpLog);
+    var active = Path.Combine(tmpLog, "d4_tts.log");
+    string[] SessionLines(string iso, string name) => new[]
+    {
+        $"[{iso}]=== d4scanner tts shim attached v2 ===",
+        $"[{iso}]Head", $"[{iso}]EQUIPPED", $"[{iso}]{name}", $"[{iso}]Legendary Helm", $"[{iso}]800 Item Power",
+        $"[{iso}]+100 Dexterity [80 - 120]", $"[{iso}]Right mouse button", $"[{iso}]Unequip",
+        $"[{iso}]=== d4scanner tts shim detached ===",
+    };
+    try
+    {
+        // rotation: active -> dated archive; the active file is gone until the shim recreates it
+        File.WriteAllLines(active, SessionLines("2026-06-10T08:00:00Z", "OLD SESSION HELM"));
+        var archived = LogStore.Rotate(active, new DateTime(2026, 6, 10, 9, 0, 0, DateTimeKind.Utc));
+        Check("LogStore: rotation produces a dated archive", archived != null && archived.Contains("2026-06-10_1"));
+        Check("LogStore: the active file is moved away", !File.Exists(active));
+        Eq("LogStore: archives lists the rotated file", 1, LogStore.Archives(active).Count);
+        Check("LogStore: rotating a missing active file is a no-op", LogStore.Rotate(active) == null);
+
+        // a second rotation the same day de-collides with the counter suffix
+        File.WriteAllLines(active, SessionLines("2026-06-10T10:00:00Z", "SECOND HELM"));
+        var archived2 = LogStore.Rotate(active, new DateTime(2026, 6, 10, 11, 0, 0, DateTimeKind.Utc));
+        Check("LogStore: same-day rotation de-collides", archived2 != null && archived2.Contains("2026-06-10_2"));
+
+        // session index spans archives + active, oldest -> newest, with parsed [ISO] start times
+        File.WriteAllLines(active, SessionLines("2026-06-12T09:00:00Z", "CURRENT HELM"));
+        var sessions = LogStore.Sessions(active);
+        Eq("LogStore: sessions found across archives + active", 3, sessions.Count);
+        Check("LogStore: sessions are oldest -> newest",
+            sessions[0].Start < sessions[1].Start && sessions[1].Start < sessions[2].Start);
+        Check("LogStore: session start parsed from the marker's [ISO] prefix",
+            sessions[2].Start == new DateTimeOffset(2026, 6, 12, 9, 0, 0, TimeSpan.Zero));
+
+        // a session slice replays into the SAME loadout BuildFromFile would produce
+        var sliceLines = LogStore.ReadSession(sessions[0]);
+        var fromSlice = LogWatcher.BuildFromLines(sliceLines);
+        Check("LogStore: a session slice replays its loadout", fromSlice.Gear.Any(g => g.RawName == "OLD SESSION HELM"));
+        var parityFile = Path.Combine(tmpLog, "parity.log");
+        File.WriteAllLines(parityFile, SessionLines("2026-06-11T08:00:00Z", "PARITY HELM"));
+        var viaFile = LogWatcher.BuildFromFile(parityFile);
+        var viaLines = LogWatcher.BuildFromLines(File.ReadAllLines(parityFile));
+        Check("BuildFromLines == BuildFromFile (parity)",
+            viaFile.Gear.Count == viaLines.Gear.Count && viaFile.Gear[0].RawName == viaLines.Gear[0].RawName);
+
+        // retention: count cap prunes OLDEST first; age cap prunes by last-write
+        var pruned = LogStore.Prune(active, maxFiles: 1, maxAgeDays: 3650);
+        Eq("LogStore: count cap pruned the oldest archive", 1, pruned);
+        Eq("LogStore: one archive remains", 1, LogStore.Archives(active).Count);
+
+        // prefeed: a full replay materializes gear from ARCHIVES before tailing the active file
+        var w = new LogWatcher(Path.Combine(tmpLog, "does_not_exist.log"), equippedOnly: true);
+        w.Prefeed(LogStore.Archives(active));
+        w.FeedChunk(File.ReadAllLines(active));
+        // (each archived session ends detached and the next attach clears accumulated gear — the
+        // prefeed VALUE is that every archived update streams through Updated -> profile persistence;
+        // at the Core level the observable contract is the final ACTIVE session's gear:)
+        Check("Prefeed: the active session's gear is present after prefeed + tail",
+            w.Build.Gear.Any(g => g.RawName == "CURRENT HELM"));
+    }
+    finally { try { Directory.Delete(tmpLog, recursive: true); } catch { } }
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
