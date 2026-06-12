@@ -2066,8 +2066,23 @@ public partial class MainWindow : Window
         openLogBtn.Click += (_, _) => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_log) { UseShellExecute = true }); } catch { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer", $"/select,\"{_log}\"") { UseShellExecute = true }); } catch { } } };
         var openAppLogBtn = new Button { Content = "Open app log", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
         openAppLogBtn.Click += (_, _) => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppLogPath) { UseShellExecute = true }); } catch { } };
+        // Pure viewer — always shows the LIVE log's folder (explorer /select never throws, so the
+        // fallback is for a log file that doesn't exist yet: open its directory instead).
+        var openDirBtn = new Button { Content = "Open log folder", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
+        openDirBtn.Click += (_, _) =>
+        {
+            try
+            {
+                if (File.Exists(_log))
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{_log}\"") { UseShellExecute = true });
+                else if (System.IO.Path.GetDirectoryName(_log) is string dir && Directory.Exists(dir))
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir) { UseShellExecute = true });
+            }
+            catch { }
+        };
         DockPanel.SetDock(openLogBtn, Dock.Left); logRow.Children.Add(openLogBtn);
         DockPanel.SetDock(openAppLogBtn, Dock.Left); logRow.Children.Add(openAppLogBtn);
+        DockPanel.SetDock(openDirBtn, Dock.Left); logRow.Children.Add(openDirBtn);
         sp.Children.Add(logRow);
         var diagRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
         var diagBtn = new Button { Content = "Diagnose capture", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
@@ -2170,15 +2185,53 @@ public partial class MainWindow : Window
     // ---- TTS capture diagnostics ----
     // Re-runs the full parse → classify → dedup pipeline over the live log and shows every stage,
     // so "the log has data but items don't update" becomes a self-diagnosable, screenshot-free report.
-    void ShowTtsDiagnostics()
+    // The parse runs OFF the UI thread: Diagnose re-reads the whole log (tens of MB after a long
+    // season) and running it synchronously froze the entire app for seconds (the reported
+    // "diagnose capture locks up the app" bug). A placeholder modal shows while it works.
+    async void ShowTtsDiagnostics()
     {
         SettingsHost.Children.Clear();
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)) };
         backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
         SettingsHost.Children.Add(backdrop);
-        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
 
-        var rep = LogWatcher.Diagnose(_log);
+        var wa = SystemParameters.WorkArea;
+        var panel = new Border
+        {
+            Background = B("#1A1921"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(32, 28, 32, 30), Width = Math.Min(820, wa.Width * 0.66),
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7 },
+        };
+        double mb = 0; try { if (File.Exists(_log)) mb = new FileInfo(_log).Length / 1024.0 / 1024.0; } catch { }
+        var wait = new StackPanel();
+        var waitTitle = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 14) };
+        waitTitle.Children.Add(TBs("◆ ", Gold, 15, true));
+        waitTitle.Children.Add(TBs("TTS capture diagnostics", Gold, 17, true));
+        wait.Children.Add(waitTitle);
+        wait.Children.Add(TB($"Analyzing capture log ({mb:0.0} MB)…", Soft, 12.5, false, new Thickness(0, 0, 0, 12)));
+        wait.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 6, Foreground = Gold, Background = B("#26242E"), BorderThickness = new Thickness(0) });
+        panel.Child = wait;
+        SettingsHost.Children.Add(panel);
+        SettingsHost.Visibility = Visibility.Visible;
+
+        var logSnapshot = _log;
+        TtsDiagReport rep;
+        try { rep = await Task.Run(() => LogWatcher.Diagnose(logSnapshot)); }
+        catch (Exception ex)
+        { rep = new TtsDiagReport { LogPath = logSnapshot, LogExists = File.Exists(logSnapshot), HealthSummary = "Diagnose failed: " + ex.Message }; }
+
+        // The user may have closed the modal (or opened something else) while the parse ran — drop
+        // the stale result instead of resurrecting a dismissed dialog.
+        if (!SettingsHost.Children.Contains(panel) || SettingsHost.Visibility != Visibility.Visible) return;
+        panel.Child = BuildDiagnosticsUi(rep);
+    }
+
+    /// <summary>The diagnostics report body (everything inside the modal panel) — built separately so
+    /// the async shell above can swap it in over the placeholder once the background parse finishes.</summary>
+    FrameworkElement BuildDiagnosticsUi(TtsDiagReport rep)
+    {
+        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
         var sp = new StackPanel();
 
         void Hdr(string title) => sp.Children.Add(new Border
@@ -2291,18 +2344,8 @@ public partial class MainWindow : Window
         DockPanel.SetDock(openBtn, Dock.Left); btnRow.Children.Add(openBtn);
         sp.Children.Add(btnRow);
 
-        // ── panel + scroll ──
-        var wa = SystemParameters.WorkArea;
-        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = wa.Height * 0.86 };
-        var panel = new Border
-        {
-            Background = B("#1A1921"), BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(32, 28, 32, 30), Width = Math.Min(820, wa.Width * 0.66),
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = scroll,
-            Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7 },
-        };
-        SettingsHost.Children.Add(panel);
-        SettingsHost.Visibility = Visibility.Visible;
+        // ── scroll (the async shell owns the panel chrome / backdrop) ──
+        return new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = SystemParameters.WorkArea.Height * 0.86 };
     }
 
     // ---- Item Inventory Modal ----
@@ -3687,14 +3730,21 @@ public partial class MainWindow : Window
         icon.HorizontalAlignment = HorizontalAlignment.Center; icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
 
+        // The upgrade badge overhangs the tile's top-left corner. It used to do that with a negative
+        // margin escaping the 54x76 grid — and a clipping ancestor cut the green arrow in half. The
+        // outer grid adds a 6px gutter on the overhang side so the badge stays INSIDE the returned
+        // element's bounds; the tile sits bottom-right, so its visual position in the cell is unchanged.
+        var outer = new Grid { Width = boxW + 6, Height = boxH + 6 };
+        grid.HorizontalAlignment = HorizontalAlignment.Right; grid.VerticalAlignment = VerticalAlignment.Bottom;
+        outer.Children.Add(grid);
         if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)
-            grid.Children.Add(new Border
+            outer.Children.Add(new Border
             {
                 Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(-5, -5, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
+                Margin = new Thickness(1, 1, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
             });
-        return grid;
+        return outer;
     }
 
     // floating compare card shown while hovering a slot
@@ -3849,7 +3899,7 @@ public partial class MainWindow : Window
         }
 
         var icon = IconBox(s, num);
-        var dp = new DockPanel { Width = 236 };   // width = boxW(54) + margin(12) + text
+        var dp = new DockPanel { Width = 242 };   // width = badge-gutter box(60) + margin(12) + text
         if (alignRight) { DockPanel.SetDock(icon, Dock.Right); icon.Margin = new Thickness(12, 0, 0, 0); }
         else { DockPanel.SetDock(icon, Dock.Left); icon.Margin = new Thickness(0, 0, 12, 0); }
         dp.Children.Add(icon); dp.Children.Add(text);
@@ -3879,14 +3929,18 @@ public partial class MainWindow : Window
     // captured what's in it yet (hover the weapon in-game to fill it in)
     UIElement EmptyWeaponCell()
     {
-        var box = new Grid { Width = 54, Height = 76 };
-        box.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
-        box.Children.Add(new Border { BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+        // 60x82 with the 54x76 tile bottom-right — matches IconBox's badge-gutter geometry so the
+        // weapons row keeps a single baseline whether or not a cell carries the upgrade badge.
+        var box = new Grid { Width = 60, Height = 82 };
+        var tile = new Grid { Width = 54, Height = 76, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom };
+        tile.Children.Add(new Border { Background = B("#080809"), CornerRadius = new CornerRadius(4) });
+        tile.Children.Add(new Border { BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1) });
+        box.Children.Add(tile);
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(TB("Weapon", Faint, 10.5, false));
         var nm = TB("not captured yet", Soft, 12, false); nm.TextWrapping = TextWrapping.Wrap;
         text.Children.Add(nm);
-        var dp = new DockPanel { Width = 236 };
+        var dp = new DockPanel { Width = 242 };
         box.Margin = new Thickness(0, 0, 12, 0); DockPanel.SetDock(box, Dock.Left);
         dp.Children.Add(box); dp.Children.Add(text);
         return new Border { Child = dp, Padding = new Thickness(7, 5, 7, 5), Margin = new Thickness(0, 0, 0, 6) };
@@ -3948,7 +4002,7 @@ public partial class MainWindow : Window
             AddNotInBuildRows(sp, g.ExtraAffixes, it?.Rarity);
             // a unique's power (or a legendary's aspect) so its substance shows in the list view too
             if (it?.PowerText is { Count: > 0 } && it.IsUnique)
-                sp.Children.Add(AspectBox(string.Join("   ", it.PowerText), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
+                sp.Children.Add(AspectBox(it.PowerText, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
             else if (!string.IsNullOrEmpty(it?.Aspect)) sp.Children.Add(AspectBox(it!.Aspect!));
         }
         else
@@ -4105,12 +4159,60 @@ public partial class MainWindow : Window
     }
 
     // the item's legendary aspect / special ability, shown in a D4-style orange box
-    UIElement AspectBox(string aspect, string title = "ASPECT / POWER", Brush? textCol = null)
+    UIElement AspectBox(string aspect, string title = "ASPECT / POWER", Brush? textCol = null) =>
+        AspectBox(new[] { aspect }, title, textCol);
+
+    // TTS noise that leaks into PowerText on items captured before the parser learned to drop it
+    // (menu hints, sell value, the armory label) — display-level filter so old saved items render clean.
+    static readonly System.Text.RegularExpressions.Regex RePowerNoise =
+        new(@"^(Armory Loadout|Mousewheel scroll.*|Scroll (Down|Up)|Sell Value:.*|Durability:.*)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    // a rolled value / range token inside power prose: "2.3%", "x20%", "126%[x]", "[2.0 - 3.0]%", "+1"
+    static readonly System.Text.RegularExpressions.Regex RePowerValue =
+        new(@"[+x]?\d[\d,\.]*\s*%?(?:\s*\[[^\]]*\]\s*%?)?|\[[^\]]+\]\s*%?");
+
+    /// <summary>Power/aspect prose, formatted: noise lines dropped, sentences split onto their own
+    /// wrapped lines, numeric tokens highlighted so the rolls pop out, flavor quotes dimmed italic —
+    /// replaces the old single wall-of-text paragraph.</summary>
+    UIElement AspectBox(IReadOnlyList<string> paragraphs, string title = "ASPECT / POWER", Brush? textCol = null)
     {
+        var col = textCol ?? RLegend;
         var inner = new StackPanel();
         inner.Children.Add(TB(title, Faint, 9.5, true, new Thickness(0, 0, 0, 2)));
-        var t = TB(aspect, textCol ?? RLegend, 12.5, false); t.TextWrapping = TextWrapping.Wrap;
-        inner.Children.Add(t);
+        bool any = false;
+        foreach (var raw in paragraphs)
+        {
+            // collapse the TTS ". ." pause artifact before sentence-splitting
+            var para = System.Text.RegularExpressions.Regex.Replace(raw ?? "", @"\s*\.\s+\.", ".").Trim();
+            if (para.Length == 0 || RePowerNoise.IsMatch(para)) continue;
+            bool flavor = para.StartsWith("\"") || para.StartsWith("“") || para.StartsWith("-");
+            // sentence boundary = period + space + capital/open-paren, so "2.3% of" never splits
+            var sentences = flavor
+                ? new[] { para }
+                : System.Text.RegularExpressions.Regex.Split(para, @"(?<=\.)\s+(?=[A-Z(])");
+            foreach (var s in sentences)
+            {
+                var line = s.Trim();
+                if (line.Length == 0) continue;
+                var tb = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = (flavor ? 11 : 12.5) * UI, Margin = new Thickness(0, any ? 4 : 0, 0, 0) };
+                if (flavor) { tb.Foreground = Faint; tb.FontStyle = FontStyles.Italic; tb.Text = line; }
+                else
+                {
+                    int at = 0;
+                    foreach (System.Text.RegularExpressions.Match m in RePowerValue.Matches(line))
+                    {
+                        if (m.Index > at) tb.Inlines.Add(new System.Windows.Documents.Run(line[at..m.Index]) { Foreground = col });
+                        tb.Inlines.Add(new System.Windows.Documents.Run(m.Value) { Foreground = Ink, FontWeight = FontWeights.Bold });
+                        at = m.Index + m.Length;
+                    }
+                    if (at < line.Length) tb.Inlines.Add(new System.Windows.Documents.Run(line[at..]) { Foreground = col });
+                }
+                inner.Children.Add(tb);
+                any = true;
+            }
+        }
+        if (!any)   // everything filtered as noise — never render an empty box
+        { var t = TB(string.Join("  ", paragraphs), col, 12.5, false); t.TextWrapping = TextWrapping.Wrap; inner.Children.Add(t); }
         return new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0x8A, 0x3C)),
@@ -4135,7 +4237,7 @@ public partial class MainWindow : Window
     {
         if (it == null) return null;
         if (it.PowerText is { Count: > 0 } pt && it.IsUnique)
-            return AspectBox(string.Join("   ", pt), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique);
+            return AspectBox(pt, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique);
         if (!string.IsNullOrEmpty(it.Aspect)) return AspectBox(it.Aspect!);
         return null;
     }
@@ -4171,7 +4273,7 @@ public partial class MainWindow : Window
         AddNotInBuildRows(eq, g.ExtraAffixes, it?.Rarity);
         // the item's unique power (or legendary aspect) — so a unique's substance is always visible
         if (it?.PowerText is { Count: > 0 } && it.IsUnique)
-            eq.Children.Add(AspectBox(string.Join("   ", it.PowerText), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
+            eq.Children.Add(AspectBox(it.PowerText, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
         else if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
         // EQUIPPED panel art: resolve the player's actual item by NAME (real game art, not the build template)
         var liveIt = it != null ? EffectiveLive().Gear.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name)) : null;
