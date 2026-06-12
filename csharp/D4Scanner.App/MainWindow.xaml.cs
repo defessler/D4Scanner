@@ -229,9 +229,22 @@ public partial class MainWindow : Window
         public bool UseTts, UseCapture, DebugMode;
         public string Log = "";
         public bool[] CacheChecked = new bool[4];   // game icons · build index · maxroll data · live gear
+        public string? MoveLogTo;                   // staged log RELOCATION (move + env var, on Save)
+        public bool ClearLogs;                      // staged: delete archives + empty the active log
+        public int LogMaxFileMB, LogMaxFiles, LogMaxAgeDays;   // staged retention config
     }
     SettingsDraft? _settingsDraft;   // non-null = the modal is open (or parked behind a viewer) with edits
     bool _diagShowing;               // the diagnostics viewer is showing ON TOP of the settings draft
+
+    // ---- log management state ----
+    int _logMaxFileMB = 8, _logMaxFiles = 12, _logMaxAgeDays = 90;   // rotation / retention (persisted)
+    bool _rotatedThisRun;            // app-start rotation runs at most once per process
+    string? _logOldPath;             // sentinel after a Move: the shim may still write here until the
+    long _logMovedUtcTicks;          //   game (and Battle.net) restart — cleared only when a post-move
+                                     //   attach marker appears at the NEW path, or by adopt/dismiss
+    long _lastMoveCheckTicks;        // rate-limits the sentinel check
+    LiveBuild? _sessionPreview;      // read-only view of a PAST session's loadout (never persisted)
+    string? _sessionPreviewLabel;
 
     // auto-updater state
     System.Threading.Timer? _updateTimer;
@@ -465,6 +478,11 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
                     if (s.TryGetValue("logSkipPos", out var lsp) && long.TryParse(lsp, out var lspv) && lspv > 0) _logSkipToPos = lspv;
                     if (s.TryGetValue("replayFromZero", out var rfz)) _replayFromZero = rfz == "1";
+                    if (s.TryGetValue("logMaxFileMB", out var lmf) && int.TryParse(lmf, out var lmfv)) _logMaxFileMB = Math.Clamp(lmfv, 1, 256);
+                    if (s.TryGetValue("logMaxFiles", out var lmn) && int.TryParse(lmn, out var lmnv)) _logMaxFiles = Math.Clamp(lmnv, 1, 100);
+                    if (s.TryGetValue("logMaxAgeDays", out var lma) && int.TryParse(lma, out var lmav)) _logMaxAgeDays = Math.Clamp(lmav, 7, 3650);
+                    if (s.TryGetValue("logOldPath", out var lop) && !string.IsNullOrEmpty(lop)) _logOldPath = lop;
+                    if (s.TryGetValue("logMovedUtcTicks", out var lmt) && long.TryParse(lmt, out var lmtv)) _logMovedUtcTicks = lmtv;
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -497,7 +515,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["invSort"] = _invSort?.ToString() }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() }));
         }
         catch { }
     }
@@ -593,6 +611,7 @@ public partial class MainWindow : Window
         // StartWatching. A graceful close mid-replay persists it still-pending (Closing saves
         // settings), so the next launch resumes the rebuild instead of stranding wiped profiles.
         if (_replayFromZero && _watcher is { IsCaughtUp: true }) { _replayFromZero = false; SaveSettings(); }
+        CheckLogMoveSentinel();
         // Show last scanned item in status bar
         var newest = merged.Gear.OrderByDescending(g => g.LastScannedTicks).FirstOrDefault();
         if (newest != null) StatusDetail.Text = $"last: {newest.Name}  ·  {System.IO.Path.GetFileName(_log)}";
@@ -604,9 +623,139 @@ public partial class MainWindow : Window
         return newB.Gear.Select(g => g.Name ?? "").Where(n => n.Length > 0 && !had.Contains(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>After a log MOVE: confirm the shim actually followed. The moved file carries its own
+    /// historical attach markers, so the ONLY trustworthy confirmation is a marker TIMESTAMPED AFTER
+    /// the move appearing at the new path. Until then, a recreated file at the OLD path means the game
+    /// (or a resident Battle.net) launched with the stale environment — surface the adopt banner.</summary>
+    void CheckLogMoveSentinel()
+    {
+        if (_logOldPath == null) return;
+        var now = DateTime.UtcNow.Ticks;
+        if (now - _lastMoveCheckTicks < TimeSpan.TicksPerMinute) return;   // at most once a minute
+        _lastMoveCheckTicks = now;
+        try
+        {
+            long markerAt = LogWatcher.LastSessionStartPos(_log);
+            if (markerAt > 0 && File.Exists(_log))
+            {
+                using var fs = new FileStream(_log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                fs.Seek(markerAt, SeekOrigin.Begin);
+                var buf = new byte[256]; int n = fs.Read(buf, 0, buf.Length);
+                var line = System.Text.Encoding.UTF8.GetString(buf, 0, n).Split('\n')[0];
+                GearParser.CleanWithTime(line, out var t);
+                if (t != null && t.Value.UtcTicks > _logMovedUtcTicks)
+                { _logOldPath = null; _logMovedUtcTicks = 0; SaveSettings(); Render(); return; }   // confirmed
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>Append everything the shim wrote to the OLD path after the move (the moved file took
+    /// all pre-move content with it, so a recreated old-path file is PURE stray writes) onto the new
+    /// active log, then delete the stray. The watcher picks the appended lines up on its next poll.</summary>
+    void AdoptStrayLog()
+    {
+        try
+        {
+            if (_logOldPath != null && File.Exists(_logOldPath))
+            {
+                using (var src = new FileStream(_logOldPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var dst = new FileStream(_log, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    src.CopyTo(dst);
+                File.Delete(_logOldPath);
+                Toast("Adopted the stray log content");
+            }
+        }
+        catch (Exception ex) { Toast("Adopt failed: " + ex.Message); }
+    }
+
+    /// <summary>Banner shown while a log move awaits confirmation — louder when the shim is verifiably
+    /// still writing to the old location (stale environment until the game/Battle.net restart).</summary>
+    UIElement? LogMoveBanner()
+    {
+        if (_logOldPath == null) return null;
+        bool strayExists = false; try { strayExists = File.Exists(_logOldPath) && new FileInfo(_logOldPath).Length > 0; } catch { }
+        var dp = new DockPanel();
+        var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (strayExists)
+        {
+            var adopt = new Button { Content = "Adopt stray log", Padding = new Thickness(12, 5, 12, 5) };
+            adopt.Click += (_, _) => { AdoptStrayLog(); Render(); };
+            btns.Children.Add(adopt);
+        }
+        var dismiss = new Button { Content = "Dismiss", Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(8, 0, 0, 0) };
+        dismiss.Click += (_, _) => { _logOldPath = null; _logMovedUtcTicks = 0; SaveSettings(); Render(); };
+        btns.Children.Add(dismiss);
+        DockPanel.SetDock(btns, Dock.Right); dp.Children.Add(btns);
+        var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        txt.Children.Add(TBs(strayExists ? "Diablo IV is still logging to the OLD location" : "Log moved — waiting for the game to confirm", Amber, 13, true));
+        var det = TB(strayExists
+            ? $"The game launched with the old path ({_logOldPath}). Restart Diablo IV AND Battle.net to pick up the move, or adopt the stray content into the new log."
+            : "The move takes effect when Diablo IV next launches (a resident Battle.net can hold the old path — restart it too if this banner persists).",
+            Soft, 11.5, false, new Thickness(0, 2, 0, 0));
+        det.TextWrapping = TextWrapping.Wrap; txt.Children.Add(det);
+        dp.Children.Add(txt);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0xA5, 0x2E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0xA5, 0x2E)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 14), Child = dp,
+        };
+    }
+
+    /// <summary>Banner for the read-only past-session preview, with the way back to live.</summary>
+    UIElement SessionPreviewBanner()
+    {
+        var dp = new DockPanel();
+        var back = new Button { Content = "← Back to live", Padding = new Thickness(12, 5, 12, 5), VerticalAlignment = VerticalAlignment.Center };
+        back.Click += (_, _) => { _sessionPreview = null; _sessionPreviewLabel = null; Render(); };
+        DockPanel.SetDock(back, Dock.Right); dp.Children.Add(back);
+        var txt = TB($"VIEWING A PAST SESSION  ·  {_sessionPreviewLabel}  ·  read-only — your live data is untouched", B("#7FA8DC"), 12.5, true);
+        txt.VerticalAlignment = VerticalAlignment.Center; txt.TextWrapping = TextWrapping.Wrap;
+        dp.Children.Add(txt);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x22, 0x6E, 0x8C, 0xA8)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x77, 0x6E, 0x8C, 0xA8)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(16, 10, 16, 10), Margin = new Thickness(0, 0, 0, 14), Child = dp,
+        };
+    }
+
+    /// <summary>The banners every Body rebuild starts with (each view branch clears Body first).</summary>
+    void AddTopBanners()
+    {
+        if (_sessionPreview != null) Body.Children.Add(SessionPreviewBanner());
+        if (LogMoveBanner() is UIElement b) Body.Children.Add(b);
+    }
+    /// <summary>App-start log rotation + retention. GATED on Diablo IV (and its launcher) not running —
+    /// StartWatching re-runs on every capture-setting change, and an ungated rotation mid-session would
+    /// archive hovers the watcher hasn't replayed yet. Runs at most once per app process; mid-session
+    /// growth defers to the SessionEnded (detach-marker) trigger, bounded at one session.</summary>
+    void TryRotateLogs(bool force = false)
+    {
+        if (_rotatedThisRun && !force) return;
+        if (System.Diagnostics.Process.GetProcessesByName("Diablo IV").Length > 0
+            || System.Diagnostics.Process.GetProcessesByName("Diablo IV Launcher").Length > 0) return;
+        _rotatedThisRun = true;
+        try
+        {
+            if (File.Exists(_log) && new FileInfo(_log).Length > (long)_logMaxFileMB * 1024 * 1024)
+            {
+                var archived = LogStore.Rotate(_log);
+                if (archived != null) { _logSkipToPos = 0; AppLog($"log rotated -> {Path.GetFileName(archived)}"); }
+            }
+            int pruned = LogStore.Prune(_log, _logMaxFiles, _logMaxAgeDays);
+            if (pruned > 0) AppLog($"log retention pruned {pruned} archive(s)");
+        }
+        catch { }
+    }
+
     void StartWatching()
     {
         AppLog($"D4Scanner {Updater.RunningVersion()} started — log: {_log}");
+        TryRotateLogs();
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
@@ -638,8 +787,21 @@ public partial class MainWindow : Window
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.CharacterSelectDetected += () => Dispatcher.Invoke(OnCharacterSelect);
             _watcher.CharacterConfirmed += id => Dispatcher.Invoke(() => OnCharacterConfirmed(id));
+            // game exited: the rotation-safe moment — rotate if the active log outgrew the cap
+            _watcher.SessionEnded += () => Dispatcher.Invoke(() =>
+            {
+                if (File.Exists(_log) && new FileInfo(_log).Length > (long)_logMaxFileMB * 1024 * 1024)
+                { TryRotateLogs(force: true); StartWatching(); }
+            });
             // (portrait auto-capture removed — the doll uses a class-coloured glow, not a screenshot)
-            _watcher.Start();   // first poll runs on the thread pool — the window paints immediately
+            var w = _watcher;
+            var archives = _replayFromZero ? LogStore.Archives(_log) : new List<string>();
+            if (archives.Count > 0)
+                // full replay with rotated history: prefeed the archives chronologically through the
+                // SAME pipeline before tailing the active file — off the UI thread (they can be large)
+                Task.Run(() => { w.Prefeed(archives); w.Start(); });
+            else
+                _watcher.Start();   // first poll runs on the thread pool — the window paints immediately
             // (Render shows "catching up on the capture log…" until the watcher's first pass completes)
         }
         _captureEngine?.Dispose(); _captureEngine = null;
@@ -865,7 +1027,8 @@ public partial class MainWindow : Window
         finally { ImportBtn.IsEnabled = true; ImportBtn.Content = prev; }
     }
 
-    LiveBuild EffectiveLive() => _live;
+    // the loadout everything renders/diffs against — a read-only past-session preview when active
+    LiveBuild EffectiveLive() => _sessionPreview ?? _live;
 
     // Persist the last-known gear state so the paper doll shows immediately on next launch
     // without requiring the user to re-hover all their equipped items.  Mirrors vision.json.
@@ -1188,6 +1351,7 @@ public partial class MainWindow : Window
             OverallPct.Text = "—";
             OverallCount.Text = "No build loaded yet — import one to start your guide";
             OverallBar.Value = 0; Body.Children.Clear();
+            AddTopBanners();
             if (!CaptureSetup.Installed()) Body.Children.Add(CaptureBanner());
         else if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
             Body.Children.Add(WelcomeCard());
@@ -1210,6 +1374,7 @@ public partial class MainWindow : Window
         if (_rawView)
         {
             Body.Children.Clear();
+            AddTopBanners();
             Body.Children.Add(RawView());
             Status.Text = $"build details  ·  target: {Path.GetFileName(_targetPath)}";
             return;
@@ -1218,6 +1383,7 @@ public partial class MainWindow : Window
         if (_stepsView)
         {
             Body.Children.Clear();
+            AddTopBanners();
             Body.Children.Add(NextStepsView(r));
             Status.Text = $"next steps  ·  target: {Path.GetFileName(_targetPath)}";
             return;
@@ -1318,6 +1484,7 @@ public partial class MainWindow : Window
             _selectedKey = (sections.FirstOrDefault(s => s.Status != "met") ?? sections.FirstOrDefault())?.Key;
 
         Body.Children.Clear();
+        AddTopBanners();
         if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
         Body.Children.Add(SummaryStrip(r));
 
@@ -1984,7 +2151,7 @@ public partial class MainWindow : Window
     {
         if (SettingsHost.Visibility == Visibility.Visible && !_diagShowing) { CloseSettings(); return; }
         _diagShowing = false;
-        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log };
+        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
         RenderSettings();
     }
 
@@ -2064,6 +2231,13 @@ public partial class MainWindow : Window
             if (picked.Count > 0)
                 list.Add("Clear cache: " + string.Join(", ", picked)
                     + (d.CacheChecked[3] ? " — every character's gear is rebuilt by replaying the whole TTS log" : ""));
+            if (d.MoveLogTo != null && !string.Equals(d.MoveLogTo, _log, StringComparison.OrdinalIgnoreCase))
+                list.Add($"MOVE the TTS log (and archives) to {d.MoveLogTo} — needs Diablo IV closed; the game writes there from its next launch");
+            if (d.LogMaxFileMB != _logMaxFileMB || d.LogMaxFiles != _logMaxFiles || d.LogMaxAgeDays != _logMaxAgeDays)
+                list.Add($"Log retention: rotate at {d.LogMaxFileMB} MB, keep {d.LogMaxFiles} archives, max age {d.LogMaxAgeDays} days");
+            if (d.ClearLogs)
+                list.Add("Clear logs: delete archives + empty the active TTS log"
+                    + (d.CacheChecked[3] ? "  ⚠ combined with the gear rebuild this replays an EMPTY log — your characters will show no gear until re-hovered" : ""));
             return list;
         }
         void RefreshPending()
@@ -2144,16 +2318,87 @@ public partial class MainWindow : Window
         diagHint.TextWrapping = TextWrapping.Wrap; diagHint.VerticalAlignment = VerticalAlignment.Center; diagHint.Margin = new Thickness(12, 0, 0, 0);
         diagRow.Children.Add(diagHint);
         sp.Children.Add(diagRow);
-        var logPathRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var logPathLbl = TB(System.IO.Path.GetFileName(d.Log), Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center;
-        DockPanel.SetDock(logPathLbl, Dock.Left); logPathRow.Children.Add(logPathLbl);
-        var changeLogBtn = new Button { Content = "Change…", Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Right, FontSize = 12 };
-        changeLogBtn.Click += (_, _) =>
+        // log LOCATION: the file is MOVED (with its archives) — never just re-pointed — and the shim
+        // follows via the D4TTS_LOG env var at the next game launch
+        var logPathRow = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var logPathLbl = TB(d.MoveLogTo ?? d.Log, Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center; logPathLbl.TextWrapping = TextWrapping.Wrap;
+        var moveLogBtn = new Button { Content = "Move…", Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Right, FontSize = 12, ToolTip = "Move the log (and its archives) to a new location — applied on Save; needs the game closed" };
+        moveLogBtn.Click += (_, _) =>
         {
-            var dlg = new OpenFileDialog { Filter = "TTS log|*.log;*.txt|All files|*.*", Title = "Pick the d4_tts.log" };
-            if (dlg.ShowDialog() == true) { d.Log = dlg.FileName; logPathLbl.Text = System.IO.Path.GetFileName(d.Log); RefreshPending(); }
+            var dlg = new SaveFileDialog
+            {
+                Filter = "TTS log|*.log", Title = "Move the TTS log to…", FileName = System.IO.Path.GetFileName(d.Log),
+                InitialDirectory = System.IO.Path.GetDirectoryName(d.Log), OverwritePrompt = false,
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                d.MoveLogTo = string.Equals(dlg.FileName, d.Log, StringComparison.OrdinalIgnoreCase) ? null : dlg.FileName;
+                logPathLbl.Text = d.MoveLogTo ?? d.Log;
+                RefreshPending();
+            }
         };
-        logPathRow.Children.Add(changeLogBtn); sp.Children.Add(logPathRow);
+        DockPanel.SetDock(moveLogBtn, Dock.Right); logPathRow.Children.Add(moveLogBtn);
+        logPathRow.Children.Add(logPathLbl); sp.Children.Add(logPathRow);
+
+        // retention config: rotation size cap + archive count + age, applied on Save
+        var retRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+        TextBox RetBox(int val, string tip)
+        {
+            var tb = new TextBox { Text = val.ToString(), Width = 52, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, ToolTip = tip };
+            return tb;
+        }
+        var mbBox = RetBox(d.LogMaxFileMB, "Rotate the active log into an archive when it exceeds this size (MB, 1–256)");
+        var nBox = RetBox(d.LogMaxFiles, "Archived log files to keep (1–100; oldest pruned)");
+        var ageBox = RetBox(d.LogMaxAgeDays, "Archives older than this are pruned (days, 7–3650)");
+        void RetChanged()
+        {
+            if (int.TryParse(mbBox.Text, out var mb)) d.LogMaxFileMB = Math.Clamp(mb, 1, 256);
+            if (int.TryParse(nBox.Text, out var n)) d.LogMaxFiles = Math.Clamp(n, 1, 100);
+            if (int.TryParse(ageBox.Text, out var a)) d.LogMaxAgeDays = Math.Clamp(a, 7, 3650);
+            RefreshPending();
+        }
+        mbBox.TextChanged += (_, _) => RetChanged(); nBox.TextChanged += (_, _) => RetChanged(); ageBox.TextChanged += (_, _) => RetChanged();
+        retRow.Children.Add(TB("Rotate at ", Soft, 11.5, false)); retRow.Children.Add(mbBox);
+        retRow.Children.Add(TB(" MB   ·   keep ", Soft, 11.5, false)); retRow.Children.Add(nBox);
+        retRow.Children.Add(TB(" archives   ·   max age ", Soft, 11.5, false)); retRow.Children.Add(ageBox);
+        retRow.Children.Add(TB(" days   (rotation runs at app start / game exit — never mid-session)", Faint, 10.5, false));
+        sp.Children.Add(retRow);
+
+        // clear logs (staged): archives + the active file + the legacy d4_tts.jsonl orphan
+        ToggleRow("Clear logs on Save", "Deletes archived logs and empties the active TTS log (plus the legacy d4_tts.jsonl). Your captured gear is NOT touched — but a queued gear rebuild would then find an empty log.",
+            d.ClearLogs, on => { d.ClearLogs = on; RefreshPending(); });
+
+        // session history: load a past session's loadout as a READ-ONLY preview (a viewer — parks the draft)
+        var sessRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var sessCombo = new ComboBox { MinWidth = 280, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        sessCombo.Items.Add(new ComboBoxItem { Content = "loading sessions…", IsEnabled = false });
+        sessCombo.SelectedIndex = 0;
+        var sessLog = d.Log;
+        _ = Task.Run(() => LogStore.Sessions(sessLog)).ContinueWith(t => Dispatcher.Invoke(() =>
+        {
+            if (t.IsFaulted || t.Result.Count == 0) return;
+            sessCombo.Items.Clear();
+            foreach (var s in Enumerable.Reverse(t.Result).Take(40))   // newest first
+                sessCombo.Items.Add(new ComboBoxItem { Content = s.Label, Tag = s });
+            sessCombo.SelectedIndex = 0;
+        }));
+        var viewSessBtn = new Button { Content = "View build", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Preview the loadout captured in that session — read-only, your live data is untouched" };
+        viewSessBtn.Click += async (_, _) =>
+        {
+            if ((sessCombo.SelectedItem as ComboBoxItem)?.Tag is not LogStore.Session s) return;
+            viewSessBtn.IsEnabled = false; viewSessBtn.Content = "…";
+            var lb = await Task.Run(() => LogWatcher.BuildFromLines(LogStore.ReadSession(s)));
+            viewSessBtn.IsEnabled = true; viewSessBtn.Content = "View build";
+            _sessionPreview = lb; _sessionPreviewLabel = s.Label;
+            _diagShowing = false;                       // a viewer: park the draft, return via ⚙
+            SettingsHost.Visibility = Visibility.Collapsed;
+            Render();
+        };
+        DockPanel.SetDock(viewSessBtn, Dock.Right); sessRow.Children.Add(viewSessBtn);
+        var sessLbl = TB("Load build from a past session:  ", Soft, 11.5, false); sessLbl.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(sessLbl, Dock.Left); sessRow.Children.Add(sessLbl);
+        sessRow.Children.Add(sessCombo);
+        sp.Children.Add(sessRow);
 
         // ── CACHE section — one card; checking a row STAGES the clear (applied on Save) ──────
         Section("CACHE");
@@ -2208,7 +2453,7 @@ public partial class MainWindow : Window
         revertBtn = new Button { Content = "Revert", Padding = new Thickness(16, 7, 16, 7) };
         revertBtn.Click += (_, _) =>
         {
-            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log };
+            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
             RenderSettings();
         };
         DockPanel.SetDock(saveBtn, Dock.Right); btnRow2.Children.Add(saveBtn);
@@ -2250,6 +2495,18 @@ public partial class MainWindow : Window
         var d = _settingsDraft;
         if (d == null) { CloseSettings(); return; }
 
+        // A staged log MOVE is blocked while the game can be writing: the shim resolves its path ONCE
+        // per game process, so a mid-game move both fails the File.Move and would strand writes at the
+        // old path anyway. The WHOLE save aborts (atomic apply) and the draft survives.
+        bool moving = d.MoveLogTo != null && !string.Equals(d.MoveLogTo, _log, StringComparison.OrdinalIgnoreCase);
+        if (moving && (System.Diagnostics.Process.GetProcessesByName("Diablo IV").Length > 0
+                    || System.Diagnostics.Process.GetProcessesByName("Diablo IV Launcher").Length > 0))
+        {
+            MessageBox.Show("Close Diablo IV (and its launcher) before moving the log — the game holds the old location until it restarts.\n\nNothing was applied; your changes are still staged.",
+                "Move blocked", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         // deferred TTS-uninstall confirmation — declining aborts the WHOLE save (atomic apply)
         if (!d.UseTts && _useTts)
         {
@@ -2265,6 +2522,54 @@ public partial class MainWindow : Window
                          || !string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase);
 
         _useTts = d.UseTts; _useCapture = d.UseCapture; _debugMode = d.DebugMode; _log = d.Log;
+
+        // staged MOVE: physically relocate the active log + its archives, point the shim there via the
+        // user-level D4TTS_LOG env var (effective at the NEXT game launch — saapi64 resolves once per
+        // process), and arm the stray-write sentinel. The moved file's own historical attach markers
+        // make any "marker exists at the new path" check instantly true, so the sentinel clears ONLY
+        // on a marker TIMESTAMPED AFTER the move (or explicit adopt/dismiss).
+        if (moving)
+        {
+            try
+            {
+                var dest = d.MoveLogTo!;
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                if (File.Exists(dest))
+                { MessageBox.Show($"A file already exists at:\n{dest}\n\nPick a different location.", "Move blocked", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                if (File.Exists(_log)) File.Move(_log, dest);
+                var oldArch = LogStore.ArchiveDir(_log); var newArch = LogStore.ArchiveDir(dest);
+                if (Directory.Exists(oldArch) && !Directory.Exists(newArch)) Directory.Move(oldArch, newArch);
+                Environment.SetEnvironmentVariable("D4TTS_LOG", dest, EnvironmentVariableTarget.User);
+                _logOldPath = _log; _logMovedUtcTicks = DateTime.UtcNow.Ticks;
+                _log = dest;
+                watchChanged = true;
+                AppLog($"log moved -> {dest} (effective at next game launch)");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Moving the log failed: " + ex.Message + "\n\nNothing was applied; your changes are still staged.",
+                    "Move failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+
+        // staged retention config (applies to the next rotation/prune; prune archives right away)
+        bool retentionChanged = d.LogMaxFileMB != _logMaxFileMB || d.LogMaxFiles != _logMaxFiles || d.LogMaxAgeDays != _logMaxAgeDays;
+        _logMaxFileMB = Math.Clamp(d.LogMaxFileMB, 1, 256);
+        _logMaxFiles = Math.Clamp(d.LogMaxFiles, 1, 100);
+        _logMaxAgeDays = Math.Clamp(d.LogMaxAgeDays, 7, 3650);
+        if (retentionChanged) try { LogStore.Prune(_log, _logMaxFiles, _logMaxAgeDays); } catch { }
+
+        // staged CLEAR LOGS: delete archives, empty the active log, drop the legacy d4_tts.jsonl orphan
+        if (d.ClearLogs)
+        {
+            try { foreach (var f in LogStore.Archives(_log)) File.Delete(f); } catch { }
+            try { if (File.Exists(_log)) File.WriteAllText(_log, ""); } catch { }
+            try { var orphan = Path.Combine(Path.GetDirectoryName(_log)!, "d4_tts.jsonl"); if (File.Exists(orphan)) File.Delete(orphan); } catch { }
+            _logSkipToPos = 0;
+            watchChanged = true;
+            AppLog("logs cleared (archives + active truncated)");
+        }
 
         // staged cache clears
         var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
@@ -2595,7 +2900,8 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center, Cursor = System.Windows.Input.Cursors.Hand, Child = clearLbl,
         };
         DockPanel.SetDock(clearBtn, Dock.Right); hd.Children.Add(clearBtn);
-        clearBtn.MouseLeftButtonUp += (_, _) => { if (currentView.Count > 0) ClearShownItems(currentView, slugByFp); };
+        clearBtn.MouseLeftButtonUp += (_, _) => { if (_sessionPreview == null && currentView.Count > 0) ClearShownItems(currentView, slugByFp); };
+        if (_sessionPreview != null) { clearBtn.Visibility = Visibility.Collapsed; }   // read-only past-session preview
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
@@ -2918,6 +3224,7 @@ public partial class MainWindow : Window
             delBtn.MouseLeftButtonUp += (_, e) =>
             {
                 e.Handled = true;   // a delete must not also toggle the row's inline comparison
+                if (_sessionPreview != null) return;   // read-only preview: deletes/tombstones are disabled
                 _tombstones.Add(capturedItem);   // so the next log poll can't resurrect it (until re-sighted)
                 _tombstones.Save();
                 if (slugByFp.TryGetValue(fp, out var ownerSlug))
