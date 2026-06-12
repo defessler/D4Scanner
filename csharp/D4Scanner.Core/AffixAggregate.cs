@@ -63,7 +63,7 @@ public static class AffixAggregate
             var allAffixes = owned.SelectMany(it => it.Affixes ?? new()).ToList();
             foreach (var p in by.Values)
                 foreach (var a in allAffixes)
-                    if (DiffEngine.PhraseMatch(p.Name, a.Text))
+                    if (DiffEngine.AffixSatisfies(p.Name, a))
                         p.MaxRoll = Math.Max(p.MaxRoll, a.Max ?? a.Value ?? 0);
         }
         foreach (var key in order) Finish(by[key]);

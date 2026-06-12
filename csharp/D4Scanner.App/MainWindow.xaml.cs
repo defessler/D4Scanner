@@ -1238,10 +1238,13 @@ public partial class MainWindow : Window
             var grp = new Group { Name = slotLabel, Kind = "gear", Total = 1, Matched = have ? 1 : 0 };
             if (eq != null)
             {
-                grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect });
-                // a unique's affixes are fixed by the item — show them as-is (the group otherwise has no
-                // affix-target rows, which left unique slots with NO detail in the hover/compare/list views)
-                grp.Items = DiffEngine.SelfRows(eq);
+                grp.LiveItems.Add(new GearLiveItem { Name = eq.Name, Rarity = eq.Rarity, ItemPower = eq.ItemPower, IsUnique = eq.IsUnique, IsAncestral = eq.IsAncestral, Aspect = eq.Aspect, PowerText = eq.PowerText });
+                // evaluate the owned unique against the build's wanted secondary affixes (met / under / MISSING)
+                // so the slot shows what's still missing on it; fall back to the item's own affixes when the
+                // build lists no specific unique affixes.
+                grp.Items = u.Affixes.Count > 0
+                    ? DiffEngine.EvalSlot(new TargetGear { Slot = u.Slot ?? "", Affixes = u.Affixes }, eq, _target!.MinRollPercent ?? _minRollPct, out _)
+                    : DiffEngine.SelfRows(eq);
             }
             sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
         }
@@ -4172,11 +4175,21 @@ public partial class MainWindow : Window
         Color wrc = wantUnique != null ? (myth ? Col("#CB7BD9") : Col("#C9A45C")) : Col("#C8A24E");
         Brush wbr = wantUnique != null ? (myth ? RMythic : RUnique) : Gold;
         var wp = new StackPanel();
-        // unique sections carry the EQUIPPED item's own affixes in g.Items (SelfRows) — those are details
-        // of what you have, not requirements; the build's "want" for a unique is the unique itself.
+        // unique sections: when the build pins specific secondary rolls on the unique, list them as
+        // wanted rows (so a MISSING unique shows exactly what to chase); else fall back to the generic note.
         if (isUniqueSection)
-            wp.Children.Add(TB(wantUnique != null ? "its secondary affixes roll per copy — compare your roll on the left; chase a better copy from its Lair Boss"
-                                                  : "any unique that fits this slot", Soft, 11.5, false));
+        {
+            if (wantUnique != null && wantUnique.Affixes.Count > 0)
+            {
+                var uwTg = new TargetGear { Slot = wantUnique.Slot ?? "", Affixes = wantUnique.Affixes };
+                foreach (var i in DiffEngine.EvalSlot(uwTg, null, _target!.MinRollPercent ?? _minRollPct, out _))
+                    wp.Children.Add(WantedRow(i));
+                wp.Children.Add(TB("secondary affixes roll per copy — chase a better copy from its Lair Boss", Soft, 11, false));
+            }
+            else
+                wp.Children.Add(TB(wantUnique != null ? "its secondary affixes roll per copy — compare your roll on the left; chase a better copy from its Lair Boss"
+                                                      : "any unique that fits this slot", Soft, 11.5, false));
+        }
         else
             foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
@@ -4245,6 +4258,12 @@ public partial class MainWindow : Window
             line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (deltaPercent ? "%" : ""),
                 d > 0 ? Green : Crimson, 11.5, true));
         if (i.Tempered) line.Children.Add(TemperedBadge());
+        // umbrella note: this want is satisfied by a broad affix (e.g. "All Stats") — show why it counts
+        if (!string.IsNullOrEmpty(i.ViaUmbrella))
+        {
+            var via = TB("  · via " + i.ViaUmbrella, Faint, 10.5, false); via.VerticalAlignment = VerticalAlignment.Center;
+            via.ToolTip = "Covered by an umbrella affix"; line.Children.Add(via);
+        }
         mid.Children.Add(line);
         // every affix row carries the bar: real roll quality when measurable, full/half for met/under
         // presence without a range, empty (threshold tick only) when missing — current vs target at a glance
@@ -4569,7 +4588,9 @@ public partial class MainWindow : Window
         var lbl = TB("Sockets:  " + string.Join("  ·  ", g.WantSockets), Ink, 12.5, false);
         lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        var bar = RollBar(done ? 100 : 0, col, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        double sockPct = g.SocketsWanted > 0 ? 100.0 * g.SocketsFilled / g.SocketsWanted : (done ? 100 : 0);
+        var barCol = !g.SocketsKnown && g.SocketsWanted > 0 ? Faint : col;
+        var bar = RollBar(sockPct, barCol, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
         var val = TB(g.SocketStatus ?? (done ? "filled" : "empty"), done ? col : Soft, 12, done);
         val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
@@ -4602,7 +4623,11 @@ public partial class MainWindow : Window
         lblSp.Children.Add(wl);
         Grid.SetColumn(lblSp, 1); row.Children.Add(lblSp);
 
-        var bar = RollBar(done ? 100 : 0, col, 158, 9); bar.HorizontalAlignment = HorizontalAlignment.Left;
+        // bar tracks the SAME filled/wanted the status text reports, so the two can never disagree:
+        // fully filled → full bar, partial → proportional, nothing-captured → empty (and the text says so).
+        double sockPct = g.SocketsWanted > 0 ? 100.0 * g.SocketsFilled / g.SocketsWanted : (done ? 100 : 0);
+        var barCol = !g.SocketsKnown && g.SocketsWanted > 0 ? Faint : col;
+        var bar = RollBar(sockPct, barCol, 158, 9); bar.HorizontalAlignment = HorizontalAlignment.Left;
         Grid.SetColumn(bar, 2); row.Children.Add(bar);
 
         var val = TB(g.SocketStatus ?? (done ? "filled" : "needs runes"), done ? col : Soft, 11.5, false);

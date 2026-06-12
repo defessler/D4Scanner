@@ -19,6 +19,71 @@ public static class DiffEngine
         return false;
     }
 
+    static readonly string[] DamageElements = { "physical", "fire", "cold", "lightning", "poison", "shadow", "holy" };
+
+    /// <summary>
+    /// Does an UMBRELLA affix on the item (<paramref name="itemAffix"/>) cover a SPECIFIC build want
+    /// (<paramref name="want"/>)? One-directional — "All Stats" grants Dexterity, but Dexterity does not grant
+    /// "All Stats". The table is deliberately explicit so it stays game-true and easy to extend.
+    /// </summary>
+    static bool UmbrellaCovers(string itemAffix, string want)
+    {
+        var a = Normalize(itemAffix);   // the item's umbrella affix
+        var w = Normalize(want);        // the build's specific want
+        if (a.Length == 0 || w.Length == 0 || a == w) return false;
+
+        // All Stats → any core attribute
+        if (a.Contains("all stats"))
+            return w is "strength" or "dexterity" or "intelligence" or "willpower";
+        // All Damage Multiplier → any "<type> damage … multiplier" want (Shadow/Cold/Vulnerable/DoT…)
+        if (a.Contains("all damage multiplier"))
+            return w.Contains("damage") && w.EndsWith("multiplier");
+        // bare additive "Damage" (+X% Damage) → any "<element/physical> damage" additive want
+        if (a == "damage")
+            return w.EndsWith("damage") && DamageElements.Any(e => w.StartsWith(e));
+        // Resistance to All Elements / All Resistance → any single-element resistance want
+        if (a.Contains("resistance to all") || a.Contains("all resistance") || a.Contains("all elements"))
+            return w.EndsWith("resistance") || w.StartsWith("resistance to");
+        // to All Skills → any skill-rank want ("Ranks to X", "Ranks to All Core Skills")
+        if (a.Contains("all skills"))
+            return w.Contains("rank");
+        return false;
+    }
+
+    /// <summary>True when an item <paramref name="affix"/> satisfies a build <paramref name="want"/> — an exact
+    /// (containment) match OR an umbrella that covers it. Non-consuming; for the boolean/scoring call sites.</summary>
+    public static bool AffixSatisfies(string want, Affix affix) =>
+        PhraseMatch(want, affix.Text) || UmbrellaCovers(affix.Text, want);
+
+    /// <summary>Find the pool affix that satisfies <paramref name="want"/>: first an UNUSED exact match
+    /// (the caller consumes it via <paramref name="used"/>), else an umbrella match (returned but NOT consumed —
+    /// "All Stats" can satisfy several wants on the same slot). Returns -1 on miss.</summary>
+    static int MatchIndex(string want, IReadOnlyList<Affix> pool, bool[] used, out bool viaUmbrella)
+    {
+        viaUmbrella = false;
+        for (int i = 0; i < pool.Count; i++)
+            if (!used[i] && PhraseMatch(want, pool[i].Text)) return i;
+        for (int i = 0; i < pool.Count; i++)
+            if (UmbrellaCovers(pool[i].Text, want)) { viaUmbrella = true; return i; }
+        return -1;
+    }
+
+    /// <summary>Classify each pool affix against a slot's wants: <c>used</c> = consumed by an exact match,
+    /// <c>umbrella</c> = a load-bearing umbrella that satisfied at least one want. Anything in neither is an
+    /// off-build "extra". Shared by EvalSlot's extras and UnmatchedAffixes so both agree.</summary>
+    static (bool[] used, bool[] umbrella) MatchSlot(TargetGear g, IReadOnlyList<Affix> pool)
+    {
+        var used = new bool[pool.Count];
+        var umbrella = new bool[pool.Count];
+        foreach (var aff in g.Affixes)
+        {
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            if (idx < 0) continue;
+            if (viaU) umbrella[idx] = true; else used[idx] = true;
+        }
+        return (used, umbrella);
+    }
+
     static string SlotBase(string? slot) => Regex.Replace(Normalize(slot), @"\s*\d+$", "").Trim();
 
     static List<Item> PooledItems(LiveBuild live, string baseSlot) =>
@@ -67,13 +132,10 @@ public static class DiffEngine
         int met = 0;
         foreach (var aff in g.Affixes)
         {
-            Affix? match = null;
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
-            }
-            if (match == null) continue;
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            if (idx < 0) continue;
+            var match = pool[idx];
+            if (!viaU) used[idx] = true;
             bool ok;
             if (aff.Min != null) ok = (match.Value ?? 0) >= aff.Min.Value;
             else
@@ -103,12 +165,9 @@ public static class DiffEngine
         var items = new List<ReqItem>();
         foreach (var aff in g.Affixes)
         {
-            Affix? match = null;
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { match = pool[i]; used[i] = true; break; }
-            }
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            Affix? match = idx >= 0 ? pool[idx] : null;
+            if (idx >= 0 && !viaU) used[idx] = true;
             var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
             // the target is known even when the piece is missing the affix — always show what the build wants
             if (aff.Min != null) { req.TargetNum = aff.Min.Value; req.Need = "≥ " + aff.Min.Value.ToString("#,0.##"); }
@@ -118,6 +177,7 @@ public static class DiffEngine
             {
                 req.Done = true;            // you have the affix (presence)
                 req.Source = "tts";
+                if (viaU) req.ViaUmbrella = match.Text;   // satisfied by an umbrella (e.g. "All Stats")
                 req.Val = FmtVal(match);
                 req.ValueNum = match.Value;
                 req.MaxNum = match.Max;     // the perfect-roll ceiling, for the max-roll target comparison
@@ -147,10 +207,12 @@ public static class DiffEngine
             }
             items.Add(req);
         }
+        // extras = pool affixes that are neither consumed by an exact match nor a load-bearing umbrella
+        var (_, umbrella) = MatchSlot(g, pool);
         extras = new List<string>();
         for (int i = 0; i < pool.Count; i++)
         {
-            if (used[i] || Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) continue;
+            if (used[i] || umbrella[i] || Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) continue;
             var d = FmtVal(pool[i]); var s = pool[i].Text + (d.Length > 0 ? " " + d : "");
             if (!extras.Contains(s)) extras.Add(s);
         }
@@ -189,11 +251,10 @@ public static class DiffEngine
         var used = new bool[pool.Count];
         int present = 0;
         foreach (var aff in g.Affixes)
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; present++; break; }
-            }
+        {
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            if (idx >= 0) { present++; if (!viaU) used[idx] = true; }
+        }
         return present;
     }
 
@@ -205,11 +266,12 @@ public static class DiffEngine
         var used = new bool[pool.Count];
         int n = 0;
         foreach (var aff in g.Affixes)
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; if (pool[i].IsGreater) n++; break; }
-            }
+        {
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            if (idx < 0) continue;
+            if (pool[idx].IsGreater) n++;
+            if (!viaU) used[idx] = true;
+        }
         return n;
     }
 
@@ -219,16 +281,10 @@ public static class DiffEngine
     public static List<Affix> UnmatchedAffixes(TargetGear g, Item item)
     {
         var pool = item.Affixes;
-        var used = new bool[pool.Count];
-        foreach (var aff in g.Affixes)
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; break; }
-            }
+        var (used, umbrella) = MatchSlot(g, pool);   // exclude both consumed exacts AND load-bearing umbrellas
         var res = new List<Affix>();
         for (int i = 0; i < pool.Count; i++)
-            if (!used[i] && !Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) res.Add(pool[i]);
+            if (!used[i] && !umbrella[i] && !Regex.IsMatch(pool[i].Text, "quality", RegexOptions.IgnoreCase)) res.Add(pool[i]);
         return res;
     }
 
@@ -241,11 +297,12 @@ public static class DiffEngine
         var used = new bool[pool.Count];
         double sum = 0; int n = 0;
         foreach (var aff in g.Affixes)
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (used[i]) continue;
-                if (PhraseMatch(aff.Name, pool[i].Text)) { used[i] = true; sum += RollPct(pool[i]) ?? 100; n++; break; }
-            }
+        {
+            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
+            if (idx < 0) continue;
+            sum += RollPct(pool[idx]) ?? 100; n++;
+            if (!viaU) used[idx] = true;
+        }
         return n == 0 ? 0 : sum / n;
     }
 
@@ -254,7 +311,7 @@ public static class DiffEngine
     public static bool AffixMet(TargetAffix aff, Item item, double gate)
     {
         foreach (var x in item.Affixes)
-            if (PhraseMatch(aff.Name, x.Text))
+            if (AffixSatisfies(aff.Name, x))
             {
                 if (aff.Min != null) return (x.Value ?? 0) >= aff.Min.Value;
                 var pct = RollPct(x); double thr = aff.MinPercent ?? gate;
@@ -387,7 +444,7 @@ public static class DiffEngine
                     // crossbow slot with no live crossbow borrows the player's melee dagger by affix-count.
                     if (kv.Key == "weapon" && !WeaponSlotCompatible(target.Gear[idx], liveIts[i]))
                         continue;
-                    int score = aff.Count(a => liveIts[i].Affixes.Any(x => PhraseMatch(a.Name, x.Text)));
+                    int score = aff.Count(a => liveIts[i].Affixes.Any(x => AffixSatisfies(a.Name, x)));
                     // Type-affinity bonus: when the target slot has an ItemId encoding a weapon type (e.g.
                     // "2HCrossbow_Legendary_..."), strongly prefer a live item whose ItemType matches.
                     // A 100-point bonus dominates the affix-count score so a crossbow target always picks
@@ -441,16 +498,26 @@ public static class DiffEngine
                     int? cap = it?.SocketCount;
                     int empty = it?.EmptySockets ?? 0;
                     bool hasRune = !string.IsNullOrEmpty(it?.RunewordName) || (it?.SocketedRunes.Count > 0);
+                    // socket fill is "known" only when the item actually voiced something to count from:
+                    // a capacity line, a runeword/socketed rune, or an explicit empty-socket count. Absent
+                    // all three, we have no socket info — the bar/text must NOT pretend the slot is full.
+                    bool known = it != null && (cap != null || hasRune || empty > 0);
                     int filled = cap != null ? Math.Max(0, cap.Value - empty)
                                : hasRune ? want                         // runeword present, no bare socket line
                                : (it != null ? Math.Max(0, want - empty) : 0);
+                    filled = Math.Min(filled, want);                     // never claim more filled than wanted
                     bool done = it != null && empty == 0 && (cap == null ? hasRune : filled >= cap.Value) && filled >= want;
                     grp.SocketsDone = done;
+                    grp.SocketsWanted = want;
+                    grp.SocketsKnown = known;
+                    grp.SocketsFilled = known ? filled : 0;
                     grp.SocketStatus = it == null
                         ? $"0/{want} filled (item not detected)"
-                        : (cap != null
-                            ? $"{filled}/{cap.Value} filled" + (empty > 0 ? $" ({empty} empty)" : "")
-                            : hasRune ? $"{want}/{want} filled (runeword)" : $"{Math.Max(0, want - empty)}/{want} filled" + (empty > 0 ? $" ({empty} empty)" : ""));
+                        : !known
+                            ? "socket info not captured — hover with Advanced Tooltips on"
+                            : (cap != null
+                                ? $"{filled}/{cap.Value} filled" + (empty > 0 ? $" ({empty} empty)" : "")
+                                : hasRune ? $"{want}/{want} filled (runeword)" : $"{filled}/{want} filled" + (empty > 0 ? $" ({empty} empty)" : ""));
                 }
 
                 // upgrade-finding: non-equipped items of this slot that meet MORE target affixes

@@ -154,7 +154,7 @@ public static class UpgradeScorer
             double goalScore = 0;
             foreach (var a in it.Affixes ?? new())
                 foreach (var kv in goal)
-                    if (DiffEngine.PhraseMatch(kv.Key, a.Text)) { goalScore += kv.Value; break; }
+                    if (DiffEngine.AffixSatisfies(kv.Key, a)) { goalScore += kv.Value; break; }
 
             // at a true tie, in Torment, a 900-IP Ancestral candidate beats a sub-900 equipped piece (below-cap
             // gear is strictly temporary at endgame — its same affixes roll higher at 900)
