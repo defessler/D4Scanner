@@ -219,6 +219,19 @@ public partial class MainWindow : Window
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
 
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
+    bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
+                           // retired in OnLiveUpdate only once the replay actually caught up (a graceful
+                           // close mid-replay must persist it as still-pending, or wiped profiles strand empty)
+
+    // ---- deferred settings (nothing applies until Save; Revert / X / Esc discard) ----
+    sealed class SettingsDraft
+    {
+        public bool UseTts, UseCapture, DebugMode;
+        public string Log = "";
+        public bool[] CacheChecked = new bool[4];   // game icons · build index · maxroll data · live gear
+    }
+    SettingsDraft? _settingsDraft;   // non-null = the modal is open (or parked behind a viewer) with edits
+    bool _diagShowing;               // the diagnostics viewer is showing ON TOP of the settings draft
 
     // auto-updater state
     System.Threading.Timer? _updateTimer;
@@ -451,6 +464,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
                     if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
                     if (s.TryGetValue("logSkipPos", out var lsp) && long.TryParse(lsp, out var lspv) && lspv > 0) _logSkipToPos = lspv;
+                    if (s.TryGetValue("replayFromZero", out var rfz)) _replayFromZero = rfz == "1";
                     // remembered window size (position is not restored, to avoid landing off-screen)
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
                     if (s.TryGetValue("winW", out var ww) && double.TryParse(ww, inv, out var wwv) &&
@@ -483,7 +497,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["invSort"] = _invSort?.ToString() }));
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["invSort"] = _invSort?.ToString() }));
         }
         catch { }
     }
@@ -554,7 +568,9 @@ public partial class MainWindow : Window
         inv = LiveGearResolver.MergeDemoted(inv, demoted);   // name|slot-guarded so a re-parse can't duplicate
         // Tombstones: a re-equip/re-hover of a removed item un-hides it (observe gear + inv sightings); items
         // the player deleted and hasn't re-acquired stay out of the pool instead of resurrecting each poll.
-        _tombstones.ObserveSightings(gear);
+        // GATED during a full-log replay: replayed historical sightings (and un-prefixed lines stamped
+        // "now") would otherwise out-date and purge tombstones, resurrecting long-deleted items.
+        if (!_replayFromZero) _tombstones.ObserveSightings(gear);
         inv = _tombstones.Apply(inv);
         var merged = new LiveBuild
         {
@@ -573,6 +589,10 @@ public partial class MainWindow : Window
         // First successful update after a cache clear: retire the skip position so future launches
         // don't stay pinned at the old log offset after the user has refreshed their gear.
         if (_logSkipToPos > 0 && merged.Gear.Count > 0) { _logSkipToPos = 0; SaveSettings(); }
+        // Retire the full-replay flag only once the replay actually CAUGHT UP — never inside
+        // StartWatching. A graceful close mid-replay persists it still-pending (Closing saves
+        // settings), so the next launch resumes the rebuild instead of stranding wiped profiles.
+        if (_replayFromZero && _watcher is { IsCaughtUp: true }) { _replayFromZero = false; SaveSettings(); }
         // Show last scanned item in status bar
         var newest = merged.Gear.OrderByDescending(g => g.LastScannedTicks).FirstOrDefault();
         if (newest != null) StatusDetail.Text = $"last: {newest.Name}  ·  {System.IO.Path.GetFileName(_log)}";
@@ -605,11 +625,13 @@ public partial class MainWindow : Window
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
-            // Start position: an explicit cache-clear skip wins; otherwise begin at the LAST session marker
-            // instead of re-parsing the whole cumulative log (18MB+ after a few weeks — measured 4s of parse
-            // plus per-visit UI churn). Everything earlier is already persisted in the per-character profiles.
-            // First run with no profiles yet replays everything once so historical characters migrate.
-            long startPos = _logSkipToPos != 0 ? _logSkipToPos
+            // Start position: a pending full replay (live-gear cache clear) wins — it rebuilds every
+            // character's loadout from the whole log; else an explicit cache-clear skip; otherwise begin
+            // at the LAST session marker instead of re-parsing the whole cumulative log (18MB+ after a
+            // few weeks — measured 4s of parse plus per-visit UI churn). Everything earlier is already
+            // persisted in the per-character profiles. First run with no profiles replays everything once.
+            long startPos = _replayFromZero ? 0
+                          : _logSkipToPos != 0 ? _logSkipToPos
                           : _profiles.All().Count > 0 ? LogWatcher.LastSessionStartPos(_log) : 0;
             _watcher = new LogWatcher(_log, equippedOnly: true, startPos: startPos);
             _logSkipToPos = 0;   // consume the skip once
@@ -1050,11 +1072,7 @@ public partial class MainWindow : Window
         _live.Inventory = LiveGearResolver.MergeDemoted(_live.Inventory, demoted);   // name|slot-guarded
     }
 
-    void PickLog()
-    {
-        var d = new OpenFileDialog { Filter = "TTS log|*.log;*.txt|All files|*.*", Title = "Pick the d4_tts.log" };
-        if (d.ShowDialog() == true) { _log = d.FileName; SaveSettings(); StartWatching(); }
-    }
+    // (PickLog removed — the log path is drafted inline in Settings and applied on Save)
 
     // ---- rendering ----
     static TextBlock TB(string text, Brush brush, double size, bool bold, Thickness? m = null) => new()
@@ -1959,15 +1977,32 @@ public partial class MainWindow : Window
         HelpHost.Visibility = Visibility.Visible;
     }
 
+    /// <summary>Toggle the settings modal. DEFER-EVERYTHING model: every control edits a draft; nothing
+    /// applies until Save. Revert re-seeds the draft from live state; X / backdrop / Esc DISCARD. A
+    /// read-only viewer opened from here (Diagnose) parks the draft and returns to it.</summary>
     void ShowSettings()
     {
-        if (SettingsHost.Visibility == Visibility.Visible) { SettingsHost.Visibility = Visibility.Collapsed; return; }
+        if (SettingsHost.Visibility == Visibility.Visible && !_diagShowing) { CloseSettings(); return; }
+        _diagShowing = false;
+        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log };
+        RenderSettings();
+    }
+
+    void CloseSettings()
+    {
+        _settingsDraft = null; _diagShowing = false;
+        SettingsHost.Visibility = Visibility.Collapsed;
+    }
+
+    void RenderSettings()
+    {
+        var d = _settingsDraft!;
         SettingsHost.Children.Clear();
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)) };
-        backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        backdrop.MouseLeftButtonDown += (_, _) => CloseSettings();
         SettingsHost.Children.Add(backdrop);
 
-        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
+        void Close() => CloseSettings();
 
         // ── content StackPanel — no fixed Width; the outer Border controls sizing ─
         var sp = new StackPanel();
@@ -2011,34 +2046,54 @@ public partial class MainWindow : Window
             row.Children.Add(col); sp.Children.Add(row);
         }
 
+        // ── pending-changes footer plumbing (defined first; controls call RefreshPending) ──────
+        var pendingList = new StackPanel();
+        Button saveBtn = null!, revertBtn = null!;
+        List<string> Pending()
+        {
+            var list = new List<string>();
+            if (d.UseTts != _useTts) list.Add(d.UseTts
+                ? "Enable TTS capture" + (!CaptureSetup.Installed() ? " — installs the capture DLL" : "")
+                : "Disable TTS capture — removes the DLL shim, its certificate and PATH entry");
+            if (d.UseCapture != _useCapture) list.Add(d.UseCapture ? "Enable OCR screen capture" : "Disable OCR screen capture");
+            if (d.DebugMode != _debugMode) list.Add(d.DebugMode ? "Show debug info on paper-doll cells" : "Hide debug info");
+            if (!string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase))
+                list.Add($"Watch a different TTS log: {System.IO.Path.GetFileName(d.Log)}");
+            var cacheNames = new[] { "game item icons", "build index", "Maxroll data", "live gear" };
+            var picked = Enumerable.Range(0, 4).Where(i => d.CacheChecked[i]).Select(i => cacheNames[i]).ToList();
+            if (picked.Count > 0)
+                list.Add("Clear cache: " + string.Join(", ", picked)
+                    + (d.CacheChecked[3] ? " — every character's gear is rebuilt by replaying the whole TTS log" : ""));
+            return list;
+        }
+        void RefreshPending()
+        {
+            var items2 = Pending();
+            pendingList.Children.Clear();
+            if (items2.Count == 0)
+                pendingList.Children.Add(TB("No pending changes.", Faint, 11.5, false));
+            else
+                foreach (var t in items2)
+                { var row = TB("•  " + t, Amber, 11.5, false); row.TextWrapping = TextWrapping.Wrap; pendingList.Children.Add(row); }
+            saveBtn.IsEnabled = revertBtn.IsEnabled = items2.Count > 0;
+            saveBtn.Opacity = revertBtn.Opacity = items2.Count > 0 ? 1.0 : 0.45;
+        }
+
         // ── CAPTURE section ───────────────────────────────────────────────────
         Section("CAPTURE");
 
-        ToggleRow("Screen-reader (TTS)", "Reads gear tooltips via D4's accessibility output (most accurate). Requires the capture DLL and D4 Accessibility settings.",
-            _useTts, on =>
-            {
-                if (on) { _useTts = true; SaveSettings(); if (!CaptureSetup.Installed()) RunInstall(null); else StartWatching(); }
-                else
-                {
-                    var confirm = MessageBox.Show("Turning off TTS capture removes the DLL shim, its certificate, and PATH entry.\n\nContinue?",
-                        "Remove TTS capture", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                    if (confirm != MessageBoxResult.Yes) { /* re-check won't fire since we're in lambda */ return; }
-                    var (ok, msg) = CaptureSetup.Uninstall();
-                    _useTts = false; SaveSettings(); StartWatching();
-                    MessageBox.Show(msg, ok ? "TTS capture removed" : "TTS capture removal", MessageBoxButton.OK,
-                        ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-                }
-            });
+        ToggleRow("Screen-reader (TTS)", "Reads gear tooltips via D4's accessibility output (most accurate). Requires the capture DLL and D4 Accessibility settings. Disabling removes the DLL on Save.",
+            d.UseTts, on => { d.UseTts = on; RefreshPending(); });
 
-        // OCR toggle with inline status feedback
+        // OCR toggle ("Scan now" stays LIVE — it's a trigger on the running engine, not a setting)
         var ocrRow = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
-        var ocrChk = new CheckBox { IsChecked = _useCapture, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 12, 0) };
+        var ocrChk = new CheckBox { IsChecked = d.UseCapture, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 12, 0) };
         DockPanel.SetDock(ocrChk, Dock.Left); ocrRow.Children.Add(ocrChk);
         var ocrCol = new StackPanel();
         var ocrHdrRow = new DockPanel();
-        var ocrStatusLbl = TB(_useCapture ? "active" : "", Faint, 11, false);
+        var ocrStatusLbl = TB(_captureEngine != null ? "active" : "", Faint, 11, false);
         ocrStatusLbl.VerticalAlignment = VerticalAlignment.Center; ocrStatusLbl.Margin = new Thickness(10, 0, 0, 0);
-        var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), IsEnabled = _useCapture, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+        var scanNowBtn = new Button { Content = "Scan now", Padding = new Thickness(10, 2, 10, 2), IsEnabled = _captureEngine != null, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
         scanNowBtn.Click += async (_, _) => { if (_captureEngine != null) { scanNowBtn.Content = "…"; await _captureEngine.ScanNowAsync(); scanNowBtn.Content = "Scan now"; } };
         DockPanel.SetDock(scanNowBtn, Dock.Right); ocrHdrRow.Children.Add(scanNowBtn);
         ocrHdrRow.Children.Add(TBs("Screen capture (OCR)", Ink, 13, true));
@@ -2048,29 +2103,13 @@ public partial class MainWindow : Window
         ocrCol.Children.Add(ocrStatusLbl);
         ocrRow.Children.Add(ocrCol);
         sp.Children.Add(ocrRow);
-        ocrChk.Checked += (_, _) =>
-        {
-            _useCapture = true; scanNowBtn.IsEnabled = true;
-            ocrStatusLbl.Text = "starting…"; ocrStatusLbl.Foreground = Soft;
-            SaveSettings(); StartWatching();
-            Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() =>
-                ocrStatusLbl.Text = _captureEngine != null ? "active" : "inactive"));
-        };
-        ocrChk.Unchecked += (_, _) =>
-        {
-            _useCapture = false; scanNowBtn.IsEnabled = false;
-            ocrStatusLbl.Text = ""; SaveSettings(); StartWatching();
-        };
-
-        // (Character-portrait capture removed: the doll uses a clean class-coloured glow, not a screenshot,
-        //  because the auto-captured frame was unreliable. See PaperDoll().)
+        ocrChk.Checked   += (_, _) => { d.UseCapture = true; RefreshPending(); };
+        ocrChk.Unchecked += (_, _) => { d.UseCapture = false; RefreshPending(); };
 
         // ── DISPLAY section ───────────────────────────────────────────────────
         Section("DISPLAY");
-        // (the affix roll-quality threshold slider is gone: roll bars measure toward the MAX roll —
-        //  the 100% baseline — and "below build min" warnings come only from the build's own minimums)
-
-        ToggleRow("Debug info", "Show last-scan time and slot key diagnostics on each paper-doll cell.", _debugMode, on => { _debugMode = on; SaveSettings(); Render(); });
+        ToggleRow("Debug info", "Show last-scan time and slot key diagnostics on each paper-doll cell.",
+            d.DebugMode, on => { d.DebugMode = on; RefreshPending(); });
 
         // ── LOG section ───────────────────────────────────────────────────────
         Section("LOG");
@@ -2106,76 +2145,86 @@ public partial class MainWindow : Window
         diagRow.Children.Add(diagHint);
         sp.Children.Add(diagRow);
         var logPathRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var logPathLbl = TB(System.IO.Path.GetFileName(_log), Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center;
+        var logPathLbl = TB(System.IO.Path.GetFileName(d.Log), Faint, 11, false); logPathLbl.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(logPathLbl, Dock.Left); logPathRow.Children.Add(logPathLbl);
         var changeLogBtn = new Button { Content = "Change…", Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Right, FontSize = 12 };
-        changeLogBtn.Click += (_, _) => { Close(); PickLog(); };
+        changeLogBtn.Click += (_, _) =>
+        {
+            var dlg = new OpenFileDialog { Filter = "TTS log|*.log;*.txt|All files|*.*", Title = "Pick the d4_tts.log" };
+            if (dlg.ShowDialog() == true) { d.Log = dlg.FileName; logPathLbl.Text = System.IO.Path.GetFileName(d.Log); RefreshPending(); }
+        };
         logPathRow.Children.Add(changeLogBtn); sp.Children.Add(logPathRow);
 
-        // ── CACHE section ─────────────────────────────────────────────────────
+        // ── CACHE section — one card; checking a row STAGES the clear (applied on Save) ──────
         Section("CACHE");
-        var cacheDesc = TB("Clear cached data. Icons and build data re-download automatically on next use.", Soft, 11.5, false);
-        cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); sp.Children.Add(cacheDesc);
+        var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
+        var cacheCard = new StackPanel();
+        var cacheDesc = TB("Check what to clear — it happens on Save. Icons re-extract from your D4 install, the build index and Maxroll data re-download on next use, and clearing live gear rebuilds every character by replaying the whole TTS log (the log itself is never deleted).", Soft, 11.5, false);
+        cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); cacheCard.Children.Add(cacheDesc);
 
-        var iconDir     = Path.Combine(IconResolver.CacheDir, "icons");
-        var gameIconDir = Path.Combine(iconDir, "game");
-        var liveJsonPath = LivePath;
-        var cacheFiles = new (string label, string detail, Func<bool> exists, Action clear)[]
+        var cacheRows = new (string label, string detail, Func<bool> exists)[]
         {
-            ("Game item icons",  $"{CountFiles(gameIconDir)} files — extracted from your D4 install",
-                () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0,
-                () => { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }),
-            ("Build index",      "Maxroll guide list — re-fetched on next launch",
-                () => File.Exists(IconResolver.IndexPath),
-                () => { try { File.Delete(IconResolver.IndexPath); } catch { } }),
-            ("Maxroll data",     "Planner item/affix data — re-fetched on next import",
-                () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")),
-                () => { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }),
-            ("Live gear cache",  "Last-known equipped items — hover new items to rebuild from scratch",
-                () => File.Exists(liveJsonPath) || _live.Gear.Count > 0,
-                () =>
-                {
-                    // Persist the skip position so restarts also skip the old log data
-                    try { if (File.Exists(_log)) _logSkipToPos = new FileInfo(_log).Length; } catch { }
-                    try { File.Delete(liveJsonPath); } catch { }
-                    _live = new();
-                    SaveSettings();   // persist _logSkipToPos to app.json
-                    Dispatcher.Invoke(StartWatching);
-                }),
+            ("Game item icons", $"{CountFiles(gameIconDir, "*.png")} files — extracted from your D4 install; re-extract lazily",
+                () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0),
+            ("Build index", "Maxroll guide list (build_index.json) — re-fetched right after Save",
+                () => File.Exists(BuildIndex.CachePath) || File.Exists(IconResolver.IndexPath)),
+            ("Maxroll data", "Planner item/affix data — re-fetched on next import",
+                () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json"))),
+            ("Live gear cache", "Every character's captured loadout — rebuilt by replaying the entire TTS log on Save. Items you deleted long ago may reappear until cleared again.",
+                () => File.Exists(LivePath) || _live.Gear.Count > 0 || _profiles.All().Count > 0),
         };
-
-        var checks = new CheckBox[cacheFiles.Length];
-        for (int i = 0; i < cacheFiles.Length; i++)
+        for (int i = 0; i < cacheRows.Length; i++)
         {
-            var (label, detail, exists, _) = cacheFiles[i];
+            int idx = i;
+            var (label, detail, exists) = cacheRows[i];
             var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-            var chk = checks[i] = new CheckBox { IsChecked = false, IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 10, 0) };
+            var chk = new CheckBox { IsChecked = d.CacheChecked[idx], IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 10, 0) };
+            chk.Checked   += (_, _) => { d.CacheChecked[idx] = true; RefreshPending(); };
+            chk.Unchecked += (_, _) => { d.CacheChecked[idx] = false; RefreshPending(); };
             DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
             var col = new StackPanel();
             col.Children.Add(TB(label, exists() ? Ink : Faint, 13, true));
-            col.Children.Add(TB(detail, Soft, 11, false));
-            row.Children.Add(col); sp.Children.Add(row);
+            var det = TB(detail, Soft, 11, false); det.TextWrapping = TextWrapping.Wrap; col.Children.Add(det);
+            row.Children.Add(col); cacheCard.Children.Add(row);
         }
-
-        var cacheRow = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
-        var cancelBtn = new Button { Content = "Cancel", Padding = new Thickness(14, 6, 14, 6) };
-        cancelBtn.Click += (_, _) => Close();
-        var clearBtn = new Button { Content = "Clear selected", Style = (Style)FindResource("Primary"), Padding = new Thickness(14, 6, 14, 6) };
-        clearBtn.Click += (_, _) =>
+        var cacheHint = TB("✓ staged clears apply on Save — see Pending changes below", Faint, 10.5, false);
+        cacheHint.HorizontalAlignment = HorizontalAlignment.Right; cacheHint.Margin = new Thickness(0, 2, 0, 0);
+        cacheCard.Children.Add(cacheHint);
+        sp.Children.Add(new Border
         {
-            for (int i = 0; i < cacheFiles.Length; i++) if (checks[i].IsChecked == true) cacheFiles[i].clear();
-            Close(); Render();
-            Toast("Cache cleared");
-        };
-        DockPanel.SetDock(cancelBtn, Dock.Right); cancelBtn.Margin = new Thickness(8, 0, 0, 0); cacheRow.Children.Add(cancelBtn);
-        DockPanel.SetDock(clearBtn,  Dock.Right); cacheRow.Children.Add(clearBtn);
-        sp.Children.Add(cacheRow);
+            Background = B("#15141B"), BorderBrush = Edge, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 12, 14, 10),
+            Margin = new Thickness(0, 0, 0, 6), Child = cacheCard,
+        });
 
-        // ── panel + scrollviewer ──────────────────────────────────────────────
+        // ── sticky footer: pending changes + Revert / Save (outside the scroll) ───────────────
+        var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+        footer.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 0, 0, 10) });
+        footer.Children.Add(TB("PENDING CHANGES", Faint, 10, true, new Thickness(0, 0, 0, 4)));
+        footer.Children.Add(pendingList);
+        var btnRow2 = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+        saveBtn = new Button { Content = "Save", Style = (Style)FindResource("Primary"), Padding = new Thickness(22, 7, 22, 7) };
+        saveBtn.Click += (_, _) => ApplySettings();
+        revertBtn = new Button { Content = "Revert", Padding = new Thickness(16, 7, 16, 7) };
+        revertBtn.Click += (_, _) =>
+        {
+            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log };
+            RenderSettings();
+        };
+        DockPanel.SetDock(saveBtn, Dock.Right); btnRow2.Children.Add(saveBtn);
+        DockPanel.SetDock(revertBtn, Dock.Left); btnRow2.Children.Add(revertBtn);
+        btnRow2.Children.Add(TB("✕ / Esc closes without applying", Faint, 10.5, false, new Thickness(14, 0, 14, 0)));
+        footer.Children.Add(btnRow2);
+        RefreshPending();
+
+        // ── panel: footer fixed at the bottom; the sections scroll above it ───────────────────
         var waS = SystemParameters.WorkArea;
         double settingsW = Math.Min(780, waS.Width * 0.62);
         var maxH = waS.Height * 0.84;
-        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = maxH };
+        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var body = new DockPanel { LastChildFill = true, MaxHeight = maxH };
+        DockPanel.SetDock(footer, Dock.Bottom); body.Children.Add(footer);
+        body.Children.Add(scroll);
         var panel = new Border
         {
             Background = B("#1A1921"),
@@ -2183,7 +2232,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(32, 28, 32, 30),
             Width = settingsW,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-            Child = scroll,
+            Child = body,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
                 Color = Colors.Black, BlurRadius = 40, ShadowDepth = 0, Opacity = 0.7,
@@ -2191,6 +2240,58 @@ public partial class MainWindow : Window
         };
         SettingsHost.Children.Add(panel);
         SettingsHost.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Save: apply the whole draft atomically — prompts that used to fire at toggle time fire
+    /// HERE, side effects coalesce into one SaveSettings and at most one StartWatching, and staged cache
+    /// clears execute. On the TTS-uninstall prompt declining, nothing applies and the draft survives.</summary>
+    void ApplySettings()
+    {
+        var d = _settingsDraft;
+        if (d == null) { CloseSettings(); return; }
+
+        // deferred TTS-uninstall confirmation — declining aborts the WHOLE save (atomic apply)
+        if (!d.UseTts && _useTts)
+        {
+            var confirm = MessageBox.Show("Turning off TTS capture removes the DLL shim, its certificate, and PATH entry.\n\nContinue?",
+                "Remove TTS capture", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes) return;
+            var (ok, msg) = CaptureSetup.Uninstall();
+            MessageBox.Show(msg, ok ? "TTS capture removed" : "TTS capture removal", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        bool needInstall = d.UseTts && !_useTts && !CaptureSetup.Installed();
+        bool watchChanged = d.UseTts != _useTts || d.UseCapture != _useCapture
+                         || !string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase);
+
+        _useTts = d.UseTts; _useCapture = d.UseCapture; _debugMode = d.DebugMode; _log = d.Log;
+
+        // staged cache clears
+        var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
+        if (d.CacheChecked[0]) { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }
+        if (d.CacheChecked[1]) { try { File.Delete(BuildIndex.CachePath); } catch { } try { File.Delete(IconResolver.IndexPath); } catch { } }
+        if (d.CacheChecked[2]) { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }
+        if (d.CacheChecked[3])
+        {
+            // full rebuild: wipe live + EVERY profile's captured loadout, then replay the whole TTS
+            // log from byte 0 (the flag is one-shot persisted and retired only when the replay
+            // catches up — see OnLiveUpdate — so a restart mid-replay resumes instead of stranding).
+            try { File.Delete(LivePath); } catch { }
+            _live = new();
+            _logSkipToPos = 0;
+            _profiles.ResetAllLive();
+            _replayFromZero = true;
+            watchChanged = true;
+        }
+        bool refetchIndex = d.CacheChecked[1];
+
+        SaveSettings();          // ONE persist (incl. replayFromZero / cleared logSkipPos)
+        CloseSettings();
+        if (needInstall) RunInstall(null);
+        if (watchChanged) StartWatching();                       // at most ONE (also reloads the build index)
+        else if (refetchIndex) LoadBuildIndex();                 // index cleared but watchers untouched
+        Render();
+        Toast("Settings saved");
     }
 
     static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
@@ -2203,9 +2304,12 @@ public partial class MainWindow : Window
     // "diagnose capture locks up the app" bug). A placeholder modal shows while it works.
     async void ShowTtsDiagnostics()
     {
+        // a read-only VIEWER on top of settings: it parks the draft (never discards it) and closing
+        // returns to the settings modal with every staged change intact
+        _diagShowing = true;
         SettingsHost.Children.Clear();
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)) };
-        backdrop.MouseLeftButtonDown += (_, _) => SettingsHost.Visibility = Visibility.Collapsed;
+        backdrop.MouseLeftButtonDown += (_, _) => CloseDiagnostics();
         SettingsHost.Children.Add(backdrop);
 
         var wa = SystemParameters.WorkArea;
@@ -2240,11 +2344,20 @@ public partial class MainWindow : Window
         panel.Child = BuildDiagnosticsUi(rep);
     }
 
+    /// <summary>Close the diagnostics viewer: back to the settings modal when a draft is parked there,
+    /// else just dismiss.</summary>
+    void CloseDiagnostics()
+    {
+        _diagShowing = false;
+        if (_settingsDraft != null) RenderSettings();
+        else SettingsHost.Visibility = Visibility.Collapsed;
+    }
+
     /// <summary>The diagnostics report body (everything inside the modal panel) — built separately so
     /// the async shell above can swap it in over the placeholder once the background parse finishes.</summary>
     FrameworkElement BuildDiagnosticsUi(TtsDiagReport rep)
     {
-        void Close() => SettingsHost.Visibility = Visibility.Collapsed;
+        void Close() => CloseDiagnostics();
         var sp = new StackPanel();
 
         void Hdr(string title) => sp.Children.Add(new Border
@@ -2949,7 +3062,12 @@ public partial class MainWindow : Window
 
         if (k == System.Windows.Input.Key.F1 || (k == System.Windows.Input.Key.Oem2 && shift && !UrlBox.IsFocused)) { ToggleHelp(); e.Handled = true; return; }
         if (HelpHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape) { HelpHost.Visibility = Visibility.Collapsed; e.Handled = true; return; }
-        if (SettingsHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape) { SettingsHost.Visibility = Visibility.Collapsed; e.Handled = true; return; }
+        if (SettingsHost.Visibility == Visibility.Visible && k == System.Windows.Input.Key.Escape)
+        {
+            // Esc on the diagnostics VIEWER returns to the parked settings draft; on settings it discards
+            if (_diagShowing) CloseDiagnostics(); else CloseSettings();
+            e.Handled = true; return;
+        }
         if (ctrl && (k == System.Windows.Input.Key.OemPlus || k == System.Windows.Input.Key.Add)) { Zoom(0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.OemMinus || k == System.Windows.Input.Key.Subtract)) { Zoom(-0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.D0 || k == System.Windows.Input.Key.NumPad0)) { Zoom(1.0 - _uiScale); e.Handled = true; }

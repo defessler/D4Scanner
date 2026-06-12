@@ -2698,6 +2698,35 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         getStep.Detail == "rolls up to 120" && !getStep.Text.Contains("(max"));
 }
 
+// ---- v0.43: ProfileStore.ResetAllLive — wipe captured loadouts, preserve identity, skip strays ----
+{
+    var tmpProf = Path.Combine(Path.GetTempPath(), "d4s_resetlive_" + Guid.NewGuid().ToString("N"));
+    var store = new ProfileStore(tmpProf);
+    store.Save(new CharacterProfile { Slug = "heoki-rogue", Name = "Heoki", Class = "Rogue", Paragon = 186,
+        Torment = 8, TargetPath = @"C:\builds\dok.json",
+        Live = new LiveBuild { Gear = { new Item { Name = "Cowl", Slot = "helm" } },
+                               Inventory = { new Item { Name = "Spare", Slot = "ring" } } } });
+    store.ActiveSlug = "heoki-rogue";
+    // a stray non-profile JSON in the folder (tombstones.json shape) must be skipped, never re-saved
+    File.WriteAllText(Path.Combine(tmpProf, "tombstones.json"), "{\"Stones\":[{\"Key\":\"x|helm\"}]}");
+    try
+    {
+        int n = store.ResetAllLive();
+        Eq("ResetAllLive: exactly the one real profile reset", 1, n);
+        var p = store.Get("heoki-rogue")!;
+        Eq("ResetAllLive: gear wiped", 0, p.Live.Gear.Count);
+        Eq("ResetAllLive: inventory wiped", 0, p.Live.Inventory.Count);
+        Check("ResetAllLive: identity + progression + target preserved",
+            p.Name == "Heoki" && p.Class == "Rogue" && p.Paragon == 186 && p.Torment == 8 && p.TargetPath == @"C:\builds\dok.json");
+        Eq("ResetAllLive: active pointer untouched", "heoki-rogue", store.ActiveSlug);
+        Check("ResetAllLive: no unknown.json invented from the stray file",
+            !File.Exists(Path.Combine(tmpProf, "unknown.json")));
+        Check("ResetAllLive: the stray file itself is untouched",
+            File.ReadAllText(Path.Combine(tmpProf, "tombstones.json")).Contains("Stones"));
+    }
+    finally { try { Directory.Delete(tmpProf, recursive: true); } catch { } }
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
