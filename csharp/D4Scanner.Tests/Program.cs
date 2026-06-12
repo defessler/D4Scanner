@@ -2504,6 +2504,17 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         dsT.Items.Count == 1 && !dsT.Items[0].Equipped && dsT.Items[0].Context == "StashItem");
 }
 
+// ---- v0.38.1: game-data icon extraction must not latch a transient CASC failure for the session ----
+// (Diablo IV itself holding the storage at app start is the NORMAL failure — the app runs beside the game.)
+{
+    var backoff = TimeSpan.FromSeconds(60);
+    Check("CascRetry: never-failed -> probe immediately", GameDataIcons.ShouldRetryCasc(1000, 0, backoff));
+    long t0 = new DateTime(2026, 6, 12, 10, 0, 0, DateTimeKind.Utc).Ticks;
+    Check("CascRetry: within the backoff -> hold", !GameDataIcons.ShouldRetryCasc(t0 + TimeSpan.FromSeconds(30).Ticks, t0, backoff));
+    Check("CascRetry: after the backoff -> retry", GameDataIcons.ShouldRetryCasc(t0 + TimeSpan.FromSeconds(61).Ticks, t0, backoff));
+    Check("CascRetry: exactly at the backoff -> retry", GameDataIcons.ShouldRetryCasc(t0 + backoff.Ticks, t0, backoff));
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
