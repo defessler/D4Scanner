@@ -182,7 +182,8 @@ public class TargetBuild
     public List<string> KeyPassives { get; set; } = new();
     public TargetParagon? Paragon { get; set; }
     public TargetMercenary? Mercenary { get; set; }      // mercenary + reinforcement the build wants (talismans aren't in the planner)
-    public double? MinRollPercent { get; set; }  // global default roll-quality threshold (else the app's slider)
+    // (the global MinRollPercent threshold is gone — max roll is the universal display baseline;
+    //  saved builds that still carry the field deserialize fine: unknown JSON members are ignored)
     public List<string> Profiles { get; set; } = new();  // all profiles available on the source build
     public string? Profile { get; set; }                 // the profile this target was built from
 }
@@ -299,6 +300,8 @@ public class ReqItem
     public bool IsPercent { get; set; }       // affix value is a percentage (unit hint for aggregation)
     public bool IsGreater { get; set; }       // the matched live affix is a Greater Affix (★)
     public string? ViaUmbrella { get; set; }  // satisfied by an umbrella affix (e.g. "All Stats") — its text, for a "· via X" note
+    public bool NeedIsMax { get; set; }       // Need describes the MAX-roll target ("max 1,600"), not a build requirement
+    public double? ThresholdPct { get; set; } // explicit build minimum as a % of the roll range (the bar's tick); null = no minimum
 }
 
 public class GearLiveItem

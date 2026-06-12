@@ -84,7 +84,7 @@ public static class UpgradeScorer
     /// <summary>Score the supplied non-equipped <paramref name="candidates"/> against the build. When
     /// <paramref name="torment"/> is set (the player is in Torment), a 900-IP Ancestral candidate breaks a tie
     /// against a sub-900 equipped piece — at endgame, below-cap gear is strictly temporary.</summary>
-    public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, double gate, int? torment = null)
+    public static List<ScoredItem> Score(TargetBuild target, LiveBuild live, IEnumerable<Item> candidates, int? torment = null)
     {
         var goal = GoalWeights(target);
 
@@ -133,7 +133,7 @@ public static class UpgradeScorer
                 {
                     pick = gi; pickKey = key;
                     pickPresent = present; pickFix = fix; pickQ = key.q;
-                    pickMet = DiffEngine.ScoreSlot(g, it, gate);
+                    pickMet = DiffEngine.ScoreSlot(g, it);
                 }
             }
 

@@ -31,21 +31,28 @@ Eq("SlotBaseName strips '#1'", "ring", DiffEngine.SlotBaseName("Ring #1"));
 Eq("SlotBaseName strips trailing index", "ring", DiffEngine.SlotBaseName("Ring 2"));
 Eq("SlotBaseName plain", "helm", DiffEngine.SlotBaseName("Helm"));
 
-// ---- ScoreSlot / AffixMet ----
+// ---- ScoreSlot / AffixMet (100% baseline: presence + EXPLICIT build minimums only — no global gate) ----
 var tg = new TargetGear { Slot = "Helm", Affixes = {
     new TargetAffix { Name = "Maximum Life", Min = 1000 },
     new TargetAffix { Name = "Dexterity" } } };
 var item = new Item { Name = "X", Slot = "Helm", Affixes = {
     new Affix { Text = "Maximum Life", Value = 1200 },
     new Affix { Text = "Dexterity", Value = 50, Min = 10, Max = 100 } } };   // dex roll = 44%
-Eq("ScoreSlot gate 50 -> 1 (dex under gate)", 1, DiffEngine.ScoreSlot(tg, item, 50));
-Eq("ScoreSlot gate 40 -> 2 (dex clears gate)", 2, DiffEngine.ScoreSlot(tg, item, 40));
+Eq("ScoreSlot: presence + explicit Min -> 2 (a 44% roll with no build minimum is MET)", 2, DiffEngine.ScoreSlot(tg, item));
+var tgMinPct = new TargetGear { Slot = "Helm", Affixes = {
+    new TargetAffix { Name = "Maximum Life", Min = 2000 },                    // explicit Min not reached
+    new TargetAffix { Name = "Dexterity", MinPercent = 60 } } };              // explicit roll min not reached (44%)
+Eq("ScoreSlot: explicit Min + MinPercent below -> 0", 0, DiffEngine.ScoreSlot(tgMinPct, item));
+var tgMinPctLow = new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Dexterity", MinPercent = 40 } } };
+Eq("ScoreSlot: explicit MinPercent cleared -> 1", 1, DiffEngine.ScoreSlot(tgMinPctLow, item));
 Check("AffixMet absolute min satisfied",
-    DiffEngine.AffixMet(new TargetAffix { Name = "Maximum Life", Min = 1000 }, item, 50));
+    DiffEngine.AffixMet(new TargetAffix { Name = "Maximum Life", Min = 1000 }, item));
 Check("AffixMet absolute min not satisfied",
-    !DiffEngine.AffixMet(new TargetAffix { Name = "Maximum Life", Min = 2000 }, item, 50));
+    !DiffEngine.AffixMet(new TargetAffix { Name = "Maximum Life", Min = 2000 }, item));
 Check("AffixMet absent affix is false",
-    !DiffEngine.AffixMet(new TargetAffix { Name = "Armor" }, item, 50));
+    !DiffEngine.AffixMet(new TargetAffix { Name = "Armor" }, item));
+Check("AffixMet presence with no minimum is met",
+    DiffEngine.AffixMet(new TargetAffix { Name = "Dexterity" }, item));
 
 // ---- Diff: a fully-met build ----
 var target = new TargetBuild
@@ -60,7 +67,7 @@ var liveMet = new LiveBuild { Gear = {
     new Item { Name = "Cowl of the Homeless", Slot = "Helm", Affixes = {
         new Affix { Text = "Maximum Life", Value = 1200 },
         new Affix { Text = "Dexterity", Value = 80, Min = 10, Max = 100 } } } } };   // dex roll ~78%
-var rMet = DiffEngine.Diff(target, liveMet, 50);
+var rMet = DiffEngine.Diff(target, liveMet);
 Eq("Diff met: total 3", 3, rMet.Total);
 Eq("Diff met: matched 3", 3, rMet.Matched);
 Eq("Diff met: pct 100", 100, rMet.Pct);
@@ -72,7 +79,7 @@ Check("Diff met: uniques 1/1", rMet.Categories.Any(c => c.Id == "uniques" && c.M
 var livePartial = new LiveBuild { Gear = {
     new Item { Name = "Some Helm", Slot = "Helm", Affixes = {
         new Affix { Text = "Maximum Life", Value = 800 } } } } };   // ML under min; Dex absent; unique absent
-var rPart = DiffEngine.Diff(target, livePartial, 50);
+var rPart = DiffEngine.Diff(target, livePartial);
 Eq("Diff partial: total 3", 3, rPart.Total);
 Eq("Diff partial: matched 1 (ML present)", 1, rPart.Matched);
 Eq("Diff partial: under 1 (ML below min)", 1, rPart.Under);
@@ -142,7 +149,7 @@ var subLive = new LiveBuild { Gear = {
     new Item { Name = "A Helm", Slot = "Helm", Affixes = {
         new Affix { Text = "Maximum Life", Value = 1200 },
         new Affix { Text = "Dexterity", Value = 50 } } } } };
-var plan = Substitutes.Plan(subTarget, subLive, 50);
+var plan = Substitutes.Plan(subTarget, subLive);
 Eq("Substitutes: one entry per gear slot", 2, plan.Count);
 var helmSub = plan.First(s => s.Slot == "Helm");
 Eq("Substitutes: helm coreTotal 2", 2, helmSub.CoreTotal);
@@ -187,7 +194,7 @@ Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains
         var (off, reason) = InfernalHordesAdvisor.RecommendOffering(rep, rep.TargetClass);
         parts.Add(off); parts.Add(reason);
         foreach (var s in BuildGuide.Steps(rep)) { parts.Add(s.Text); parts.Add(s.Detail ?? ""); parts.Add(s.Headline); }
-        foreach (var sub in Substitutes.Plan(tgt, lv, 50)) { parts.Add(sub.Wanted); parts.AddRange(sub.Ladder); }
+        foreach (var sub in Substitutes.Plan(tgt, lv)) { parts.Add(sub.Wanted); parts.AddRange(sub.Ladder); }
         return string.Join(" ␟ ", parts);
     }
     var blob = Gather(rPart, target, livePartial);
@@ -221,7 +228,7 @@ var guideTarget = new TargetBuild { Gear = {
     new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } },
     new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } } } };
 var liveMissAll = new LiveBuild();
-var rMissAll = DiffEngine.Diff(guideTarget, liveMissAll, 50);
+var rMissAll = DiffEngine.Diff(guideTarget, liveMissAll);
 var stepsAll = BuildGuide.Steps(rMissAll);
 // Same affix on two weapon slots should be merged into one step
 var dotSteps = stepsAll.Where(s => s.Text.Contains("Damage Over Time")).ToList();
@@ -235,7 +242,7 @@ var retemperTarget = new TargetBuild { Gear = {
         new TargetAffix { Name = "Max Stacks", Min = 3, Tempered = true } } } } };
 var liveLowRoll = new LiveBuild { Gear = { new Item { Name = "A Helm", Slot = "helm", Affixes = {
     new Affix { Text = "Max Stacks", Value = 2, Min = 1, Max = 5 } } } } };
-var rTemper = DiffEngine.Diff(retemperTarget, liveLowRoll, 50);
+var rTemper = DiffEngine.Diff(retemperTarget, liveLowRoll);
 var temSteps = BuildGuide.Steps(rTemper);
 Check("BuildGuide RE-TEMPER verb for under-rolled tempered affix",
     temSteps.Any(s => s.Verb == "RE-TEMPER"));
@@ -1140,7 +1147,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new TargetSkill { Name = "Dance of Knives", Rank = 5 },
         new TargetSkill { Name = "Concealment" } } };           // no explicit rank from the planner
     var skL = new LiveBuild { Skills = { new LiveSkill { Name = "Dance of Knives", Rank = 20 } } };
-    var rep = DiffEngine.Diff(skT, skL, 75);
+    var rep = DiffEngine.Diff(skT, skL);
     var sk = rep.Categories.First(c => c.Id == "skills").Groups[0].Items;
     Eq("Skills: explicit rank target shows", "≥ 5", sk[0].Need);
     Check("Skills: planner rank omitted -> NO 'wants 1' target", sk[1].Need == null);
@@ -1172,7 +1179,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var ringJunk = new Item { Name = "RingJunk", Slot = "Ring", ItemPower = 800, Affixes = { new Affix { Text = "Strength", Value = 100 } } };
     var candidates = new List<Item> { ringJunk, helm1, helm2, helm3 };   // deliberately unsorted
 
-    var scored = UpgradeScorer.Score(upTarget, upLive, candidates, 80);
+    var scored = UpgradeScorer.Score(upTarget, upLive, candidates);
     Eq("UpgradeScorer: 4 items scored", 4, scored.Count);
     // Helm2/Helm3 tie on every key (affixes, IP, rarity) — name order decides; goal score no longer sorts
     Eq("UpgradeScorer: rank 1 is Helm2 (full tie -> name order)", "Helm2", scored[0].Item.Name);
@@ -1197,13 +1204,13 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var threeLow = new Item { Name = "ThreeLow", Slot = "Chest", Affixes = { Lo("W"), Lo("X"), Lo("Y") } };
     var twoHigh = new Item { Name = "TwoHigh", Slot = "Chest", Affixes = { Hi("W"), Hi("X") } };
     var fourLow = new Item { Name = "FourLow", Slot = "Chest", Affixes = { Lo("W"), Lo("X"), Lo("Y"), Lo("Z") } };
-    var s2 = UpgradeScorer.Score(four, new LiveBuild(), new[] { twoHigh, threeLow, fourLow }, 80);
+    var s2 = UpgradeScorer.Score(four, new LiveBuild(), new[] { twoHigh, threeLow, fourLow });
     Eq("UpgradeScorer: 3-of-4 at any roll outranks 2-of-4 at perfect rolls",
         "TwoHigh", s2[2].Item.Name);
     Check("UpgradeScorer: one-short item is fixable (enchant credit)", s2.First(x => x.Item.Name == "ThreeLow").Fixable);
     // the fixable 3/4 with high rolls beats a complete 4/4 with terrible rolls (eff tier equal, met/quality decide)
     var threeHigh = new Item { Name = "ThreeHigh", Slot = "Chest", Affixes = { Hi("W"), Hi("X"), Hi("Y") } };
-    var s3 = UpgradeScorer.Score(four, new LiveBuild(), new[] { fourLow, threeHigh }, 80);
+    var s3 = UpgradeScorer.Score(four, new LiveBuild(), new[] { fourLow, threeHigh });
     Eq("UpgradeScorer: hot 3/4 (fixable) outranks cold 4/4 in the same tier", "ThreeHigh", s3[0].Item.Name);
 
     // aspect rule: uniques can't take an imprinted aspect, so they can't upgrade over a non-unique
@@ -1214,7 +1221,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new Affix { Text = "Attack Speed", Value = 9 }, new Affix { Text = "Dexterity", Value = 60 } } };
     var rareGloves = new Item { Name = "Rare Gloves", Slot = "Gloves", Affixes = {
         new Affix { Text = "Attack Speed", Value = 9 }, new Affix { Text = "Dexterity", Value = 60 } } };
-    var s4 = UpgradeScorer.Score(asp, new LiveBuild { Gear = { eqGloves } }, new[] { uniqGloves, rareGloves }, 80);
+    var s4 = UpgradeScorer.Score(asp, new LiveBuild { Gear = { eqGloves } }, new[] { uniqGloves, rareGloves });
     Check("UpgradeScorer: unique is aspect-blocked on an aspect slot", s4.First(x => x.Item.IsUnique).AspectBlocked);
     Check("UpgradeScorer: unique is NOT an upgrade over a non-unique on an aspect slot",
         !s4.First(x => x.Item.IsUnique).IsUpgrade);
@@ -1228,7 +1235,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var eqHelmPerfect = new Item { Name = "PerfectHelm", Slot = "Helm", Equipped = true, Affixes = { Hi("A"), Hi("B"), Hi("C") } };
     var helmAlmost = new Item { Name = "AlmostHelm", Slot = "Helm", Affixes = { Hi("A"), Hi("B"), Hi("C") } };   // ties equipped — not an upgrade
     var bootsUp = new Item { Name = "BootsUp", Slot = "Boots", Affixes = { Hi("D") } };                          // empty slot — upgrade
-    var s5 = UpgradeScorer.Score(two, new LiveBuild { Gear = { eqHelmPerfect } }, new[] { helmAlmost, bootsUp }, 80);
+    var s5 = UpgradeScorer.Score(two, new LiveBuild { Gear = { eqHelmPerfect } }, new[] { helmAlmost, bootsUp });
     Check("UpgradeScorer: the modest UPGRADE sorts above the impressive non-upgrade",
         s5[0].Item.Name == "BootsUp" && s5[0].IsUpgrade && !s5[1].IsUpgrade);
 }
@@ -1579,7 +1586,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var salv = new Item { Name = "SalvageGloves", Slot = "Gloves", Rarity = "Legendary", Aspect = "Edgemaster's Aspect" };
     var plain = new Item { Name = "PlainGloves", Slot = "Gloves", Rarity = "Legendary", ItemPower = 900 };
     var uniqSalv = new Item { Name = "UniqGloves", Slot = "Gloves", Rarity = "Unique", IsUnique = true, Aspect = "Edgemaster's Aspect" };
-    var sScored = UpgradeScorer.Score(sTarget, new LiveBuild { Gear = { eqGl } }, new[] { plain, salv, uniqSalv }, 75);
+    var sScored = UpgradeScorer.Score(sTarget, new LiveBuild { Gear = { eqGl } }, new[] { plain, salv, uniqSalv });
     Check("Salvage: wanted-aspect legendary is flagged", sScored.First(x => x.Item.Name == "SalvageGloves").SalvageAspect != null);
     Check("Salvage: uniques are never salvage candidates", sScored.First(x => x.Item.IsUnique).SalvageAspect == null);
     Eq("Salvage: salvage upgrade outranks the plain non-upgrade", "SalvageGloves", sScored[0].Item.Name);
@@ -1590,7 +1597,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var ipHigh = new Item { Name = "B HighIP", Slot = "Helm", Rarity = "Rare", ItemPower = 900 };
     var ipTieLeg = new Item { Name = "C TieLeg", Slot = "Helm", Rarity = "Legendary", ItemPower = 800 };
     var ipTieRare = new Item { Name = "D TieRare", Slot = "Helm", Rarity = "Rare", ItemPower = 800 };
-    var tScored = UpgradeScorer.Score(tTarget, new LiveBuild(), new[] { ipLow, ipTieRare, ipHigh, ipTieLeg }, 75);
+    var tScored = UpgradeScorer.Score(tTarget, new LiveBuild(), new[] { ipLow, ipTieRare, ipHigh, ipTieLeg });
     Eq("Sort: item power is the secondary key", "B HighIP", tScored[0].Item.Name);
     Eq("Sort: rarity breaks the IP tie (legendary over rare)", "C TieLeg", tScored[1].Item.Name);
     Eq("Sort: rare tie follows", "D TieRare", tScored[2].Item.Name);
@@ -1657,7 +1664,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var xbowCand = new Item { Name = "StashXbow", Slot = "weapon", ItemType = "Crossbow", Affixes = {
         new Affix { Text = "Vulnerable Damage", Value = 25 }, new Affix { Text = "Maximum Life", Value = 700 },
         new Affix { Text = "Dexterity", Value = 60 } } };
-    var wScored = UpgradeScorer.Score(wTarget, new LiveBuild { Gear = { eqXbow, eqDag } }, new[] { swordCand, xbowCand }, 75);
+    var wScored = UpgradeScorer.Score(wTarget, new LiveBuild { Gear = { eqXbow, eqDag } }, new[] { swordCand, xbowCand });
     Check("WeaponGate: a sword is never an upgrade for the crossbow slot",
         !wScored.First(x => x.Item.Name == "StashSword").IsUpgrade);
     Check("WeaponGate: a real crossbow with more slot affixes IS the upgrade",
@@ -1681,7 +1688,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var ringCand = new Item { Name = "CandRing", Slot = "ring", Affixes = {
         new Affix { Text = "Critical Strike Chance", Value = 4 }, new Affix { Text = "Attack Speed", Value = 7 },
         new Affix { Text = "Maximum Life", Value = 800 } } };
-    var rScored = UpgradeScorer.Score(rTarget, new LiveBuild { Gear = { ringGood, ringBad } }, new[] { ringCand }, 75);
+    var rScored = UpgradeScorer.Score(rTarget, new LiveBuild { Gear = { ringGood, ringBad } }, new[] { ringCand });
     Check("PerSlotBar: 3/4 ring IS an upgrade over the worse equipped ring", rScored[0].IsUpgrade);
     Eq("PerSlotBar: it compares against the weaker ring's presence", 1, rScored[0].EquippedPresent);
     Eq("PerSlotBar: affix delta vs the displaced ring (4 effective − 1)", 3, rScored[0].AffixDelta);
@@ -1756,7 +1763,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var nTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Chest", Aspect = "Aspect of Mending Obscurity",
         Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
     var byName = new Item { Name = "Boneweave Armor of Mending Obscurity", Slot = "Chest", Rarity = "Legendary" };
-    var nScored = UpgradeScorer.Score(nTarget, new LiveBuild(), new[] { byName }, 75);
+    var nScored = UpgradeScorer.Score(nTarget, new LiveBuild(), new[] { byName });
     Eq("Salvage: matched by ITEM NAME (no imprint text needed)", "Aspect of Mending Obscurity", nScored[0].SalvageAspect);
 
     // v0.41 contract change: same-name copies WITHOUT stale-rescan evidence are GENUINE duplicates —
@@ -1854,7 +1861,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new Affix { Text = "Intelligence", Value = 85, Min = 70, Max = 90 },
         new Affix { Text = "Cooldown Reduction", Value = 12, Min = 8, Max = 13.5, IsPercent = true },
         new Affix { Text = "Critical Strike Chance", Value = 7, Min = 5, Max = 9, IsPercent = true } } };
-    var gaScored = UpgradeScorer.Score(gaTarget, new LiveBuild(), new[] { plainHelm, helm }, 75);
+    var gaScored = UpgradeScorer.Score(gaTarget, new LiveBuild(), new[] { plainHelm, helm });
     Check("GA scoring: the 2-GA helm outranks the equal-presence plain helm", gaScored[0].Item.Name.Contains("Starless"));
     Check("GA scoring: useful-GA estimate is counted", gaScored.First(s => s.Item.Name.Contains("Starless")).GreaterOnWanted == 2);
 
@@ -1866,7 +1873,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var plainRing = new Item { Name = "Plain Ring", Slot = "ring", Affixes = {
         new Affix { Text = "Dexterity", Value = 110 }, new Affix { Text = "All Damage Multiplier", Value = 15, IsMultiplier = true },
         new Affix { Text = "Vulnerable Damage Multiplier", Value = 11, IsMultiplier = true } } };
-    var ringScored = UpgradeScorer.Score(ringTarget, new LiveBuild(), new[] { plainRing, band }, 75);
+    var ringScored = UpgradeScorer.Score(ringTarget, new LiveBuild(), new[] { plainRing, band });
     Check("GA scoring(real-shape): the un-masterworked 2-GA ring outranks the 0-GA ring", ringScored[0].Item.Name.Contains("Silent"));
     Check("GA scoring(real-shape): useful-GA credited from the count despite zero stars",
         ringScored.First(s => s.Item.Name.Contains("Silent")).GreaterOnWanted >= 2);
@@ -1879,7 +1886,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 },
         new Affix { Text = "Lucky Hit Chance", Value = 10 },
         new Affix { Text = "Vulnerable Damage", Value = 40 } } };   // item carries a GA somewhere
-    var fixScored = UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCand }, 75);
+    var fixScored = UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCand });
     Check("FixDestroysGA: 3/4 item is fixable", fixScored[0].Fixable);
     Check("FixDestroysGA: a fixable item with a Greater Affix trips the enchant caution", fixScored[0].FixDestroysGA);
     var fixCandSafe = new Item { Name = "Safe Gloves", Slot = "gloves", GreaterAffixCount = 0, Affixes = {
@@ -1887,7 +1894,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new Affix { Text = "Lucky Hit Chance", Value = 10 },
         new Affix { Text = "Vulnerable Damage", Value = 40 } } };   // no GA on the item — safe to enchant
     Check("FixDestroysGA: a fixable item with NO Greater Affix is safe",
-        !UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCandSafe }, 75)[0].FixDestroysGA);
+        !UpgradeScorer.Score(fixTarget, new LiveBuild(), new[] { fixCandSafe })[0].FixDestroysGA);
 }
 
 // ---- v0.30: per-item verdicts ----
@@ -1956,7 +1963,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new TargetAffix { Name = "Movement Speed" }, new TargetAffix { Name = "Maximum Life" } } } } };
     var intCand = new Item { Name = "Good Boots", Slot = "boots", Affixes = {
         new Affix { Text = "Movement Speed", Value = 16 }, new Affix { Text = "Maximum Life", Value = 900 } } };
-    var intScored = UpgradeScorer.Score(intTarget, new LiveBuild(), new[] { intCand }, 75)[0];
+    var intScored = UpgradeScorer.Score(intTarget, new LiveBuild(), new[] { intCand })[0];
     Check("Verdict integration: scorer sets RawUpgrade for an empty-slot fill", intScored.RawUpgrade);
     Eq("Verdict integration: it reads as Equip", Verdict.Equip,
         Verdicts.For(intScored, new VerdictContext(intTarget, "Rogue", new[] { intCand })).V);
@@ -1974,7 +1981,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var upItem = new Item { Name = "Needy Helm", Slot = "helm", IsAncestral = true, Quality = 0,
         SocketCount = 1, EmptySockets = 1, TemperUsed = 0, TemperMax = 3,
         Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
-    var path = UpgradePath.ForSlot(upTarget, upItem, 50);
+    var path = UpgradePath.ForSlot(upTarget, upItem);
     var verbs = path.Select(s => s.Verb).ToList();
     Check("UpgradePath: temper before enchant before masterwork before socket before imprint",
         verbs.IndexOf("TEMPER") < verbs.IndexOf("ENCHANT")
@@ -1996,35 +2003,35 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var doneItem = new Item { Name = "Boots of the Expectant", Slot = "boots", IsAncestral = true, Quality = 25,
         SocketCount = 0, EmptySockets = 0, Aspect = "Aspect of the Expectant",
         Affixes = { new Affix { Text = "Movement Speed", Value = 16 }, new Affix { Text = "Maximum Life", Value = 900 } } };
-    Eq("UpgradePath: a finished item needs no steps", 0, UpgradePath.ForSlot(doneTarget, doneItem, 50).Count);
+    Eq("UpgradePath: a finished item needs no steps", 0, UpgradePath.ForSlot(doneTarget, doneItem).Count);
 
     // GA caution on enchant; 2+ wrong affixes ⇒ replace/Focused-Reroll guidance
     var gaItem = new Item { Name = "GA Helm", Slot = "helm", IsAncestral = true, GreaterAffixCount = 1, Quality = 25,
         Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
     var gaPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = {
-        new TargetAffix { Name = "Maximum Life", Min = 1000 }, new TargetAffix { Name = "Dexterity" } } }, gaItem, 50);
+        new TargetAffix { Name = "Maximum Life", Min = 1000 }, new TargetAffix { Name = "Dexterity" } } }, gaItem);
     Check("UpgradePath: ENCHANT on a GA item warns the Greater Affix is at risk", Step(gaPath, "ENCHANT")!.Warning!.Contains("Greater Affix"));
     var twoWrong = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = {
         new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Intelligence" } } },
-        new Item { Name = "Bad", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+        new Item { Name = "Bad", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
     Check("UpgradePath: 2+ wrong affixes ⇒ replace or Focused Reroll", Step(twoWrong, "ENCHANT")!.Text.Contains("Focused Reroll"));
 
     // a unique can't be imprinted, so no IMPRINT step even when the slot wants an aspect
     var uniPath = UpgradePath.ForSlot(new TargetGear { Slot = "Chest", Aspect = "Aspect of Y", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
-        new Item { Name = "Shroud", Slot = "chest", IsUnique = true, Rarity = "Unique", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+        new Item { Name = "Shroud", Slot = "chest", IsUnique = true, Rarity = "Unique", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
     Check("UpgradePath: uniques get no IMPRINT step (can't imprint a unique)", Step(uniPath, "IMPRINT") == null);
 
     // add-a-socket when below capacity (helm holds 2; item has 1, none empty)
     var addSock = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
         new Item { Name = "H", Slot = "helm", IsAncestral = true, Quality = 25, SocketCount = 1, EmptySockets = 0,
-            Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } }, 50);
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
     Check("UpgradePath: SOCKET suggests adding one when below the slot's capacity",
         Step(addSock, "SOCKET")!.Text.Contains("Add a socket") && Step(addSock, "SOCKET")!.Cost!.Contains("Scattered Prism"));
 
     // capstone reroll when masterworked to cap but the +50% landed off-build
     var capItem = new Item { Name = "Cap Helm", Slot = "helm", IsAncestral = true, Quality = 25, CapstoneAffix = "Thorns",
         Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } };
-    var capPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } }, capItem, 50);
+    var capPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } }, capItem);
     Check("UpgradePath: off-build Capstone ⇒ reroll-Capstone step (Neathiron)",
         Step(capPath, "MASTERWORK")?.Text.Contains("Capstone") == true && Step(capPath, "MASTERWORK")!.Cost!.Contains("Neathiron"));
 }
@@ -2036,7 +2043,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Intelligence" } } } } };
     var gapLive = new LiveBuild { Gear = { new Item { Name = "Weak Helm", Slot = "helm", Affixes = {
         new Affix { Text = "Maximum Life", Value = 500 } } } } };   // Intelligence missing ⇒ build < 100%
-    var gapReport = DiffEngine.Diff(gapTarget, gapLive, 50);
+    var gapReport = DiffEngine.Diff(gapTarget, gapLive);
     var t5 = Activities.Recommend(gapReport, new GuideContext(5, "Rogue"));
     Check("Tier gate: at Torment 5 a 'Push to Torment 6' rec appears (Greater Lair Keys)",
         t5.Any(a => a.Title.Contains("Push to Torment 6") && a.Detail.Contains("Greater Lair Keys")));
@@ -2054,9 +2061,9 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new Affix { Text = "Attack Speed", Value = 8 }, new Affix { Text = "Critical Strike Chance", Value = 8 } } };
     var ipLive = new LiveBuild { Gear = { eq850 } };
     Check("IP-tier: WITHOUT a Torment context the equal-affix 900 item is not an upgrade",
-        !UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 75)[0].IsUpgrade);
+        !UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 })[0].IsUpgrade);
     Check("IP-tier: IN Torment the 900 Ancestral beats the equal-affix 850 equipped",
-        UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 75, 8)[0].RawUpgrade);
+        UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 8)[0].RawUpgrade);
 
     // Verdict: in Torment a sub-900 non-Ancestral off-build item reads as junk "below the floor"
     var lowItem = new Item { Name = "Low Boots", Slot = "boots", ItemPower = 800, IsAncestral = false };
@@ -2204,7 +2211,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var exTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
     var exLive = new LiveBuild { Gear = { new Item { Name = "H", Slot = "helm", Affixes = {
         new Affix { Text = "Maximum Life", Value = 1500 }, new Affix { Text = "Thorns", Value = 400, Max = 600 } } } } };
-    var exGroup = DiffEngine.Diff(exTarget, exLive, 50).Categories.First(c => c.Id == "gear").Groups[0];
+    var exGroup = DiffEngine.Diff(exTarget, exLive).Categories.First(c => c.Id == "gear").Groups[0];
     Check("Diff: ExtraAffixes holds the off-build Thorns affix", exGroup.ExtraAffixes.Any(a => a.Text == "Thorns" && a.Max == 600));
     Check("Diff: ExtraAffixes excludes the build-matched affix", !exGroup.ExtraAffixes.Any(a => a.Text.Contains("Maximum Life")));
 
@@ -2214,7 +2221,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new TargetGear { Slot = "Ring2", Affixes = { new TargetAffix { Name = "All Damage Multiplier" } } } } };
     var equippedNoRange = new Item { Name = "Band", Slot = "ring", Affixes = { new Affix { Text = "All Damage Multiplier", Value = 13, IsMultiplier = true } } };
     var aggLive = new LiveBuild { Gear = { equippedNoRange } };
-    var aggCat = DiffEngine.Diff(aggTarget, aggLive, 50).Categories.First(c => c.Id == "gear");
+    var aggCat = DiffEngine.Diff(aggTarget, aggLive).Categories.First(c => c.Id == "gear");
     var ownedCopy = new Item { Name = "Better Band", Slot = "ring", Affixes = { new Affix { Text = "All Damage Multiplier", Value = 16, Min = 10, Max = 18, IsMultiplier = true } } };
     var harvested = AffixAggregate.ForGear(aggCat, new[] { equippedNoRange, ownedCopy })[0];
     Check("Harvest: a max from an inventory copy gives a real target", harvested.WantsKnown);
@@ -2232,7 +2239,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Inventory = {
             new Item { Name = "Chest of Disobedience", Slot = "chest", Rarity = "Legendary" },   // carries the wanted aspect by name
             new Item { Name = "Old Boots", Slot = "boots", SocketedRunes = { "Bac" } } } };       // has the wanted rune socketed
-    var bgRep = DiffEngine.Diff(bgTarget, bgLive, 50);
+    var bgRep = DiffEngine.Diff(bgTarget, bgLive);
     var bgSteps = BuildGuide.Steps(bgRep, bgLive);
     var imprint = bgSteps.FirstOrDefault(s => s.Verb == "IMPRINT");
     Check("BuildGuide: IMPRINT notes the aspect exists on another piece", imprint != null && imprint.Detail!.Contains("Chest of Disobedience"));
@@ -2271,7 +2278,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new TargetAffix { Name = "Strength" }, new TargetAffix { Name = "Dexterity" } } };
     var uItem = new Item { Name = "All-Stat Amulet", Slot = "amulet", Affixes = {
         new Affix { Text = "All Stats", Value = 80, Min = 50, Max = 100 } } };
-    var uRows = DiffEngine.EvalSlot(uTg, uItem, 50, out var uExtras);
+    var uRows = DiffEngine.EvalSlot(uTg, uItem, out var uExtras);
     Check("Umbrella EvalSlot: All Stats satisfies Strength", uRows.First(r => r.Label == "Strength").Done);
     Check("Umbrella EvalSlot: same All Stats also satisfies Dexterity (non-consuming)", uRows.First(r => r.Label == "Dexterity").Done);
     Eq("Umbrella EvalSlot: ViaUmbrella note carries the umbrella text", "All Stats", uRows.First(r => r.Label == "Dexterity").ViaUmbrella);
@@ -2283,7 +2290,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var pItem = new Item { Name = "R", Slot = "ring", Affixes = {
         new Affix { Text = "All Stats", Value = 60 },
         new Affix { Text = "Dexterity", Value = 90, Min = 10, Max = 100 } } };
-    var pRows = DiffEngine.EvalSlot(pTg, pItem, 50, out var pExtras);
+    var pRows = DiffEngine.EvalSlot(pTg, pItem, out var pExtras);
     Check("Umbrella preference: the specific Dexterity is used, not the umbrella", pRows.First(r => r.Label == "Dexterity").ViaUmbrella == null);
     Eq("Umbrella preference: the specific value flows (90, not 60)", 90d, pRows.First(r => r.Label == "Dexterity").ValueNum);
     Check("Umbrella preference: the unused All Stats shows as an extra", pExtras.Any(e => e.Contains("All Stats")));
@@ -2291,7 +2298,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     // scorer integration: an item whose only match is via an umbrella still scores the slot
     var sTg = new TargetGear { Slot = "Amulet", Affixes = { new TargetAffix { Name = "Intelligence" } } };
     var sItem = new Item { Slot = "amulet", Affixes = { new Affix { Text = "All Stats", Value = 80, Min = 50, Max = 100 } } };
-    Eq("Umbrella ScoreSlot: an umbrella-only match counts toward the slot", 1, DiffEngine.ScoreSlot(sTg, sItem, 50));
+    Eq("Umbrella ScoreSlot: an umbrella-only match counts toward the slot", 1, DiffEngine.ScoreSlot(sTg, sItem));
 }
 
 // ---- v0.37: unique/mythic requirements (TargetUnique now carries the build's wanted secondary affixes) ----
@@ -2310,12 +2317,12 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var ownedHigh = new Item { Name = "Etna's Lost Dagger", Slot = "weapon", Affixes = {
         new Affix { Text = "Dexterity", Value = 140 },           // ≥ 125 → met
         new Affix { Text = "Maximum Life", Value = 1800 } } };   // present → met
-    var rOwned = DiffEngine.EvalSlot(synth, ownedHigh, 50, out _);
+    var rOwned = DiffEngine.EvalSlot(synth, ownedHigh, out _);
     Check("Unique compare: met affix shows met", rOwned.First(r => r.Label == "Dexterity").Status == "met");
     Check("Unique compare: present affix (no threshold) shows met", rOwned.First(r => r.Label == "Maximum Life").Status == "met");
 
     // a MISSING / under-rolled unique shows exactly what the build wants (the panel's BUILD-WANTS rows)
-    var rMissing = DiffEngine.EvalSlot(synth, null, 50, out _);
+    var rMissing = DiffEngine.EvalSlot(synth, null, out _);
     Eq("Unique want-rows: one row per wanted affix even when unowned", 2, rMissing.Count);
     Check("Unique want-rows: unowned affix is missing", rMissing.All(r => r.Status == "missing"));
     Check("Unique want-rows: the threshold is still shown", rMissing.First(r => r.Label == "Dexterity").Need != null);
@@ -2325,7 +2332,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
 {
     TargetBuild SockTarget() => new TargetBuild { Gear = { new TargetGear {
         Slot = "Helm", Sockets = { "Rune: A", "Rune: B" }, Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
-    Group SockGroup(Item it) => DiffEngine.Diff(SockTarget(), new LiveBuild { Gear = { it } }, 50)
+    Group SockGroup(Item it) => DiffEngine.Diff(SockTarget(), new LiveBuild { Gear = { it } })
         .Categories.First(c => c.Id == "gear").Groups[0];
 
     // 1. capacity known, one empty → 1/2 filled
@@ -2617,7 +2624,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Affixes = { new Affix { Text = "Dexterity", Value = 50 } } };
     var upBag = new Item { Name = "Bag Helm", Slot = "helm",
         Affixes = { new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Maximum Life", Value = 900 } } };
-    var upRep = DiffEngine.Diff(upTarget, new LiveBuild { Gear = { upEq }, Inventory = { upBag } }, 50);
+    var upRep = DiffEngine.Diff(upTarget, new LiveBuild { Gear = { upEq }, Inventory = { upBag } });
     var upGrp = upRep.Categories.First(c => c.Id == "gear").Groups[0];
     Eq("UpgradeRef: the bag upgrade is found", 1, upGrp.UpgradeItems.Count);
     Eq("UpgradeRef: carries the item name", "Bag Helm", upGrp.UpgradeItems[0].Name);
@@ -2626,6 +2633,69 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         GearList.Fingerprint(upBag), upGrp.UpgradeItems[0].Fingerprint);
     Check("UpgradeRef: legacy display string preserved via ToString",
         upGrp.UpgradeItems[0].ToString().Contains("Bag Helm") && upGrp.UpgradeItems[0].ToString().Contains("(2/2)"));
+}
+
+// ---- v0.42: the 100% baseline — gate removal, max-roll targets, exceeds/threshold display data ----
+{
+    // (a) no explicit minimums anywhere => Under is ALWAYS 0 (imported builds carry no minimums)
+    var nbTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Dexterity" } } } } };
+    var nbLive = new LiveBuild { Gear = { new Item { Name = "H", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1100, Min = 1000, Max = 1600 },     // a 17% roll
+        new Affix { Text = "Dexterity", Value = 55, Min = 50, Max = 120 } } } } };     // a 7% roll
+    var nbRep = DiffEngine.Diff(nbTarget, nbLive);
+    Eq("Baseline100: low rolls with no build minimum are MET (Under == 0)", 0,
+        nbRep.Categories.First(c => c.Id == "gear").Under);
+    var nbRows = nbRep.Categories.First(c => c.Id == "gear").Groups[0].Items;
+    Check("Baseline100: rows carry the max-roll display target", nbRows.All(i => i.NeedIsMax && i.Need!.StartsWith("max ")));
+    Check("Baseline100: no threshold tick without an explicit minimum", nbRows.All(i => i.ThresholdPct == null));
+
+    // (b) explicit minimums still gate: Min maps to a threshold tick % inside the roll range
+    var exTarget2 = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 1300 } } } } };
+    var exRep2 = DiffEngine.Diff(exTarget2, nbLive);
+    var exRow = exRep2.Categories.First(c => c.Id == "gear").Groups[0].Items[0];
+    Eq("Baseline100: below an explicit Min is still 'under'", "under", exRow.Status);
+    Check("Baseline100: the explicit Min becomes the bar's tick (50% into [1000..1600])",
+        exRow.ThresholdPct is double tp && Math.Abs(tp - 50) < 0.01);
+    Check("Baseline100: under rows never claim NeedIsMax", !exRow.NeedIsMax);
+
+    // (c) upgrade-finding roll-quality tiebreak: equal presence, strictly better rolls => still an upgrade
+    var tbTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life" } } } } };
+    var tbEq = new Item { Name = "Eq Helm", Slot = "helm", Equipped = true, Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1050, Min = 1000, Max = 1600 } } };   // 8% roll
+    var tbBag = new Item { Name = "Bag Helm", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1550, Min = 1000, Max = 1600 } } };   // 92% roll
+    var tbRep = DiffEngine.Diff(tbTarget, new LiveBuild { Gear = { tbEq }, Inventory = { tbBag } });
+    Check("Baseline100: a same-presence, better-rolled bag item still badges as an upgrade",
+        tbRep.Categories.First(c => c.Id == "gear").Groups[0].UpgradeItems.Any(u => u.Name == "Bag Helm"));
+    var tbWorse = new Item { Name = "Worse Helm", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1010, Min = 1000, Max = 1600 } } };
+    var tbRep2 = DiffEngine.Diff(tbTarget, new LiveBuild { Gear = { tbEq }, Inventory = { tbWorse } });
+    Check("Baseline100: a same-presence, WORSE-rolled bag item does not badge",
+        !tbRep2.Categories.First(c => c.Id == "gear").Groups[0].UpgradeItems.Any(u => u.Name == "Worse Helm"));
+
+    // (d) AffixCeilings: harvested from any owned copy — range max preferred, else best value
+    var ownedPool = new[] {
+        new Item { Name = "A", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 80, Min = 50, Max = 120 } } },
+        new Item { Name = "B", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 900 } } } };
+    Eq("AffixCeilings: range max wins", 120d, AffixCeilings.For("Dexterity", ownedPool));
+    Eq("AffixCeilings: bare value when no range", 900d, AffixCeilings.For("Maximum Life", ownedPool));
+    Eq("AffixCeilings: unknown affix -> 0", 0d, AffixCeilings.For("Armor", ownedPool));
+    Check("AffixCeilings: umbrella copies count toward the specific affix",
+        AffixCeilings.For("Dexterity", new[] { new Item { Name = "C", Slot = "ring",
+            Affixes = { new Affix { Text = "All Stats", Value = 40, Min = 30, Max = 60 } } } }) == 60d);
+
+    // (e) BuildGuide: a max-roll display target is a GOAL — GET steps never word it as a requirement
+    var bgT = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Dexterity" } } } } };
+    var bgRep2 = DiffEngine.Diff(bgT, new LiveBuild());
+    var bgRow = bgRep2.Categories.First(c => c.Id == "gear").Groups[0].Items[0];
+    bgRow.Need = "max 120"; bgRow.NeedIsMax = true;   // as the App ceiling annotation would set it
+    var bgSteps2 = BuildGuide.Steps(bgRep2);
+    var getStep = bgSteps2.First(s => s.Verb == "GET");
+    Check("Baseline100: GET detail rewords a max target as 'rolls up to ...', never '(max ...)' in the text",
+        getStep.Detail == "rolls up to 120" && !getStep.Text.Contains("(max"));
 }
 
 // ---- report ----

@@ -57,14 +57,14 @@ public static class AffixAggregate
                 if (!by.TryGetValue(key, out var p)) { p = new AffixProgress { Name = key }; by[key] = p; order.Add(key); }
                 Accumulate(p, i);
             }
-        // harvest a max-roll ceiling from any owned copy of each affix (range max preferred, else best value)
+        // harvest a max-roll ceiling from any owned copy of each affix (range max preferred, else best
+        // value) — shared definition with the BUILD WANTS row annotation (AffixCeilings)
         if (owned != null)
         {
-            var allAffixes = owned.SelectMany(it => it.Affixes ?? new()).ToList();
+            var ceilings = AffixCeilings.Harvest(by.Keys, owned);
             foreach (var p in by.Values)
-                foreach (var a in allAffixes)
-                    if (DiffEngine.AffixSatisfies(p.Name, a))
-                        p.MaxRoll = Math.Max(p.MaxRoll, a.Max ?? a.Value ?? 0);
+                if (ceilings.TryGetValue(p.Name, out var c))
+                    p.MaxRoll = Math.Max(p.MaxRoll, c);
         }
         foreach (var key in order) Finish(by[key]);
         return order

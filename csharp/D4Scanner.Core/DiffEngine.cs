@@ -124,8 +124,10 @@ public static class DiffEngine
         return Math.Max(0, Math.Min(100, (v - lo) / (hi - lo) * 100.0));
     }
 
-    /// <summary>How many of a target slot's affixes a given item meets (presence + threshold). For upgrade-finding.</summary>
-    public static int ScoreSlot(TargetGear g, Item item, double gate)
+    /// <summary>How many of a target slot's affixes a given item meets: PRESENCE, plus the explicit build
+    /// minimum (Min / MinPercent) when the build specifies one. There is no global roll-quality gate —
+    /// max roll is a display target (the "100% baseline" on the bars), never a met/under threshold.</summary>
+    public static int ScoreSlot(TargetGear g, Item item)
     {
         var pool = item.Affixes;
         var used = new bool[pool.Count];
@@ -138,14 +140,13 @@ public static class DiffEngine
             if (!viaU) used[idx] = true;
             bool ok;
             if (aff.Min != null) ok = (match.Value ?? 0) >= aff.Min.Value;
-            else
+            else if (aff.MinPercent != null)
             {
-                var pct = RollPct(match); double thr = aff.MinPercent ?? gate;
-                // when there is no range data (item scanned without Advanced Tooltip, or binary affix):
-                //   - if only the global gate applies (no explicit MinPercent), treat as presence-only match
-                //   - if there IS an explicit MinPercent threshold, we can't verify → don't count
-                ok = pct != null ? pct.Value >= thr : aff.MinPercent == null;
+                // explicit roll-quality minimum: unverifiable without range data → don't count
+                var pct = RollPct(match);
+                ok = pct != null && pct.Value >= aff.MinPercent.Value;
             }
+            else ok = true;   // no build minimum → presence is met
             if (ok) met++;
         }
         return met;
@@ -158,7 +159,7 @@ public static class DiffEngine
     /// (the All-Items hover) render with EXACTLY the same rows. Missing affixes still carry the target
     /// threshold in <see cref="ReqItem.Need"/> so a comparison can always show what the build wants.
     /// </summary>
-    public static List<ReqItem> EvalSlot(TargetGear g, Item? it, double gate, out List<string> extras)
+    public static List<ReqItem> EvalSlot(TargetGear g, Item? it, out List<string> extras)
     {
         var pool = it?.Affixes ?? new List<Affix>();
         var used = new bool[pool.Count];
@@ -171,7 +172,7 @@ public static class DiffEngine
             var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
             // the target is known even when the piece is missing the affix — always show what the build wants
             if (aff.Min != null) { req.TargetNum = aff.Min.Value; req.Need = "≥ " + aff.Min.Value.ToString("#,0.##"); }
-            else if (aff.MinPercent != null) req.Need = $"roll ≥ {aff.MinPercent:0}%";
+            else if (aff.MinPercent != null) { req.Need = $"roll ≥ {aff.MinPercent:0}%"; req.ThresholdPct = aff.MinPercent; }
             if (match == null) { req.Status = "missing"; req.Done = false; }
             else
             {
@@ -186,23 +187,39 @@ public static class DiffEngine
                 req.IsGreater = match.IsGreater;
                 var pct = RollPct(match);
                 req.RollPct = pct;
-                // threshold: explicit absolute min > explicit minPercent > global gate
+                bool hasRange = match.Min != null && match.Max != null && match.Max.Value > match.Min.Value;
                 if (aff.Min != null)
                 {
+                    // explicit absolute minimum from the build — the only remaining "under" gate
                     req.Status = (match.Value ?? 0) >= aff.Min.Value ? "met" : "under";
+                    if (hasRange)
+                        req.ThresholdPct = Math.Clamp((aff.Min.Value - match.Min!.Value) /
+                                                      (match.Max!.Value - match.Min.Value) * 100.0, 0, 100);
                 }
-                else
+                else if (aff.MinPercent != null)
                 {
-                    double thr = aff.MinPercent ?? gate;
+                    double thr = aff.MinPercent.Value;
                     // show the concrete value needed (thr% into the affix's captured [min..max] range)
                     // rather than a bare "roll ≥ N%" when a range is available to derive it from.
-                    if (match.Min != null && match.Max != null && match.Max.Value > match.Min.Value)
+                    if (hasRange)
                     {
-                        double need = match.Min.Value + thr / 100.0 * (match.Max.Value - match.Min.Value);
+                        double need = match.Min!.Value + thr / 100.0 * (match.Max!.Value - match.Min.Value);
                         req.TargetNum = need;
                         req.Need = "≥ " + need.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
                     }
                     req.Status = (pct == null || pct.Value >= thr) ? "met" : "under";
+                }
+                else
+                {
+                    // no build minimum: presence is met; the MAX ROLL is the displayed target
+                    // (the "100% baseline" — bars measure toward perfection, never warn below it)
+                    req.Status = "met";
+                    if (hasRange)
+                    {
+                        req.TargetNum = match.Max;
+                        req.Need = "max " + match.Max!.Value.ToString(match.IsPercent ? "#,0.#" : "#,0") + (match.IsPercent ? "%" : "");
+                        req.NeedIsMax = true;
+                    }
                 }
             }
             items.Add(req);
@@ -306,16 +323,17 @@ public static class DiffEngine
         return n == 0 ? 0 : sum / n;
     }
 
-    /// <summary>Does a single target affix appear on the item and meet its threshold? (first match — used for
-    /// substitute/flexibility scoring where the strict per-item dedup of <see cref="ScoreSlot"/> isn't needed.)</summary>
-    public static bool AffixMet(TargetAffix aff, Item item, double gate)
+    /// <summary>Does a single target affix appear on the item and meet its EXPLICIT build minimum, if any?
+    /// (first match — used for substitute/flexibility scoring where the strict per-item dedup of
+    /// <see cref="ScoreSlot"/> isn't needed.) No build minimum ⇒ presence is met.</summary>
+    public static bool AffixMet(TargetAffix aff, Item item)
     {
         foreach (var x in item.Affixes)
             if (AffixSatisfies(aff.Name, x))
             {
                 if (aff.Min != null) return (x.Value ?? 0) >= aff.Min.Value;
-                var pct = RollPct(x); double thr = aff.MinPercent ?? gate;
-                return pct == null || pct.Value >= thr;
+                if (aff.MinPercent != null) { var pct = RollPct(x); return pct != null && pct.Value >= aff.MinPercent.Value; }
+                return true;
             }
         return false;
     }
@@ -462,7 +480,7 @@ public static class DiffEngine
     /// <summary>Base slot name without a trailing index (e.g. "Ring #1" → "ring"). Public for reuse.</summary>
     public static string SlotBaseName(string? slot) => SlotBase(slot);
 
-    public static DiffReport Diff(TargetBuild target, LiveBuild live, double defaultMinRollPercent = 50)
+    public static DiffReport Diff(TargetBuild target, LiveBuild live)
     {
         var cats = new List<Category>();
 
@@ -478,8 +496,7 @@ public static class DiffEngine
             {
                 var g = target.Gear[gi];
                 var it = assigned.TryGetValue(gi, out var ai) ? ai : null;
-                double gate = target.MinRollPercent ?? defaultMinRollPercent;
-                var items = EvalSlot(g, it, gate, out var extras);
+                var items = EvalSlot(g, it, out var extras);
                 var grp = MakeGroup(g.Label ?? g.Slot, items);
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
@@ -522,14 +539,19 @@ public static class DiffEngine
 
                 // upgrade-finding: non-equipped items of this slot that meet MORE target affixes —
                 // carried as structured refs (name + met/total + fingerprint) so the UI can show
-                // WHICH bag item the upgrade is and jump to it.
+                // WHICH bag item the upgrade is and jump to it. With presence-based met counts, a
+                // bag item that ties on presence but rolls strictly BETTER overall is still an
+                // upgrade — the roll-quality tiebreak keeps those discoverable.
                 int eqMet = items.Count(x => x.Status == "met");
+                double eqQuality = it != null ? SlotQuality(g, it) : 0;
                 var baseSlot = SlotBase(g.Slot);
                 foreach (var inv in live.Inventory)
                 {
                     if (SlotBase(inv.Slot) != baseSlot) continue;
-                    int met = ScoreSlot(g, inv, gate);
-                    if (met > eqMet) grp.UpgradeItems.Add(new UpgradeRef
+                    int met = ScoreSlot(g, inv);
+                    bool better = met > eqMet
+                               || (met == eqMet && met > 0 && SlotQuality(g, inv) > eqQuality + 0.5);
+                    if (better) grp.UpgradeItems.Add(new UpgradeRef
                     { Name = inv.Name, Met = met, Total = g.Affixes.Count, Fingerprint = GearList.Fingerprint(inv) });
                 }
                 gearGroups.Add(grp);

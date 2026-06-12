@@ -41,8 +41,11 @@ public static class BuildGuide
                 foreach (var i in g.Items)
                 {
                     if (i.Status == "missing")       // tier 2 — craft/temper the missing affix
-                        acts.Add(new GuideStep(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}", i.Tempered ? "at the Blacksmith" : i.Need,
-                            i.Tempered ? $"Temper {i.Label} onto your {g.Name}" : $"Get {i.Label} on your {g.Name}" + (i.Need != null ? $" ({i.Need})" : ""), key));
+                        // a "max X" display target is a GOAL, not a requirement — never word it as one
+                        acts.Add(new GuideStep(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}",
+                            i.Tempered ? "at the Blacksmith" : i.NeedIsMax ? $"rolls up to {i.Need?.Replace("max ", "")}" : i.Need,
+                            i.Tempered ? $"Temper {i.Label} onto your {g.Name}"
+                                       : $"Get {i.Label} on your {g.Name}" + (i.Need != null && !i.NeedIsMax ? $" ({i.Need})" : ""), key));
                     else if (i.Status == "under")    // tier 3 — polish an under-rolled affix
                     {
                         // Tempered affixes that rolled low need a re-temper at the Blacksmith, not an enchant

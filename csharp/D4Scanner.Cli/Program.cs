@@ -40,10 +40,10 @@ void Print(LiveBuild live)
     var r = DiffEngine.Diff(target, live);
     if (watch) Console.Clear();
     Console.WriteLine($"\n{r.TargetName}{(r.TargetClass != null ? "  [" + r.TargetClass + "]" : "")}");
-    Console.WriteLine($"{r.Matched} / {r.Total} met  ({r.Pct}%)   |   {live.Gear.Count} equipped items   |   {r.Under} under-rolled\n");
+    Console.WriteLine($"{r.Matched} / {r.Total} met  ({r.Pct}%)   |   {live.Gear.Count} equipped items   |   {r.Under} below build min\n");
     foreach (var c in r.Categories)
     {
-        Console.WriteLine($"{c.Name}  —  {c.Matched}/{c.Total} ({c.Pct}%)" + (c.Under > 0 ? $"   [{c.Under} under-rolled]" : ""));
+        Console.WriteLine($"{c.Name}  —  {c.Matched}/{c.Total} ({c.Pct}%)" + (c.Under > 0 ? $"   [{c.Under} below build min]" : ""));
         foreach (var g in c.Groups)
         {
             var head = g.Kind == "gear" && g.LiveItems.Count > 0 ? "   your: " + g.LiveItems[0].Name : "";
@@ -87,8 +87,7 @@ void Print(LiveBuild live)
     Console.WriteLine();
 
     // flexibility / best-owned substitutes per slot
-    double gate = target.MinRollPercent ?? 50;
-    var subs = Substitutes.Plan(target, live, gate).Where(s => s.Affixes.Count > 0).ToList();
+    var subs = Substitutes.Plan(target, live).Where(s => s.Affixes.Count > 0).ToList();
     if (subs.Count > 0)
     {
         Console.WriteLine("FLEXIBILITY / SUBSTITUTES:");
