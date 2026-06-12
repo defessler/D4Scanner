@@ -85,6 +85,25 @@ public sealed class ProfileStore
 
     sealed class ActiveRef { public string? Slug { get; set; } }
 
+    /// <summary>Wipe every profile's CAPTURED loadout (gear/inventory/sheet/skills) while preserving
+    /// its identity (slug/name/class), progression metadata (paragon/Torment/last-seen) and its bound
+    /// target build — the "clear live gear, rebuild by replaying the TTS log" path. Touches only
+    /// existing VALID profile files (a stray non-profile JSON in the folder, e.g. tombstones.json,
+    /// deserializes with an empty slug/name and is skipped — never re-saved as "unknown.json").
+    /// Returns how many profiles were reset.</summary>
+    public int ResetAllLive()
+    {
+        int n = 0;
+        foreach (var p in All())
+        {
+            if (string.IsNullOrEmpty(p.Slug) || string.IsNullOrEmpty(p.Name)) continue;
+            p.Live = new LiveBuild();
+            Save(p);
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>One-time migration: when no profiles exist yet but a legacy <paramref name="legacyLivePath"/>
     /// (live.json) does, import it into a default profile and make it active — so the user's current
     /// loadout survives the upgrade. Returns the migrated profile, or null if nothing to migrate.</summary>

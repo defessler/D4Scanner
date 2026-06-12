@@ -20,12 +20,12 @@
 
 ## Settings
 
-- [ ] Clearing the cache should reprocess the TTS file afterwards.
+- [x] Clearing the cache should reprocess the TTS file afterwards. *(v0.43.0)*
 - [ ] Don't allow "changing" the log file path — instead allow specifying a NEW location and
       MOVE the existing log there.
 - [ ] Break the TTS log into multiple files (rotate by total size, date, and/or game session).
-- [ ] "Clear all data" should restore/rebuild as much as possible afterwards (TTS log, icons,
-      Maxroll build info).
+- [x] "Clear all data" should restore/rebuild as much as possible afterwards (TTS log, icons,
+      Maxroll build info). *(v0.43.0)*
 - [x] Add an "open the log folder" option in Settings. *(v0.39.0)*
 - [ ] Add configuration for log retention: max file age, how many files are kept, max single
       file size — with reasonable defaults.
@@ -33,7 +33,7 @@
 - [ ] Add a "clear logs" button.
 - [x] Fix: "Diagnose capture" locks up the app. *(v0.39.0)*
 - [x] Remove the affix roll-quality threshold setting. *(v0.42.0)*
-- [ ] Make "Clear selected" for the cache feel more a part of the cache section.
-- [ ] Remove the Cancel button from the cache section.
-- [ ] Add "Save" and "Revert" buttons to Settings.
-- [ ] Clicking the ✕ (top right) of Settings should close WITHOUT applying changes.
+- [x] Make "Clear selected" for the cache feel more a part of the cache section. *(v0.43.0)*
+- [x] Remove the Cancel button from the cache section. *(v0.43.0)*
+- [x] Add "Save" and "Revert" buttons to Settings. *(v0.43.0)*
+- [x] Clicking the ✕ (top right) of Settings should close WITHOUT applying changes. *(v0.43.0)*
