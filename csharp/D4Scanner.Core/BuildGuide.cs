@@ -20,11 +20,15 @@ public static class BuildGuide
         _ => "SET UP · skills & paragon",
     };
 
-    /// <summary>The full plan, ordered by impact (free equips → acquire → craft → polish).</summary>
-    public static List<GuideStep> Steps(DiffReport r)
+    /// <summary>The full plan, ordered by impact (free equips → acquire → craft → polish). When
+    /// <paramref name="live"/> is supplied, steps note when a wanted aspect or rune already exists on a
+    /// different owned piece ("you have it on X").</summary>
+    public static List<GuideStep> Steps(DiffReport r, LiveBuild? live = null)
     {
         var acts = new List<GuideStep>();
         var gear = r.Categories.FirstOrDefault(c => c.Id == "gear");
+        var owned = live != null ? (live.Gear ?? new()).Concat(live.Inventory ?? new()).ToList() : new List<Item>();
+        static string CleanSock(string s) => s.Replace("Rune: ", "").Replace("Gem: ", "").Trim();
 
         if (gear != null)
             for (int gi = 0; gi < gear.Groups.Count; gi++)
@@ -51,6 +55,21 @@ public static class BuildGuide
                             $"Improve {i.Label} on your {g.Name} — at {i.Val} ({i.Need})", key));
                     }
                 }
+                // tier 2 — sockets the build wants here that aren't filled; note if a wanted rune sits elsewhere
+                if (g.WantSockets.Count > 0 && !g.SocketsDone)
+                {
+                    var wanted = string.Join(" + ", g.WantSockets.Select(CleanSock));
+                    var ownName = g.LiveItems.FirstOrDefault()?.Name;
+                    string sDetail = "socket at the Jeweler";
+                    foreach (var ws in g.WantSockets)
+                    {
+                        var code = CleanSock(ws);
+                        var holder = owned.FirstOrDefault(o => !string.Equals(o.Name, ownName, StringComparison.OrdinalIgnoreCase)
+                            && o.SocketedRunes.Any(rc => string.Equals(rc, code, StringComparison.OrdinalIgnoreCase)));
+                        if (holder != null) { sDetail = $"{code} is socketed in your {holder.Name} — move it"; break; }
+                    }
+                    acts.Add(new GuideStep(2, "SOCKET", $"{g.Name} — {wanted}", sDetail, $"Socket {wanted} in your {g.Name}", key));
+                }
             }
 
         // tier 1 — build-defining: missing uniques, aspects, skills/passives, paragon
@@ -60,7 +79,12 @@ public static class BuildGuide
         foreach (var (_, i) in CatItems(r, "uniques").Where(x => !x.i.Done))
             acts.Add(new GuideStep(1, "FIND", i.Label, i.Have != null ? "have: " + i.Have + " — equip it" : uniqueHint, $"Track down {i.Label}", "cat:uniques"));
         foreach (var (_, i) in CatItems(r, "aspects").Where(x => !x.i.Done))
-            acts.Add(new GuideStep(1, "IMPRINT", i.Label, "at the Occultist", $"Imprint the {i.Label}", "cat:aspects"));
+        {
+            // flag the gap, but note when the aspect already sits on a different owned piece (bags / another slot)
+            var holder = owned.FirstOrDefault(o => DiffEngine.ItemCarriesAspect(i.Label, o));
+            string aDetail = holder != null ? $"you have it on {holder.Name} — salvage & imprint from your Codex" : "at the Occultist";
+            acts.Add(new GuideStep(1, "IMPRINT", i.Label, aDetail, $"Imprint the {i.Label}", "cat:aspects"));
+        }
         // Note: seals/charms have no target in the build schema yet — when added, route here
         // skills/paragon/mercenary are intentionally hidden from the UI for now (vision-gated, not yet robust
         // enough for a good user experience). Keep this call-site intact so they can be re-enabled cleanly.
