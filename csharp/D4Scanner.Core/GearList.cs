@@ -15,19 +15,40 @@ public enum GearSortMode { Slot, RecentlyAcquired, ItemPower, Name, Upgrade, Rar
 public static class GearList
 {
     /// <summary>
-    /// Stable identity for a specific rolled item: a hash of its name + slot + full affix set
-    /// ("name=value", order-independent). Two captures of the SAME physical item produce the same id;
-    /// two items that merely share a name but rolled differently get different ids. Used for list
-    /// de-duplication and row identity — NOT for icon lookup (icons key on base item type, not the roll).
+    /// Stable identity for a specific rolled item: a hash of every piece of CONTENT the tooltip voiced —
+    /// name, slot, full affix set ("name=value", order-independent), and the non-stateful metadata
+    /// (item power, quality/masterwork, tempers, GA count, sockets/runes, aspect, set, dps, level/class
+    /// requirement, ancestral, rarity). Two captures of the SAME physical item produce the same id;
+    /// items whose tooltips differ in ANY content get different ids — so genuine duplicates of a
+    /// same-named item are distinct. Stateful capture context (Equipped/Context/UiPanel/FromCharPanel/
+    /// IsComparison/SlotPosition/scan time/Source) is deliberately excluded, as is PowerText (display
+    /// prose; the parser already keeps durability/sell-value/menu noise out of it).
+    /// NOT for icon lookup (icons key on base item type, not the roll).
     /// </summary>
     public static string Fingerprint(Item it)
     {
+        var inv = CultureInfo.InvariantCulture;
         var affixes = (it.Affixes ?? new())
             .Select(a => DiffEngine.Normalize(a.Text) + "=" +
-                         (a.Value?.ToString("0.###", CultureInfo.InvariantCulture) ?? ""))
+                         (a.Value?.ToString("0.###", inv) ?? ""))
             .OrderBy(s => s, StringComparer.Ordinal);
+        var runes = string.Join(",", (it.SocketedRunes ?? new()).OrderBy(r => r, StringComparer.OrdinalIgnoreCase));
+        var meta = string.Join("|", new[]
+        {
+            it.ItemPower?.ToString(inv), it.Quality?.ToString(inv),
+            it.MasterworkRank?.ToString(inv), it.MasterworkMax?.ToString(inv),
+            it.TemperUsed?.ToString(inv), it.TemperMax?.ToString(inv),
+            it.GreaterAffixCount?.ToString(inv),
+            it.SocketCount?.ToString(inv), it.EmptySockets.ToString(inv),
+            it.RunewordName == null ? null : DiffEngine.Normalize(it.RunewordName),
+            it.Aspect == null ? null : DiffEngine.Normalize(it.Aspect),
+            it.SetName == null ? null : DiffEngine.Normalize(it.SetName),
+            it.Dps?.ToString("0.###", inv), it.RequiresLevel?.ToString(inv), it.ClassLock,
+            it.IsAncestral ? "1" : "0",
+            it.Rarity == null ? null : DiffEngine.Normalize(it.Rarity),
+        }.Select(s => s ?? ""));
         var canon = DiffEngine.Normalize(it.Name) + "|" + DiffEngine.Normalize(it.Slot) + "|" +
-                    string.Join(";", affixes);
+                    string.Join(";", affixes) + "|" + meta + "|" + runes;
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canon));
         return Convert.ToHexString(bytes, 0, 6);   // 12 hex chars — ample to avoid collisions
     }
@@ -88,14 +109,18 @@ public static class GearList
             .GroupBy(o => Fingerprint(o.Item))
             .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)               // active character's copy wins…
                           .ThenByDescending(o => AcquiredTicks(o.Item)).First()) // …else the freshest sighting
-            // Cross-profile stale-copy collapse: the SAME physical item re-scanned after masterworking /
-            // tempering rolls a different fingerprint, so an old sighting saved on ANOTHER character would
-            // list beside the fresh one as a phantom duplicate. Same name + same slot ⇒ one row, the active
-            // character's (else freshest) copy. (Cost: two genuinely distinct same-named rolls collapse
-            // too — better than phantom duplicates of every reworked item.)
+            // Cross-profile stale-copy collapse, content-aware: a same-name+slot entry is dropped ONLY
+            // when it is provably a stale lesser capture of another copy — masterwork-inflated (some
+            // value past its own captured max) AND STRICTLY dominated by it. Strictness (dominated and
+            // not dominating back) makes a symmetric mutual drop impossible, so two genuinely distinct
+            // rolls of the same item BOTH show — the v0.37 "collapse to one row" cost is repaid.
             .GroupBy(o => DiffEngine.Normalize(o.Item.Name) + "|" + DiffEngine.SlotBaseName(o.Item.Slot), StringComparer.Ordinal)
-            .Select(g => g.OrderBy(o => o.Owner == null ? 0 : 1)
-                          .ThenByDescending(o => AcquiredTicks(o.Item)).First())
+            .SelectMany(g =>
+            {
+                var copies = g.ToList();
+                return copies.Where(o => !copies.Any(other =>
+                    !ReferenceEquals(other, o) && IsStaleRescanOf(o.Item, other.Item, strict: true)));
+            })
             .ToList();
     }
 
@@ -108,15 +133,30 @@ public static class GearList
     /// </summary>
     public static bool IsStaleEquippedRescan(Item cand, IReadOnlyList<Item> equipped)
     {
-        bool inflated = (cand.Affixes ?? new()).Any(a => a.Value is double v && a.Max is double mx && mx > 0 && v > mx + 0.001);
-        if (!inflated) return false;   // base/fresh roll — could be a genuine spare; never hide it
         foreach (var e in equipped)
         {
             if (DiffEngine.Normalize(cand.Name) != DiffEngine.Normalize(e.Name)) continue;
             if (DiffEngine.SlotBaseName(cand.Slot) != DiffEngine.SlotBaseName(e.Slot)) continue;
-            if (DominatedBy(cand, e)) return true;
+            // NON-strict deliberately: a partial/OCR re-capture of the worn item can tie the equipped
+            // copy value-for-value (mutually dominate) — under strict domination it would resurface as
+            // a phantom "candidate" of the item you're wearing, the exact v0.37 false-upgrade bug.
+            if (IsStaleRescanOf(cand, e, strict: false)) return true;
         }
         return false;
+    }
+
+    /// <summary>True when <paramref name="cand"/> is provably a STALE capture of <paramref name="by"/>
+    /// (the same physical item seen at a lower masterwork state): it must be masterwork-INFLATED (some
+    /// affix value pushed past its own captured [min..max] max — the evidence it isn't a base-roll spare)
+    /// AND value-dominated by <paramref name="by"/>. With <paramref name="strict"/>, domination must be
+    /// one-way (dominated and NOT dominating back) so a symmetric pair can never drop each other — use
+    /// strict in pool collapses where both sides are candidates; non-strict for the equipped guard.</summary>
+    public static bool IsStaleRescanOf(Item cand, Item by, bool strict)
+    {
+        bool inflated = (cand.Affixes ?? new()).Any(a => a.Value is double v && a.Max is double mx && mx > 0 && v > mx + 0.001);
+        if (!inflated) return false;   // base/fresh roll — could be a genuine spare; never hide it
+        if (!DominatedBy(cand, by)) return false;
+        return !strict || !DominatedBy(by, cand);
     }
 
     /// <summary>Every affix on <paramref name="cand"/> is present on <paramref name="by"/> with a value no

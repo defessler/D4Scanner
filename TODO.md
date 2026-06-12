@@ -4,11 +4,11 @@
 ## UI / display
 
 - [x] The green up-arrow (upgrade) badge is clipped on the item icons. *(v0.39.0)*
-- [ ] When an upgrade exists in the inventory, find a good way to show WHICH inventory item
-      the upgrade is when hovering (link the badge to the concrete item).
-- [ ] Better item-identity tracking: duplicates of the same item should appear as separate
+- [x] When an upgrade exists in the inventory, find a good way to show WHICH inventory item
+      the upgrade is when hovering (link the badge to the concrete item). *(v0.41.0)*
+- [x] Better item-identity tracking: duplicates of the same item should appear as separate
       items if ANY of their tooltip text differs — excluding stateful text (EQUIPPED,
-      favorited, junk marks, durability, etc.).
+      favorited, junk marks, durability, etc.). *(v0.41.0)*
 - [x] Improve the layout/formatting of the ASPECT / UNIQUE POWER boxes (compare cards & detail). *(v0.39.0)*
 - [ ] BUILD WANTS tooltip should show the VALUES it wants (thresholds), not just affix names.
 - [ ] EQUIPPED tooltip (and a general rule for similar spots): special progress-bar/text

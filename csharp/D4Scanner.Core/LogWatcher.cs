@@ -284,7 +284,9 @@ public sealed class LogWatcher : IDisposable
         // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
         if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
         if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
-        Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = OwnRoster(_charSel) };
+        // Inventory dedups by CONTENT fingerprint (TTS text is exact): genuine duplicates of a
+        // same-named bag item stay distinct instead of collapsing to one entry.
+        Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15, contentIdentity: true), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = OwnRoster(_charSel) };
     }
 
     void TrimRecent()
@@ -426,8 +428,11 @@ public sealed class LogWatcher : IDisposable
     /// append-only log). This drops stale items when the player swaps gear mid-session — the old item
     /// stays in the log file but its entry is older, so it loses to the newer one here.
     /// For equipped gear: N = 2 for rings, up to 4 for weapons, 1 for everything else.
-    /// For inventory: caller passes a higher limit (default 15) so bag items aren't over-pruned.</summary>
-    public static List<Item> LatestPerSlot(IEnumerable<Item> items, int overrideMax = 0)
+    /// For inventory: caller passes a higher limit (default 15) so bag items aren't over-pruned.
+    /// <paramref name="contentIdentity"/>: dedup by the item's CONTENT fingerprint instead of its name,
+    /// so genuine duplicates of a same-named item (different rolls/metadata) survive as distinct entries.
+    /// Use for TTS inventory only — exact text makes content identity trustworthy there.</summary>
+    public static List<Item> LatestPerSlot(IEnumerable<Item> items, int overrideMax = 0, bool contentIdentity = false)
     {
         return items
             .GroupBy(it => SlotBaseName(it.Slot ?? ""))
@@ -441,18 +446,21 @@ public sealed class LogWatcher : IDisposable
                 //       (player genuinely has two of that item equipped in different slots)
                 //   - Item scanned without a panel position (SlotPosition == 0, e.g. bag hover): key = "Name"
                 //     → re-hovering the same item collapses to one entry
+                //   - contentIdentity: key = content fingerprint, and the secondary name-level collapse
+                //     is skipped — same-named items with different content are different items.
                 var seen      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var namesSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 return g.Reverse()
                         .Where(it =>
                         {
                             var name = it.RawName.Length > 0 ? it.RawName : it.Name;
-                            var key  = it.SlotPosition > 0 ? $"{name}:{it.SlotPosition}" : name;
+                            var id   = contentIdentity ? GearList.Fingerprint(it) : name;
+                            var key  = it.SlotPosition > 0 ? $"{id}:{it.SlotPosition}" : id;
                             if (!seen.Add(key)) return false;
                             // Secondary name-level dedup: if the same item was re-hovered at a
                             // different panel position (e.g. weapon at pos 1 then pos 2 after
                             // re-opening the char panel), collapse to the most-recent scan only.
-                            return namesSeen.Add(name);
+                            return contentIdentity || namesSeen.Add(name);
                         })
                         // Stable ordering so ring/weapon assignment doesn't flip with scan order:
                         // items scanned from the character panel (SlotPosition > 0) sort by their

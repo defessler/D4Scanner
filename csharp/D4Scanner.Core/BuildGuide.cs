@@ -36,11 +36,8 @@ public static class BuildGuide
                 var g = gear.Groups[gi];
                 var key = "gear:" + gi;
                 foreach (var up in g.UpgradeItems)   // tier 0 — free win: equip a better item you already own
-                {
-                    var name = up.Split("  (")[0];
-                    acts.Add(new GuideStep(0, "EQUIP", $"{g.Name} — {name}", "already in your bags",
-                        $"Equip {name} on your {g.Name} — you already own a better fit", key));
-                }
+                    acts.Add(new GuideStep(0, "EQUIP", $"{g.Name} — {up.Name}", "already in your bags",
+                        $"Equip {up.Name} on your {g.Name} — you already own a better fit", key));
                 foreach (var i in g.Items)
                 {
                     if (i.Status == "missing")       // tier 2 — craft/temper the missing affix

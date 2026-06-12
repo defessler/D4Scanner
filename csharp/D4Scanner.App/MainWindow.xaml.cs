@@ -2387,7 +2387,9 @@ public partial class MainWindow : Window
     // Build a synthetic Section from a raw scanned Item so it can be hovered / pinned.
     Section ItemToSection(Item item)
     {
-        var key = $"inv:{DiffEngine.Normalize(item.Name)}:{item.Slot}";
+        // keyed by CONTENT fingerprint: with genuine duplicates now distinct (v0.41), a name+slot key
+        // would make pinning one duplicate pin/unpin them all
+        var key = $"inv:{GearList.Fingerprint(item)}";
         var grp = new Group { Name = item.Slot ?? "item", Kind = "gear" };
         foreach (var aff in item.Affixes)
         {
@@ -2426,7 +2428,9 @@ public partial class MainWindow : Window
     string _invSearch = "";
     readonly HashSet<string> _invAffixes = new(StringComparer.OrdinalIgnoreCase);
 
-    void ShowInventoryModal()
+    /// <param name="expandFp">When set, the modal opens with this item's inline comparison already
+    /// expanded and scrolled into view — the upgrade badge / "better in your bags" jump target.</param>
+    void ShowInventoryModal(string? expandFp = null)
     {
         var overlay = new Grid { IsHitTestVisible = true };
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xBB, 0, 0, 0)) };
@@ -2473,7 +2477,7 @@ public partial class MainWindow : Window
         var selectedAffixes = _invAffixes;
         string search = _invSearch;
         var sortMode = _invSort ?? (scoring ? GearSortMode.Upgrade : GearSortMode.RecentlyAcquired);
-        string? expandedFp = null;   // fingerprint of the row whose inline comparison is open
+        string? expandedFp = expandFp;   // fingerprint of the row whose inline comparison is open
         FrameworkElement? expandedCard = null;   // the inserted compare card (for BringIntoView)
         var currentView = new List<Item>();   // the currently-filtered/sorted rows (for "Clear shown")
 
@@ -2925,7 +2929,12 @@ public partial class MainWindow : Window
         BuildChips();
         RebuildTagBox();
         RebuildAffixList();
+        // opened on a specific item (upgrade-badge jump): clear this instance's filters so the target
+        // row can't be filtered out, then scroll its expanded comparison into view once laid out
+        if (expandFp != null) { searchBox.Text = ""; search = ""; _invSearch = ""; _invAffixes.Clear(); RebuildTagBox(); }
         Rebuild();
+        if (expandFp != null && expandedCard != null)
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => expandedCard?.BringIntoView());
         scroll.Content = listPanel;
 
         // Body: the header/filter block (sp) is fixed at the top; the item list scroll fills whatever height
@@ -3786,12 +3795,22 @@ public partial class MainWindow : Window
         grid.HorizontalAlignment = HorizontalAlignment.Right; grid.VerticalAlignment = VerticalAlignment.Bottom;
         outer.Children.Add(grid);
         if (s.Gear != null && s.Gear.UpgradeItems.Count > 0)
-            outer.Children.Add(new Border
+        {
+            // hover names the concrete bag item(s); click jumps straight to the best one in All Items
+            var ups = s.Gear.UpgradeItems;
+            var badge = new Border
             {
                 Background = Green, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(1, 1, 0, 0), Child = TB("↑", B("#0C0C0F"), 11, true),
-            });
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = "Better in your bags — click to view:\n" +
+                          string.Join("\n", ups.Select(u => $"◆ {u.Name}  ({u.Met}/{u.Total} affixes)")),
+            };
+            var bestFp = ups.OrderByDescending(u => u.Met).First().Fingerprint;
+            badge.MouseLeftButtonUp += (_, e) => { e.Handled = true; _hoverPopup.IsOpen = false; ShowInventoryModal(bestFp); };
+            outer.Children.Add(badge);
+        }
         return outer;
     }
 
@@ -4150,12 +4169,23 @@ public partial class MainWindow : Window
         return tb;
     }
 
-    // green "better in your bags" block: non-equipped items that beat the equipped one for this slot
-    UIElement StashUpgrades(List<string> ups)
+    // green "better in your bags" block: non-equipped items that beat the equipped one for this slot.
+    // Each row is a LINK — click jumps to that exact item (by fingerprint) in the All-Items view.
+    UIElement StashUpgrades(List<UpgradeRef> ups)
     {
         var inner = new StackPanel();
         inner.Children.Add(TBs("↑  BETTER IN YOUR BAGS", Green, 12, true, new Thickness(0, 0, 0, 5)));
-        foreach (var u in ups) inner.Children.Add(TB("◆  " + u, Ink, 12.5, false, new Thickness(0, 2, 0, 2)));
+        foreach (var u in ups)
+        {
+            var row = TB($"◆  {u.Name}  ({u.Met}/{u.Total})", Ink, 12.5, false, new Thickness(0, 2, 0, 2));
+            row.Cursor = System.Windows.Input.Cursors.Hand;
+            row.ToolTip = $"Show {u.Name} in All Items";
+            var fp = u.Fingerprint;
+            row.MouseEnter += (_, _) => row.Foreground = Green;
+            row.MouseLeave += (_, _) => row.Foreground = Ink;
+            row.MouseLeftButtonUp += (_, e) => { e.Handled = true; ShowInventoryModal(fp); };
+            inner.Children.Add(row);
+        }
         return new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x1E, 0x6C, 0xBF, 0x5E)),
