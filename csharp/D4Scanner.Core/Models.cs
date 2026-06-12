@@ -325,13 +325,25 @@ public class Group
     public List<Affix> ExtraAffixes { get; set; } = new();             // …same, as Affix objects (value/range/IsGreater preserved)
     public string? WantAspect { get; set; }           // aspect the build wants in this slot
     public List<string> WantSockets { get; set; } = new();   // gems/runes the build wants socketed here
-    public List<string> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
+    public List<UpgradeRef> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
     /// <summary>Live socket fill summary for this slot, e.g. "1/2 filled (1 empty)"; null when target wants none.</summary>
     public string? SocketStatus { get; set; }
     public bool SocketsDone { get; set; }                    // all wanted sockets filled (no empties / runeword present)
     public int SocketsWanted { get; set; }                   // sockets the build wants here (drives the bar's denominator)
     public int SocketsFilled { get; set; }                   // sockets actually filled (clamped 0..wanted); 0 when unknown
     public bool SocketsKnown { get; set; }                   // socket fill was actually captured (false ⇒ bar/text honest about "not captured")
+}
+
+/// <summary>A non-equipped item that beats the equipped piece for a slot — carried as a structured
+/// reference (not a display string) so the UI can name it, tooltip it, and JUMP to it in the All-Items
+/// view by fingerprint. Computed per-Diff (never persisted).</summary>
+public sealed class UpgradeRef
+{
+    public string Name { get; set; } = "";
+    public int Met { get; set; }          // target affixes this item meets
+    public int Total { get; set; }        // target affixes the slot wants
+    public string Fingerprint { get; set; } = "";   // GearList.Fingerprint of the concrete item
+    public override string ToString() => $"{Name}  ({Met}/{Total})";
 }
 
 public class Category

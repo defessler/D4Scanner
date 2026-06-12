@@ -1759,7 +1759,9 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var nScored = UpgradeScorer.Score(nTarget, new LiveBuild(), new[] { byName }, 75);
     Eq("Salvage: matched by ITEM NAME (no imprint text needed)", "Aspect of Mending Obscurity", nScored[0].SalvageAspect);
 
-    // cross-profile stale-copy collapse: same name+slot pools to ONE row, active character's copy first
+    // v0.41 contract change: same-name copies WITHOUT stale-rescan evidence are GENUINE duplicates —
+    // both rows show (the old name+slot collapse hid one). Only a provably-stale capture (masterwork-
+    // inflated AND strictly dominated by another copy) is dropped.
     var freshCopy = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 200,
         Affixes = { new Affix { Text = "Critical Strike Chance", Value = 10 } } };
     var staleCopy = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 100,
@@ -1769,9 +1771,21 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         new[] { new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian",
                                        Live = new LiveBuild { Inventory = { staleCopy } } } },
         "Rogue");
-    Eq("SharedCandidates: cross-profile stale copy collapses to one row", 1, poolX.Count(o => o.Item.Name == "Tal Ring"));
-    Check("SharedCandidates: the ACTIVE character's copy wins the collapse",
-        poolX.First(o => o.Item.Name == "Tal Ring").Owner == null);
+    Eq("SharedCandidates: two genuine same-name rolls BOTH show (no blanket name collapse)",
+        2, poolX.Count(o => o.Item.Name == "Tal Ring"));
+    // …but a masterwork-inflated copy strictly dominated by another copy is a stale re-scan: one row.
+    var inflatedStale = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 100,
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 9, Min = 5, Max = 8 } } };   // 9 > its own max
+    var freshBetter = new Item { Name = "Tal Ring", Slot = "ring", LastScannedTicks = 200,
+        Affixes = { new Affix { Text = "Critical Strike Chance", Value = 10, Min = 5, Max = 8 } } };
+    var poolY = GearList.SharedCandidates(
+        new LiveBuild { Inventory = { freshBetter } },
+        new[] { new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian",
+                                       Live = new LiveBuild { Inventory = { inflatedStale } } } },
+        "Rogue");
+    Eq("SharedCandidates: an inflated, strictly-dominated stale copy collapses away", 1, poolY.Count(o => o.Item.Name == "Tal Ring"));
+    Check("SharedCandidates: the surviving copy is the dominating (active) one",
+        poolY.First(o => o.Item.Name == "Tal Ring").Owner == null);
     Check("SharedCandidates: other-character rows carry their profile slug for deletes",
         GearList.SharedCandidates(new LiveBuild(),
             new[] { new CharacterProfile { Slug = "heoki-barbarian", Name = "Heoki", Class = "Barbarian",
@@ -2540,6 +2554,78 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         "+100 Dexterity [80 - 120]", "Durability: 100/100. Tempers: 5/5" });
     Check("Stateful: combined durability+tempers line still parses tempers",
         temperItem?.TemperUsed == 5 && temperItem?.TemperMax == 5);
+}
+
+// ---- v0.41: item identity — fingerprint v2, content-aware dedup, structured upgrade refs ----
+{
+    // (a) fingerprint v2: non-stateful metadata is identity; capture context is not
+    Item FpItem() => new Item { Name = "Twin Blade", Slot = "weapon", ItemPower = 800, Quality = 10,
+        Affixes = { new Affix { Text = "Dexterity", Value = 100 } } };
+    var fpBase = GearList.Fingerprint(FpItem());
+    var ipDiff = FpItem(); ipDiff.ItemPower = 810;
+    Check("FingerprintV2: item power differs -> different identity", GearList.Fingerprint(ipDiff) != fpBase);
+    var qDiff = FpItem(); qDiff.Quality = 25;
+    Check("FingerprintV2: masterwork quality differs -> different identity", GearList.Fingerprint(qDiff) != fpBase);
+    var tDiff = FpItem(); tDiff.TemperUsed = 1; tDiff.TemperMax = 3;
+    Check("FingerprintV2: temper counters differ -> different identity", GearList.Fingerprint(tDiff) != fpBase);
+    var stateDiff = FpItem(); stateDiff.Equipped = true; stateDiff.UiPanel = "Vendor"; stateDiff.SlotPosition = 2;
+    stateDiff.LastScannedTicks = 999; stateDiff.Source = ItemSource.Ocr; stateDiff.PowerText.Add("some prose");
+    Check("FingerprintV2: stateful capture context does NOT change identity", GearList.Fingerprint(stateDiff) == fpBase);
+
+    // (b) LatestPerSlot contentIdentity: genuine duplicates survive; identical re-hovers collapse
+    var dupA = new Item { Name = "Twin Blade", RawName = "TWIN BLADE", Slot = "weapon", ItemPower = 800,
+        Affixes = { new Affix { Text = "Dexterity", Value = 100 } } };
+    var dupB = new Item { Name = "Twin Blade", RawName = "TWIN BLADE", Slot = "weapon", ItemPower = 810,
+        Affixes = { new Affix { Text = "Dexterity", Value = 95 } } };
+    var rehover = new Item { Name = "Twin Blade", RawName = "TWIN BLADE", Slot = "weapon", ItemPower = 800,
+        Affixes = { new Affix { Text = "Dexterity", Value = 100 } } };
+    Eq("ContentIdentity: two different rolls of the same name BOTH kept",
+        2, LogWatcher.LatestPerSlot(new[] { dupA, dupB }, 15, contentIdentity: true).Count);
+    Eq("ContentIdentity: an identical re-hover still collapses",
+        2, LogWatcher.LatestPerSlot(new[] { dupA, dupB, rehover }, 15, contentIdentity: true).Count);
+    Eq("ContentIdentity: name-keyed dedup (default) is unchanged",
+        1, LogWatcher.LatestPerSlot(new[] { dupA, dupB }, 15).Count);
+
+    // (c) DedupeInventory content-aware: TTS duplicates survive; OCR collapses to its TTS anchor
+    var ttsRoll1 = new Item { Name = "Dup Amulet", Slot = "amulet", Source = ItemSource.Tts, LastScannedTicks = 100,
+        Affixes = { new Affix { Text = "Dexterity", Value = 80 } } };
+    var ttsRoll2 = new Item { Name = "Dup Amulet", Slot = "amulet", Source = ItemSource.Tts, LastScannedTicks = 200,
+        Affixes = { new Affix { Text = "Dexterity", Value = 90 } } };
+    var ocrEcho  = new Item { Name = "Dup Amulet", Slot = "amulet", Source = ItemSource.Ocr, LastScannedTicks = 300,
+        Affixes = { new Affix { Text = "Dexterity", Value = 91 } } };   // OCR mis-read of one of them
+    var dd = LiveGearResolver.DedupeInventory(new List<Item> { ttsRoll1, ttsRoll2, ocrEcho });
+    Eq("DedupeInventory: two TTS rolls survive; the OCR echo collapses into them", 2, dd.Count);
+    Check("DedupeInventory: only TTS copies remain when TTS anchors the name", dd.All(i => i.Source == ItemSource.Tts));
+
+    // (d) IsStaleRescanOf truth table
+    var domBy = new Item { Name = "X", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 100, Min = 50, Max = 90 } } };
+    var inflatedLesser = new Item { Name = "X", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 95, Min = 50, Max = 90 } } };
+    var cleanLesser = new Item { Name = "X", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 80, Min = 50, Max = 90 } } };
+    var equalTwin = new Item { Name = "X", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 95, Min = 50, Max = 90 } } };
+    Check("StaleRescan: inflated + strictly dominated -> stale", GearList.IsStaleRescanOf(inflatedLesser, domBy, strict: true));
+    Check("StaleRescan: clean base roll is never stale", !GearList.IsStaleRescanOf(cleanLesser, domBy, strict: true));
+    Check("StaleRescan(strict): equal-value twins never drop each other",
+        !GearList.IsStaleRescanOf(inflatedLesser, equalTwin, strict: true) && !GearList.IsStaleRescanOf(equalTwin, inflatedLesser, strict: true));
+    Check("StaleRescan(non-strict): an equal-value inflated re-capture IS stale vs the equipped copy",
+        GearList.IsStaleRescanOf(inflatedLesser, equalTwin, strict: false));
+
+    // (e) UpgradeRef: the diff carries WHICH bag item is the upgrade, with a jumpable fingerprint.
+    //     (fixtures discriminate by affix PRESENCE so the later roll-gate phase can't move them)
+    var upTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = {
+        new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Maximum Life" } } } } };
+    var upEq = new Item { Name = "Worn Helm", Slot = "helm", Equipped = true,
+        Affixes = { new Affix { Text = "Dexterity", Value = 50 } } };
+    var upBag = new Item { Name = "Bag Helm", Slot = "helm",
+        Affixes = { new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Maximum Life", Value = 900 } } };
+    var upRep = DiffEngine.Diff(upTarget, new LiveBuild { Gear = { upEq }, Inventory = { upBag } }, 50);
+    var upGrp = upRep.Categories.First(c => c.Id == "gear").Groups[0];
+    Eq("UpgradeRef: the bag upgrade is found", 1, upGrp.UpgradeItems.Count);
+    Eq("UpgradeRef: carries the item name", "Bag Helm", upGrp.UpgradeItems[0].Name);
+    Eq("UpgradeRef: met/total counts", (2, 2), (upGrp.UpgradeItems[0].Met, upGrp.UpgradeItems[0].Total));
+    Eq("UpgradeRef: fingerprint identifies the concrete item",
+        GearList.Fingerprint(upBag), upGrp.UpgradeItems[0].Fingerprint);
+    Check("UpgradeRef: legacy display string preserved via ToString",
+        upGrp.UpgradeItems[0].ToString().Contains("Bag Helm") && upGrp.UpgradeItems[0].ToString().Contains("(2/2)"));
 }
 
 // ---- report ----

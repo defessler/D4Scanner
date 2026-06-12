@@ -70,16 +70,25 @@ public static class LiveGearResolver
         return result;
     }
 
-    /// <summary>Collapse persisted inventory duplicates that share a name + base-slot (the same physical item
-    /// re-parsed with slightly different affixes, or across channels): keep the best — Tts over Ocr, then the
-    /// newest sighting. One-time hygiene for inventory already polluted with literal duplicates.</summary>
+    /// <summary>Collapse persisted inventory duplicates, content-aware: exact content twins collapse to
+    /// the best copy (Tts over Ocr, then newest), and within a name+base-slot group OCR copies are
+    /// dropped when a TTS copy exists (OCR re-reads of the same item mis-read values, forking content
+    /// hashes — TTS is the identity anchor). A name group seen ONLY via OCR still collapses to one
+    /// (the old behaviour) for the same reason. TTS copies with genuinely different content all
+    /// survive — those are real duplicates the player owns.</summary>
     public static List<Item> DedupeInventory(List<Item> items)
     {
-        static string Key(Item i) => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot);
-        return items
-            .GroupBy(Key, StringComparer.Ordinal)
+        static string NameKey(Item i) => DiffEngine.Normalize(i.Name) + "|" + DiffEngine.SlotBaseName(i.Slot);
+        var contentDistinct = items
+            .GroupBy(GearList.Fingerprint, StringComparer.Ordinal)
             .Select(g => g.OrderBy(i => i.Source == ItemSource.Tts ? 0 : 1)
                           .ThenByDescending(GearList.AcquiredTicks).First())
+            .ToList();
+        return contentDistinct
+            .GroupBy(NameKey, StringComparer.Ordinal)
+            .SelectMany(g => g.Any(i => i.Source == ItemSource.Tts)
+                ? g.Where(i => i.Source == ItemSource.Tts)
+                : new[] { g.OrderByDescending(GearList.AcquiredTicks).First() })
             .ToList();
     }
 

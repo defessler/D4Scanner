@@ -520,14 +520,17 @@ public static class DiffEngine
                                 : hasRune ? $"{want}/{want} filled (runeword)" : $"{filled}/{want} filled" + (empty > 0 ? $" ({empty} empty)" : ""));
                 }
 
-                // upgrade-finding: non-equipped items of this slot that meet MORE target affixes
+                // upgrade-finding: non-equipped items of this slot that meet MORE target affixes —
+                // carried as structured refs (name + met/total + fingerprint) so the UI can show
+                // WHICH bag item the upgrade is and jump to it.
                 int eqMet = items.Count(x => x.Status == "met");
                 var baseSlot = SlotBase(g.Slot);
                 foreach (var inv in live.Inventory)
                 {
                     if (SlotBase(inv.Slot) != baseSlot) continue;
                     int met = ScoreSlot(g, inv, gate);
-                    if (met > eqMet) grp.UpgradeItems.Add($"{inv.Name}  ({met}/{g.Affixes.Count})");
+                    if (met > eqMet) grp.UpgradeItems.Add(new UpgradeRef
+                    { Name = inv.Name, Met = met, Total = g.Affixes.Count, Fingerprint = GearList.Fingerprint(inv) });
                 }
                 gearGroups.Add(grp);
             }

@@ -109,6 +109,8 @@ public sealed class OcrCaptureEngine : IDisposable
         Updated?.Invoke(new LiveBuild
         {
             Gear      = LogWatcher.LatestPerSlot(_orderedGear),
+            // NO contentIdentity here (unlike the TTS watcher): OCR mis-reads fork values between
+            // re-scans of the SAME item, so content-fingerprint dedup would multiply phantom copies.
             Inventory = LogWatcher.LatestPerSlot(_orderedInv, 15),
         });
 
