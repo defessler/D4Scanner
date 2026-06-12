@@ -26,18 +26,31 @@ public sealed class LogWatcher : IDisposable
     string _buf = "";
     System.Threading.Timer? _timer;
 
+    // Cross-chunk classification: a tooltip block that ends near a poll-chunk edge has not seen its
+    // action tail ("Unequip" / "Sell" / "Mark as Junk" …) yet — those lines arrive in the NEXT chunk.
+    // Classifying one-shot against the truncated chunk silently hit the Equipped=true defaults (the
+    // verified vendor-gear leak), so parsed items now wait in _pending until their lookahead window is
+    // complete (or the game goes quiet for a couple of polls), reading from a rolling line buffer.
+    readonly List<string> _recent = new();   // rolling raw-line buffer the lookahead scans
+    long _recentStart;                        // absolute line number of _recent[0]
+    long _lineNo;                             // absolute count of complete lines processed
+    sealed class PendingItem { public Item Item = null!; public long EndLine; public int Polls; }
+    readonly List<PendingItem> _pending = new();
+
     // Panel context state machine: tracks the active D4 UI panel from voiced navigation lines.
     // Provides richer UiContext classification (e.g. TakeAction from Stash vs. Inventory).
     string? _currentPanel;
     static readonly Dictionary<string, string> PanelMarkers = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Character panel headers — any of these set the context so Fast Path 3 fires
+        // Character panel headers — ONLY the anatomical slot names the character sheet itself voices.
+        // Bare ITEM-TYPE words (Helm/Chest/Gloves/Pants/Boots/Amulet/Ring) are deliberately absent:
+        // the Purveyor of Curiosities' gamble categories and the inventory screen's paper-doll labels
+        // voice exactly those words, and mapping them here flipped the panel Vendor→Character one line
+        // after "BUYBACK" (verified live) — every subsequent vendor hover then classified as worn gear.
         ["Equipment"]  = "Character",  ["Head"]    = "Character",  ["Torso"]   = "Character",
         ["Hands"]      = "Character",  ["Legs"]    = "Character",  ["Feet"]    = "Character",
-        ["Neck"]       = "Character",  ["Ring"]    = "Character",  ["Main Hand"] = "Character",
+        ["Neck"]       = "Character",  ["Main Hand"] = "Character",
         ["Off-Hand"]   = "Character",  ["Ranged"]  = "Character",  ["Ranged Weapon"] = "Character",
-        ["Helm"]       = "Character",  ["Chest"]   = "Character",  ["Gloves"]  = "Character",
-        ["Pants"]      = "Character",  ["Boots"]   = "Character",  ["Amulet"]  = "Character",
         // Other panels
         ["Stash"]      = "Stash",      ["Inventory"] = "Inventory",
         ["Vendor"]     = "Vendor",     ["Purveyor of Curiosities"] = "Vendor",
@@ -81,6 +94,7 @@ public sealed class LogWatcher : IDisposable
             // identity back to the character just left (verified live before this reset existed).
             _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
             _seg = new GearParser(); _currentPanel = null;
+            _pending.Clear(); _recent.Clear(); _recentStart = _lineNo;
             _char.Reset(); _skills.Reset();
             CharacterSelectDetected?.Invoke();
         };
@@ -123,81 +137,37 @@ public sealed class LogWatcher : IDisposable
         {
             if (!File.Exists(_path)) return;
             long size = new FileInfo(_path).Length;
-            if (size < _pos) { _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset(); }  // log cleared/rotated
-            if (size <= _pos) { IsCaughtUp = true; return; }
-
-            using var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            fs.Seek(_pos, SeekOrigin.Begin);
-            var bytes = new byte[size - _pos];
-            int read = fs.Read(bytes, 0, bytes.Length);
-            _pos = fs.Position;
-            _buf += Encoding.UTF8.GetString(bytes, 0, read);
-
-            var lines = _buf.Split('\n');
-            _buf = lines[^1];   // keep the (possibly partial) last line for next poll
-            bool changed = false;
-            for (int i = 0; i < lines.Length - 1; i++)
+            if (size < _pos)   // log cleared/rotated
             {
-                // Panel state machine: update current panel from navigation lines
-                var rawLine = GearParser.Clean(lines[i]);
-                // New shim session appended to the same file: drop the prior session's accumulated gear so a
-                // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
-                if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
-                { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; }
-
-                // Character-select screen tracking (visit start → gear wipe + CharacterSelectDetected;
-                // world entry → CharacterConfirmed with the picked name/class). Identity comes ONLY from
-                // this screen — the in-game "Name | 70 (208) (VII)" lines are OTHER PLAYERS' nameplates.
-                bool wasCharSel = _charSel.InCharSelect;
-                _charSel.Feed(lines[i]);
-                if (wasCharSel || _charSel.InCharSelect) changed = true;   // emit so the host sees Seen/identity progress
-                // Character-select text is menu narration, not gameplay — keep it out of the gear/sheet/skill
-                // parsers entirely (e.g. the detail block's own "Paragon N" line must not repopulate the sheet
-                // that the visit just reset).
-                if (_charSel.InCharSelect) continue;
-
-                // Player-nameplate lines (incl. clan-tagged "<Tag> Name | …") are never gear and never identity.
-                if (RosterParser.ParseLine(lines[i]) != null) continue;
-
-                if (PanelMarkers.TryGetValue(rawLine, out var panel))
-                {
-                    var prev = _currentPanel;
-                    _currentPanel = panel;
-                    if (panel == "Character" && prev != "Character")
-                    {
-                        // Fresh panel session: reset position counters so hovering the same
-                        // weapon again doesn't increment to position 2 and create a phantom duplicate.
-                        _seg.ResetSlotPositions();
-                        CharacterPanelDetected?.Invoke();
-                    }
-                }
-
-                // capture total attributes + paragon level + skill ranks (independent of gear)
-                if (_char.Feed(lines[i])) changed = true;
-                if (_skills.Feed(lines[i])) changed = true;
-
-                var item = _seg.Feed(lines[i]);
-                if (item == null) continue;
-                item.Source = ItemSource.Tts;
-                item.UiPanel = _currentPanel;
-                // Prefer the TRUE hover time from the line's '[ISO]' prefix so a replayed old loadout isn't
-                // stamped 'now' at launch; fall back to the system clock only when the line was un-stamped.
-                item.LastScannedTicks = (item.LogTimeUtc?.UtcTicks) ?? DateTime.UtcNow.Ticks;
-                ClassifyContext(item, lines, i, lines.Length - 1);
-                var key = (item.Slot ?? "?") + ":" + item.RawName;
-                if (item.Slot is "charm" or "seal" or "rune") { /* Season 8 items routed to dedicated collections in Build */ }
-                else if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
-                else { _inv[key] = item; _invOrdered.Add(item); }
-                changed = true;
+                _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+                _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset();
+                _pending.Clear(); _recent.Clear(); _recentStart = 0; _lineNo = 0;
             }
+
+            bool changed;
+            if (size > _pos)
+            {
+                using var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                fs.Seek(_pos, SeekOrigin.Begin);
+                var bytes = new byte[size - _pos];
+                int read = fs.Read(bytes, 0, bytes.Length);
+                _pos = fs.Position;
+                _buf += Encoding.UTF8.GetString(bytes, 0, read);
+
+                var lines = _buf.Split('\n');
+                _buf = lines[^1];   // keep the (possibly partial) last line for next poll
+                changed = FeedChunk(lines, lines.Length - 1);
+            }
+            else
+                // No new data — the game went quiet. Age the pending classifications so a block whose
+                // action tail never arrives still resolves (with its safe default) within a few polls.
+                changed = _pending.Count > 0 && ResolvePending();
+
             bool firstCatchUp = !IsCaughtUp;
             IsCaughtUp = true;
             if (changed || firstCatchUp)   // always emit once after catch-up so the UI can drop "catching up…"
             {
-                // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
-                if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
-                if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
-                Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = OwnRoster(_charSel) };
+                RebuildSnapshot();
                 Updated?.Invoke(Build);
             }
         }
@@ -205,16 +175,188 @@ public sealed class LogWatcher : IDisposable
         finally { System.Threading.Interlocked.Exchange(ref _polling, 0); }
     }
 
-    /// <summary>Classify an item's UiContext and fix its Equipped flag using in-body signals and a post-end-marker
-    /// lookahead. All decisions are driven by TTS text content — no memory reads, no cursor position needed.</summary>
-    static void ClassifyContext(Item item, string[] lines, int i, int lineCount)
+    /// <summary>
+    /// Process one poll chunk of COMPLETE log lines (the live path; <see cref="Poll"/> excludes the
+    /// trailing partial line via <paramref name="completeCount"/>). Public so tests can drive the real
+    /// chunked pipeline — including cross-chunk classification — without a timer or file.
+    /// </summary>
+    public bool FeedChunk(IReadOnlyList<string> lines, int completeCount = -1)
+    {
+        if (completeCount < 0) completeCount = lines.Count;
+        bool changed = false;
+        for (int i = 0; i < completeCount; i++)
+        {
+            // Every complete line enters the rolling buffer FIRST so pending lookaheads see the same
+            // stream the parser saw (markers, nameplates and menu noise included — they bound windows).
+            _recent.Add(lines[i]);
+            _lineNo++;
+
+            var rawLine = GearParser.Clean(lines[i]);
+            // New shim session appended to the same file: drop the prior session's accumulated gear so a
+            // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
+            if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
+            { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); }
+
+            // Character-select screen tracking (visit start → gear wipe + CharacterSelectDetected;
+            // world entry → CharacterConfirmed with the picked name/class). Identity comes ONLY from
+            // this screen — the in-game "Name | 70 (208) (VII)" lines are OTHER PLAYERS' nameplates.
+            bool wasCharSel = _charSel.InCharSelect;
+            _charSel.Feed(lines[i]);
+            if (wasCharSel || _charSel.InCharSelect) changed = true;   // emit so the host sees Seen/identity progress
+            // Character-select text is menu narration, not gameplay — keep it out of the gear/sheet/skill
+            // parsers entirely (e.g. the detail block's own "Paragon N" line must not repopulate the sheet
+            // that the visit just reset).
+            if (_charSel.InCharSelect) continue;
+
+            // Player-nameplate lines (incl. clan-tagged "<Tag> Name | …") are never gear and never identity.
+            if (RosterParser.ParseLine(lines[i]) != null) continue;
+
+            if (PanelMarkers.TryGetValue(rawLine, out var panel))
+            {
+                var prev = _currentPanel;
+                _currentPanel = panel;
+                if (panel == "Character" && prev != "Character")
+                {
+                    // Fresh panel session: reset position counters so hovering the same
+                    // weapon again doesn't increment to position 2 and create a phantom duplicate.
+                    _seg.ResetSlotPositions();
+                    CharacterPanelDetected?.Invoke();
+                }
+            }
+
+            // capture total attributes + paragon level + skill ranks (independent of gear)
+            if (_char.Feed(lines[i])) changed = true;
+            if (_skills.Feed(lines[i])) changed = true;
+
+            var item = _seg.Feed(lines[i]);
+            if (item == null) continue;
+            item.Source = ItemSource.Tts;
+            item.UiPanel = _currentPanel;
+            // Prefer the TRUE hover time from the line's '[ISO]' prefix so a replayed old loadout isn't
+            // stamped 'now' at launch; fall back to the system clock only when the line was un-stamped.
+            item.LastScannedTicks = (item.LogTimeUtc?.UtcTicks) ?? DateTime.UtcNow.Ticks;
+            _pending.Add(new PendingItem { Item = item, EndLine = _lineNo - 1 });
+        }
+        changed |= ResolvePending();
+        TrimRecent();
+        if (changed) RebuildSnapshot();
+        return changed;
+    }
+
+    /// <summary>Classify every pending item whose lookahead window is now complete (a definitive token
+    /// or block boundary arrived, or the window filled). After ~2 quiet polls a pending item is forced —
+    /// classified with whatever lines exist — so a final hover before the game goes silent still lands.</summary>
+    bool ResolvePending()
+    {
+        bool changed = false;
+        for (int p = 0; p < _pending.Count;)
+        {
+            var pend = _pending[p];
+            bool force = pend.Polls++ >= 2;
+            int rel = (int)(pend.EndLine - _recentStart);
+            if (!ClassifyContext(pend.Item, _recent, rel, _recent.Count, force)) { p++; continue; }
+            Commit(pend.Item);
+            changed = true;
+            _pending.RemoveAt(p);
+        }
+        return changed;
+    }
+
+    /// <summary>Route a classified item into the gear/inventory accumulators (the equipped gate).</summary>
+    void Commit(Item item)
+    {
+        var key = (item.Slot ?? "?") + ":" + item.RawName;
+        if (item.Slot is "charm" or "seal" or "rune") { /* Season 8 items routed to dedicated collections in Build */ }
+        else if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
+        else
+        {
+            _inv[key] = item; _invOrdered.Add(item);
+            // Self-heal: a fresh, correctly-classified NON-equipped sighting evicts an earlier
+            // wrongly-equipped copy of the same item (the gate used to be a one-way ratchet — once a
+            // vendor hover leaked into gear, no later sighting could ever displace it).
+            _items.Remove(key);
+            _itemsOrdered.RemoveAll(x => ((x.Slot ?? "?") + ":" + x.RawName) == key);
+        }
+    }
+
+    void RebuildSnapshot()
+    {
+        // Trim ordered lists to avoid unbounded growth and slow LatestPerSlot scans
+        if (_itemsOrdered.Count > 2000) _itemsOrdered.RemoveRange(0, _itemsOrdered.Count - 1000);
+        if (_invOrdered.Count > 2000) _invOrdered.RemoveRange(0, _invOrdered.Count - 1000);
+        Build = new LiveBuild { Gear = LatestPerSlot(_itemsOrdered), Inventory = LatestPerSlot(_invOrdered, 15), Character = _char.Character.Clone(), Skills = _skills.Skills, Roster = OwnRoster(_charSel) };
+    }
+
+    void TrimRecent()
+    {
+        long keepFrom = _lineNo - 256;
+        foreach (var p in _pending) if (p.EndLine < keepFrom) keepFrom = p.EndLine;   // never trim an open window
+        int drop = (int)(keepFrom - _recentStart);
+        if (drop > 0) { _recent.RemoveRange(0, drop); _recentStart += drop; }
+    }
+
+    /// <summary>Max post-end-marker lines the action-tail scan inspects. The real bag-hover tail runs
+    /// ~11 lines with "Mark as Junk" LAST, and keyword-explainer lines can push tokens further — the old
+    /// 11-line window missed them and fell through to an Equipped=true default (the vendor-gear leak).</summary>
+    internal const int LookaheadMax = 24;
+
+    enum TailSignal { None, Incomplete, Worn, Bag, Stash, Vendor, Paragon }
+
+    // Word-boundary action tokens. \b matters: "Restore +4 Primary Resource" must not match "store"
+    // (a verified false demote of genuinely worn gear), and \bequip\b must not match "unequip"/"equipped".
+    static readonly System.Text.RegularExpressions.Regex ReBagAction =
+        new(@"\b(store|sell|drop|equip)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex ReTakeAction =
+        new(@"\btake\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex ReBuyAction =
+        new(@"\bbuy(back)?\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Scan the lines after an item's end marker for the action verb that reveals where it sits:
+    /// "Unequip" = worn; "Sell"/"Equip"/"Drop"/"Mark as Junk/Favorite"/comparison toggles = bag;
+    /// "Take" = stash; "Buy" = vendor. The window ends at the next block boundary (the following hover's
+    /// EQUIPPED/name/header — its tail can't belong to this item) or after <see cref="LookaheadMax"/>
+    /// lines. Returns <see cref="TailSignal.Incomplete"/> when the window is still open at the end of the
+    /// available lines and <paramref name="force"/> is false — the caller retries when more lines arrive.</summary>
+    static TailSignal ScanTail(IReadOnlyList<string> lines, int i, int lineCount, bool force)
+    {
+        int seen = 0;
+        for (int look = i + 1; look < lineCount && seen < LookaheadMax; look++, seen++)
+        {
+            var clean = GearParser.Clean(lines[look]);
+            if (clean.Length == 0) continue;
+            var ctx = clean.ToLowerInvariant();
+            if (ctx.Contains("unequip")) return TailSignal.Worn;
+            if (ctx.Contains("mark as junk") || ctx.Contains("mark as favorite") || ctx.Contains("salvage")
+                || ctx.Contains("comparison") || ReBagAction.IsMatch(ctx))
+                return TailSignal.Bag;
+            if (ReBuyAction.IsMatch(ctx)) return TailSignal.Vendor;
+            if (ReTakeAction.IsMatch(ctx)) return TailSignal.Stash;
+            if (ctx.Contains("unlock") || ctx.Contains("refund")) return TailSignal.Paragon;
+            if (PanelMarkers.ContainsKey(clean) || GearParser.IsBlockBoundary(clean)) return TailSignal.None;
+        }
+        if (seen >= LookaheadMax) return TailSignal.None;          // window filled — no action token exists
+        return force ? TailSignal.None : TailSignal.Incomplete;    // ran out of lines mid-window
+    }
+
+    /// <summary>Classify an item's UiContext and fix its Equipped flag using in-body signals, the panel
+    /// state machine, and a post-end-marker action-tail lookahead. All decisions are driven by TTS text
+    /// content — no memory reads, no cursor position needed. Returns false when the classification needs
+    /// more lines (tail still arriving across a poll-chunk edge) and <paramref name="force"/> is false.
+    ///
+    /// Bias note: D4 voices a standalone "EQUIPPED" line immediately BEFORE the name of nearly every
+    /// comparison-enabled bag/stash/vendor hover (it labels the comparison overlay, not the hovered item),
+    /// so the EQUIPPED pre-flag alone is NOT worn evidence. When no corroborating signal exists — no
+    /// character-panel context, no slot header, no "Unequip" — the default is now NOT-equipped: a missed
+    /// genuine item self-corrects on the next character-panel hover, but a vendor item stamped as worn
+    /// silently replaces real gear and persists (the bug this rewrite fixes).</summary>
+    static bool ClassifyContext(Item item, IReadOnlyList<string> lines, int i, int lineCount, bool force = true)
     {
         // Panel fast-path: if the active UI panel is known, pre-classify before any text signal.
         // Stash and Vendor items are always non-equipped; skip the lookahead scan entirely.
         if (item.UiPanel == "Stash"  && !item.FromCharPanel)
-            { item.Equipped = false; item.Context = UiContext.StashItem; return; }
+            { item.Equipped = false; item.Context = UiContext.StashItem; return true; }
         if (item.UiPanel == "Vendor" && !item.FromCharPanel)
-            { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
+            { item.Equipped = false; item.Context = UiContext.VendorItem; return true; }
 
         // Fast path 1: "Properties lost when equipped:" was seen inside the body — this is a bag/stash
         // comparison item even if the EQUIPPED marker appeared before its name.
@@ -222,64 +364,62 @@ public sealed class LogWatcher : IDisposable
         {
             item.Equipped = false;
             item.Context = UiContext.BagItem;
-            return;
+            return true;
         }
-        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) appeared immediately before the block —
-        // definitively the character panel; override any subsequent misleading Store/Take signal.
-        if (item.FromCharPanel)
+
+        // Seals/charms route to dedicated Talisman collections, never the gear list — classify directly
+        // (previously this fired inside the lookahead loop, so it silently depended on window contents).
+        if (item.Slot is "seal" or "charm")
+        {
+            item.Equipped = true;
+            item.Context = item.Slot == "seal" ? UiContext.HoradricSeal : UiContext.Charm;
+            return true;
+        }
+
+        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) immediately preceded the block AND the
+        // panel state agrees (Character, or unknown — headers themselves set the panel, so null only means
+        // no marker was ever voiced). A header word with a CONFLICTING panel (Vendor gamble category
+        // "Ring", inventory paper-doll label) is a hijack — fall through to the action-tail scan instead.
+        if (item.FromCharPanel && item.UiPanel is "Character" or null)
         {
             item.Equipped = true;
             item.Context = UiContext.WornGear;
-            return;
+            return true;
         }
-        // Fast path 3: item was hovered while the Character panel is active.
-        // The IsComparison guard above already filters comparison tooltips.
-        // If no definitive inventory/vendor/stash counter-signal fires, trust the panel context —
-        // D4 Season 8 does not always emit a standalone EQUIPPED line, so requiring one is too strict.
-        if (item.UiPanel == "Character" && !item.IsComparison)
+
+        var sig = ScanTail(lines, i, lineCount, force);
+        if (sig == TailSignal.Incomplete) return false;
+        switch (sig)
         {
-            for (int look = i + 1; look < Math.Min(i + 12, lineCount); look++)
-            {
-                var ctx = lines[look].Trim().ToLowerInvariant();
-                if (ctx.Contains("store") || ctx.Contains("salvage") || ctx.Contains("mark as junk"))
-                    { item.Equipped = false; item.Context = UiContext.BagItem; return; }
-                if (ctx.Contains("buy"))  { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
-                if (ctx.Contains("take")) { item.Equipped = false; item.Context = UiContext.StashItem; return; }
-            }
+            case TailSignal.Worn:    item.Equipped = true;  item.Context = UiContext.WornGear;    return true;
+            case TailSignal.Bag:     item.Equipped = false; item.Context = UiContext.BagItem;     return true;
+            case TailSignal.Stash:   item.Equipped = false; item.Context = UiContext.StashItem;   return true;
+            case TailSignal.Vendor:  item.Equipped = false; item.Context = UiContext.VendorItem;  return true;
+            case TailSignal.Paragon: item.Equipped = false; item.Context = UiContext.ParagonNode; return true;
+        }
+
+        // Window closed with no action token at all.
+        if (item.UiPanel == "Character")
+        {
+            // The Character panel is now set ONLY by the sheet's own anatomical headers (bare item-type
+            // words no longer poison it), so trusting it is safe — and required: D4 doesn't always voice
+            // a standalone EQUIPPED line on the character sheet.
             item.Equipped = true;
             item.Context = UiContext.WornGear;
-            return;
+            return true;
         }
-        // Fallback: scan up to 12 post-end-marker lines for the action verb.
         if (item.Equipped)
         {
-            for (int look = i + 1; look < Math.Min(i + 12, lineCount); look++)
+            // Only the EQUIPPED voice line said "worn" — see the bias note above. Fail safe: inventory.
+            item.Equipped = false;
+            item.Context = item.UiPanel switch
             {
-                var ctx = lines[look].Trim().ToLowerInvariant();
-                if (ctx.Contains("unequip"))   { item.Context = UiContext.WornGear;  return; }
-                if (ctx.Contains("store") || ctx.Contains("mark as junk") || ctx.Contains("salvage"))
-                    { item.Equipped = false; item.Context = UiContext.BagItem;  return; }
-                if (ctx.Contains("take"))      { item.Equipped = false; item.Context = UiContext.StashItem; return; }
-                if (item.Slot == "seal")  { item.Equipped = true;  item.Context = UiContext.HoradricSeal; return; }
-                if (item.Slot == "charm") { item.Equipped = true;  item.Context = UiContext.Charm; return; }
-                if (ctx.Contains("buy"))       { item.Equipped = false; item.Context = UiContext.VendorItem; return; }
-                if (ctx.Contains("unlock") || ctx.Contains("refund"))
-                    { item.Equipped = false; item.Context = UiContext.ParagonNode; return; }
-            }
-            // No confirming signal within the window — trust the EQUIPPED marker as before
-            item.Context = UiContext.WornGear;
+                "Vendor" => UiContext.VendorItem,
+                "Stash"  => UiContext.StashItem,
+                _        => UiContext.BagItem,
+            };
         }
-        else
-        {
-            // Not initially flagged as equipped; classify via post-end action if visible
-            for (int look = i + 1; look < Math.Min(i + 8, lineCount); look++)
-            {
-                var ctx = lines[look].Trim().ToLowerInvariant();
-                if (ctx.Contains("take"))  { item.Context = UiContext.StashItem; return; }
-                if (ctx.Contains("store")) { item.Context = UiContext.BagItem;   return; }
-                if (ctx.Contains("buy"))   { item.Context = UiContext.VendorItem; return; }
-            }
-        }
+        return true;
     }
 
     /// <summary>For each slot base name keep only the N most recently logged items (last entries in the
@@ -316,8 +456,12 @@ public sealed class LogWatcher : IDisposable
                         })
                         // Stable ordering so ring/weapon assignment doesn't flip with scan order:
                         // items scanned from the character panel (SlotPosition > 0) sort by their
-                        // known panel position; items without position sort after, alphabetically.
+                        // known panel position. Ties (and position-less items) break by RECENCY, not
+                        // alphabet — with an alphabetical tiebreak, one misclassified "Adventurer's …"
+                        // could own a 1-cap slot for the whole session because the genuine item
+                        // re-hovered LATER still lost the A-vs-C name comparison (verified live).
                         .OrderBy(it => it.SlotPosition > 0 ? it.SlotPosition : 999)
+                        .ThenByDescending(it => it.LogTimeUtc?.UtcTicks ?? it.LastScannedTicks)
                         .ThenBy(it => it.RawName.Length > 0 ? it.RawName : it.Name, StringComparer.OrdinalIgnoreCase)
                         .Take(max);
             })
@@ -363,7 +507,14 @@ public sealed class LogWatcher : IDisposable
             var item = seg.Feed(allLines[i]);
             if (item == null) continue;
             ClassifyContext(item, allLines, i, allLines.Length);
-            if (equippedOnly && !item.Equipped) continue;
+            if (!item.Equipped)
+            {
+                // Self-heal (mirrors Poll's Commit): a non-equipped sighting evicts an earlier
+                // wrongly-equipped copy of the same item instead of leaving it ratcheted in.
+                var key = (item.Slot ?? "?") + ":" + item.RawName;
+                ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key);
+                if (equippedOnly) continue;
+            }
             ordered.Add(item);
         }
         return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = OwnRoster(charSel) };

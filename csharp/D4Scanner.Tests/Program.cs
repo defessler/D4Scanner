@@ -676,22 +676,27 @@ if (pwr != null)
 {
     var twoSession = new[]
     {
-        // morning session — old helm
+        // morning session — old helm (slot header + Unequip tail = the real worn-hover shape; a bare
+        // EQUIPPED line no longer classifies as worn since it also precedes bag/vendor hover names)
         "[2026-06-06T07:49:15Z]=== d4scanner tts shim attached v2 ===",
+        "[2026-06-06T07:49:16Z]Head",
         "[2026-06-06T07:49:16Z]EQUIPPED",
         "[2026-06-06T07:49:16Z]OLD MORNING HELM",
         "[2026-06-06T07:49:16Z]Legendary Helm",
         "[2026-06-06T07:49:16Z]800 Item Power",
         "[2026-06-06T07:49:16Z]+100 Dexterity [80 - 120]",
         "[2026-06-06T07:49:16Z]Right mouse button",
+        "[2026-06-06T07:49:16Z]Unequip",
         // afternoon session — new helm in the same slot
         "[2026-06-06T15:37:50Z]=== d4scanner tts shim attached v2 ===",
+        "[2026-06-06T15:37:51Z]Head",
         "[2026-06-06T15:37:51Z]EQUIPPED",
         "[2026-06-06T15:37:51Z]NEW AFTERNOON HELM",
         "[2026-06-06T15:37:51Z]Legendary Helm",
         "[2026-06-06T15:37:51Z]925 Item Power",
         "[2026-06-06T15:37:51Z]+150 Dexterity [80 - 120]",
         "[2026-06-06T15:37:51Z]Right mouse button",
+        "[2026-06-06T15:37:51Z]Unequip",
     };
     var rep = LogWatcher.DiagnoseLines(twoSession);
     Eq("TwoSession: both session markers counted", 2, rep.SessionMarkers);
@@ -2338,6 +2343,165 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("Socket no-info: wanted still 2 (denominator for the bar)", 2, sg4.SocketsWanted);
     Check("Socket no-info: status says not captured", sg4.SocketStatus!.Contains("not captured"));
     Check("Socket no-info: status never claims it's filled", !sg4.SocketStatus!.Contains("2/2 filled"));
+}
+
+// ---- v0.38: vendor-gear leak — fail-safe classification, chunk-safe lookahead, self-healing gate ----
+// Shapes below are lifted from the user's real d4_tts.log where vendor/bag hovers replaced worn gear.
+{
+    // (a) Purveyor of Curiosities: the gamble category word ("Helm") must NOT flip the panel back to
+    //     Character (verified live: 'BUYBACK' → 'Helm' poisoned the panel before the first hover).
+    var purveyor = new[] {
+        "Purveyor of Curiosities", "BUYBACK", "No more items left to purchase.",
+        "Helm", "50 Obols",
+        "EQUIPPED",
+        "STEEL AMULET", "Legendary Amulet", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button", "Buy",
+    };
+    var dp = LogWatcher.DiagnoseLines(purveyor);
+    Eq("VendorLeak: purveyor item parsed", 1, dp.Items.Count);
+    Eq("VendorLeak: gamble category word does not flip panel to Character", "Vendor", dp.Items[0].Panel);
+    Check("VendorLeak: purveyor hover is NOT equipped", !dp.Items[0].Equipped);
+    Eq("VendorLeak: purveyor hover classified VendorItem", "VendorItem", dp.Items[0].Context);
+
+    // (b) the gamble category 'Ring' is ALSO a char-sheet slot header — it must not hand the vendor
+    //     hover worn-gear credentials (the FromCharPanel hijack).
+    var gambleRing = new[] {
+        "Purveyor of Curiosities", "BUYBACK",
+        "Ring", "50 Obols",
+        "EQUIPPED",
+        "TRIUMPHANT RING", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button", "Buy",
+    };
+    var dr = LogWatcher.DiagnoseLines(gambleRing);
+    Eq("VendorLeak: gamble-Ring item parsed", 1, dr.Items.Count);
+    Check("VendorLeak: a header word voiced at a vendor does not classify as worn", !dr.Items[0].Equipped);
+    Eq("VendorLeak: hijacked-header hover classified VendorItem", "VendorItem", dr.Items[0].Context);
+
+    // (c) favorited bag item: the tail is Equip/…/Mark as Favorite — no "Mark as Junk" anywhere.
+    //     'Equip', 'Drop', 'Hide Comparison' and 'Mark as Favorite' are now demote tokens.
+    var favBag = new[] {
+        "EQUIPPED",
+        "CRIMSON HUNTER'S BOW", "Legendary Bow", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button",
+        "Equip", "Shift key", "Left mouse button", "Link", "Control key", "Left mouse button",
+        "Drop", "Shift key", "Hide Comparison", "Spacebar", "Mark as Favorite",
+    };
+    var df = LogWatcher.DiagnoseLines(favBag);
+    Eq("VendorLeak: favorited bag hover parsed", 1, df.Items.Count);
+    Check("VendorLeak: favorited bag hover demoted (Equip/Favorite are tokens now)", !df.Items[0].Equipped);
+
+    // (d) vendor sell tab: the bare 'Sell' action (verified standalone in the real log) demotes.
+    var sellTab = new[] {
+        "EQUIPPED",
+        "VIGOROUS BOOT BLADE", "Legendary Dagger", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button",
+        "Sell", "Shift key", "Left mouse button", "Link",
+    };
+    Check("VendorLeak: sell-tab hover demoted ('Sell' is a token now)",
+        !LogWatcher.DiagnoseLines(sellTab).Items[0].Equipped);
+
+    // (e) fail-safe default: a bare EQUIPPED voice line with NO panel, NO header and NO action tail is
+    //     NOT worn evidence — D4 voices it before most comparison-enabled bag/vendor hover names too.
+    var bare = new[] {
+        "EQUIPPED",
+        "LORD'S HELMET", "Legendary Helm", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button",
+        "EQUIPPED",   // tail lost — the next hover starts immediately (window closes at this boundary)
+        "ADROIT HELM", "Legendary Helm", "810 Item Power", "+90 Dexterity [80 - 120]",
+        "Right mouse button",
+    };
+    var db = LogWatcher.DiagnoseLines(bare);
+    Eq("VendorLeak: both bare-EQUIPPED hovers parsed", 2, db.Items.Count);
+    Check("VendorLeak: bare EQUIPPED alone no longer classifies as worn", db.Items.All(x => !x.Equipped));
+
+    // (f) …but a genuinely worn item keeps every rescue path: the Unequip tail wins even when the
+    //     panel says Inventory and a paper-doll label armed the header (the inventory-screen shape).
+    var invWorn = new[] {
+        "Inventory",
+        "Ring",
+        "EQUIPPED",
+        "FROSTBITTEN BAND", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button", "Unequip",
+    };
+    var dw = LogWatcher.DiagnoseLines(invWorn);
+    Check("VendorLeak: Unequip tail still classifies worn outside the char panel",
+        dw.Items.Count == 1 && dw.Items[0].Equipped);
+
+    // (g) word-boundary tokens: '…Chance to Restore Primary Resource' must not demote via 'store'
+    //     (a verified false demote of genuinely worn gear under the old substring matching).
+    var restoreSafe = new[] {
+        "Inventory",
+        "EQUIPPED",
+        "GUARDIAN SIGNET", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button",
+        "Lucky Hit: Up to a 5% Chance to Restore Primary Resource.",
+        "Unequip",
+    };
+    var dg = LogWatcher.DiagnoseLines(restoreSafe);
+    Check("VendorLeak: 'Restore' does not substring-match the Store token",
+        dg.Items.Count == 1 && dg.Items[0].Equipped);
+
+    // (h) chunk-safe lookahead: a hover whose action tail lands in the NEXT 500ms poll chunk must wait
+    //     for it instead of one-shot-defaulting to equipped (the probabilistic half of the leak).
+    var wA = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_chunk_test_does_not_exist.log"));
+    wA.FeedChunk(new[] {
+        "EQUIPPED", "STEEL AMULET", "Legendary Amulet", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button" });   // the chunk ends exactly at the end marker — tail not yet written
+    Eq("ChunkSafe: classification deferred at the chunk edge (nothing committed yet)", 0, wA.Build.Gear.Count);
+    wA.FeedChunk(new[] { "Sell", "Shift key", "Left mouse button", "Mark as Junk" });
+    Check("ChunkSafe: the next-chunk tail demotes to inventory", wA.Build.Inventory.Any(g => g.RawName == "STEEL AMULET"));
+    Eq("ChunkSafe: the vendor-sell hover never reaches gear", 0, wA.Build.Gear.Count);
+
+    // (i) the char-panel fast path needs no tail — a worn hover commits in its own chunk…
+    var wB = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_chunk_test_does_not_exist.log"));
+    wB.FeedChunk(new[] {
+        "Head", "EQUIPPED", "COWL OF THE NAMELESS", "Unique Helm", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Right mouse button" });
+    Check("ChunkSafe: char-panel hover classifies immediately (no tail needed)",
+        wB.Build.Gear.Any(g => g.RawName == "COWL OF THE NAMELESS"));
+    // …and a pending tail-less hover force-resolves (with the safe default) once the game goes quiet.
+    var wC = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_chunk_test_does_not_exist.log"));
+    wC.FeedChunk(new[] {
+        "EQUIPPED", "FROSTBITTEN LICH BLADE", "Legendary Sword", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Right mouse button" });
+    wC.FeedChunk(Array.Empty<string>());
+    wC.FeedChunk(Array.Empty<string>());
+    Eq("ChunkSafe: quiet-game force-resolution lands in inventory, not gear", 0, wC.Build.Gear.Count);
+    Check("ChunkSafe: force-resolved item is still visible in inventory",
+        wC.Build.Inventory.Any(g => g.RawName == "FROSTBITTEN LICH BLADE"));
+
+    // (j) self-healing gate: a later correctly-classified non-equipped sighting EVICTS the equipped
+    //     copy (the gate used to be a one-way ratchet — junked gear stayed on the paper doll forever).
+    var wD = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_chunk_test_does_not_exist.log"));
+    wD.FeedChunk(new[] {
+        "Head", "EQUIPPED", "ADROIT HELM", "Legendary Helm", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Right mouse button", "Unequip" });
+    Check("SelfHeal: helm starts on the paper doll", wD.Build.Gear.Any(g => g.RawName == "ADROIT HELM"));
+    wD.FeedChunk(new[] {
+        "EQUIPPED", "ADROIT HELM", "Legendary Helm", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Right mouse button", "Mark as Junk" });
+    Eq("SelfHeal: the junked re-sighting evicts the equipped copy", 0, wD.Build.Gear.Count);
+    Check("SelfHeal: the item moves to inventory instead", wD.Build.Inventory.Any(g => g.RawName == "ADROIT HELM"));
+
+    // (k) LatestPerSlot recency: the genuine item re-hovered LATER reclaims a 1-cap slot from an
+    //     alphabetically-earlier impostor at the same panel position (the 'Adventurer's vs Cowl' bug).
+    var lps = new List<Item> {
+        new Item { Name = "Adventurer's Helm", RawName = "ADVENTURER'S HELM", Slot = "helm", SlotPosition = 1, LastScannedTicks = 100 },
+        new Item { Name = "Cowl Of The Nameless", RawName = "COWL OF THE NAMELESS", Slot = "helm", SlotPosition = 1, LastScannedTicks = 200 },
+    };
+    var kept = LogWatcher.LatestPerSlot(lps);
+    Eq("Recency: 1-cap helm slot keeps exactly one item", 1, kept.Count);
+    Eq("Recency: the LATER scan wins, not the alphabetically-earlier name", "COWL OF THE NAMELESS", kept[0].RawName);
+
+    // stash 'Take' still classifies a stash hover (regression guard on the rewritten tail scan)
+    var stashTail = new[] {
+        "EQUIPPED",
+        "CRANEQUIN OF MALICE", "Legendary Crossbow", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button", "Take", "Shift key",
+    };
+    var dsT = LogWatcher.DiagnoseLines(stashTail);
+    Check("VendorLeak: 'Take' tail still classifies StashItem (not worn)",
+        dsT.Items.Count == 1 && !dsT.Items[0].Equipped && dsT.Items[0].Context == "StashItem");
 }
 
 // ---- report ----
