@@ -2515,6 +2515,33 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("CascRetry: exactly at the backoff -> retry", GameDataIcons.ShouldRetryCasc(t0 + backoff.Ticks, t0, backoff));
 }
 
+// ---- v0.39: stateful tooltip lines (durability / sell value / menu hints) stay out of PowerText ----
+// Item identity must be content-only: two captures of the SAME item differ only when the item differs.
+{
+    var statefulItem = GearParser.ParseTooltipLines(new[] {
+        "WORN KEEPSAKE", "Legendary Ring", "800 Item Power",
+        "+100 Dexterity [80 - 120]",
+        "Lucky Hit: Up to a 5% Chance to Execute Injured Non-Elites.",
+        "Durability: 37/100",
+        "Sell Value: 12,345 Gold",
+        "Armory Loadout",
+        "Mousewheel scroll down",
+        "Scroll Down",
+        "Requires Level 60" });
+    Check("Stateful: item parses", statefulItem != null);
+    Check("Stateful: durability/sell-value/menu lines dropped from PowerText",
+        statefulItem!.PowerText.All(p => !p.StartsWith("Durability") && !p.StartsWith("Sell Value")
+            && p != "Armory Loadout" && !p.StartsWith("Mousewheel") && p != "Scroll Down"));
+    Check("Stateful: genuine power prose survives",
+        statefulItem.PowerText.Any(p => p.Contains("Lucky Hit", StringComparison.OrdinalIgnoreCase)));
+    // the combined "Durability: N/100. Tempers: a/b" line still feeds the temper counters
+    var temperItem = GearParser.ParseTooltipLines(new[] {
+        "STURDY HELM", "Legendary Helm", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Durability: 100/100. Tempers: 5/5" });
+    Check("Stateful: combined durability+tempers line still parses tempers",
+        temperItem?.TemperUsed == 5 && temperItem?.TemperMax == 5);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

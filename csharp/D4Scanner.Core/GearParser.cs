@@ -93,6 +93,10 @@ public class GearParser
     // count; the later (T) is a tier threshold. Member-name lines (e.g. "Phoba of Mastery") carry no (n/m) and
     // won't match, so this selects only the real header. Captures: 1=name, 2=active, 3=total.
     static readonly Regex ReSetName = new(@"^(.+?)\s*\((\d+)/(\d+)\)\.\s*\(\d+\)\s*Set:", RegexOptions.None);
+    // Stateful tooltip lines — wear/economy/menu state that varies between captures of the SAME item
+    // (durability drops in combat, sell value tracks gold, scroll hints depend on tooltip height).
+    // Dropped before the PowerText catch-all so item identity is content-only.
+    static readonly Regex ReStatefulInfo = new(@"^(Durability:|Sell Value:|Armory Loadout$|Mousewheel scroll|Scroll (Down|Up)$)", RegexOptions.IgnoreCase);
 
     public static string Clean(string s) => CleanWithTime(s, out _);
 
@@ -306,6 +310,10 @@ public class GearParser
             }
             var af = ParseAffix(ln);
             if (af != null) { item.Affixes.Add(af); continue; }
+            // Stateful tooltip lines (wear/economy state, menu hints) are NOT item identity — keep them
+            // out of PowerText so two captures of the same item differ only when the ITEM differs.
+            // ("Durability: N/100. Tempers: a/b" never reaches here — ReTemper consumed it above.)
+            if (ReStatefulInfo.IsMatch(ln)) continue;
             if (ln.Any(char.IsLower) && ln.Length > 8) item.PowerText.Add(ln);
         }
         item.IsComparison = afterPropertiesLost;   // bag/stash comparison — never worn
