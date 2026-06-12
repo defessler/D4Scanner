@@ -81,8 +81,20 @@ public static class GameDataIcons
     static D4RootHandler? _root;
     static Dictionary<string, int>? _atlasSno;   // atlas texture name -> snoId
     static volatile int _cascState;              // 0 unstarted, 1 (unused), 2 ready, 3 failed
+    static long _cascFailedAtUtcTicks;           // UTC tick of the most recent failed open (0 = never)
     static readonly object _cascGate = new();
     static readonly object _readGate = new();    // serialize CASC reads (not guaranteed thread-safe)
+
+    /// <summary>Minimum wait between CASC open retries. The open usually fails because Diablo IV itself
+    /// is running and holds the storage — the NORMAL case for this app, which runs alongside the game —
+    /// so a failure must never latch for the whole session (it used to: one bad open at startup meant
+    /// silhouettes everywhere until the app was restarted, even long after the game closed).</summary>
+    public static TimeSpan CascRetryBackoff { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Pure retry gate (extracted so the backoff arithmetic is headlessly testable):
+    /// retry when there was no recorded failure, or the backoff has fully elapsed since it.</summary>
+    public static bool ShouldRetryCasc(long nowUtcTicks, long failedAtUtcTicks, TimeSpan backoff) =>
+        failedAtUtcTicks == 0 || nowUtcTicks - failedAtUtcTicks >= backoff.Ticks;
 
     // single dedicated extraction worker: the local CASC is opened once and icons are decoded serially,
     // so a screen full of slots can't spawn dozens of threads that all block on the one-time open.
@@ -112,7 +124,14 @@ public static class GameDataIcons
         if (!_handleAtlas.ContainsKey((uint)handle)) return null;   // not an item icon we have a mapping for
         var png = Path.Combine(CacheRoot, handle + ".png");
         if (File.Exists(png)) return png;
-        if (_cascState == 3) return null;                            // no game / open failed earlier
+        if (_cascState == 3)
+        {
+            // Earlier open failed — typically Diablo IV holding the storage. Re-probe after the
+            // backoff (the actual open runs on the background worker, never the caller's thread).
+            if (!ShouldRetryCasc(DateTime.UtcNow.Ticks, Interlocked.Read(ref _cascFailedAtUtcTicks), CascRetryBackoff))
+                return null;
+            lock (_cascGate) { if (_cascState == 3) _cascState = 0; }
+        }
         Enqueue((uint)handle);
         return null;
     }
@@ -127,7 +146,16 @@ public static class GameDataIcons
 
     static void Worker()
     {
-        if (!EnsureCasc()) return;   // no game -> subsequent Get() calls short-circuit on _cascState==3
+        if (!EnsureCasc())
+        {
+            // Open failed: don't strand the queued handles or the worker slot. Clearing the de-dup set
+            // and freeing _workerStarted lets the retry path (Get → Enqueue after the backoff) spin up
+            // a fresh worker; leaving them latched meant no icon could EVER extract again this session.
+            lock (_qGate) { _queued.Clear(); }
+            while (_queue.TryTake(out _)) { }
+            Interlocked.Exchange(ref _workerStarted, 0);
+            return;
+        }
         foreach (var handle in _queue.GetConsumingEnumerable())
         {
             try
@@ -172,13 +200,15 @@ public static class GameDataIcons
             try
             {
                 var dir = GameDir ?? ProbeGameDir();
-                if (dir == null || !File.Exists(Path.Combine(dir, ".build.info"))) { _cascState = 3; return false; }
+                if (dir == null || !File.Exists(Path.Combine(dir, ".build.info")))
+                { Interlocked.Exchange(ref _cascFailedAtUtcTicks, DateTime.UtcNow.Ticks); _cascState = 3; return false; }
                 CASCConfig.ThrowOnFileNotFound = false;
                 CASCConfig.ValidateData = false;
                 var cdn = FindCdnConfigKey(dir);
                 if (cdn != null) CASCConfig.CDNConfigKeyOverride = cdn;
                 var casc = CASCHandler.OpenLocalStorage(dir, "fenris");
-                if (casc.Root is not D4RootHandler root || root.TocParser == null) { _cascState = 3; return false; }
+                if (casc.Root is not D4RootHandler root || root.TocParser == null)
+                { Interlocked.Exchange(ref _cascFailedAtUtcTicks, DateTime.UtcNow.Ticks); _cascState = 3; return false; }
                 var sno = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 foreach (var kv in root.TocParser.SnoData)
                     if (kv.Value.GroupId == SNOGroupD4.Texture && kv.Value.Name.StartsWith("2DInventory", StringComparison.OrdinalIgnoreCase))
@@ -186,7 +216,7 @@ public static class GameDataIcons
                 _root = root; _atlasSno = sno; _cascState = 2;
                 return true;
             }
-            catch { _cascState = 3; return false; }
+            catch { Interlocked.Exchange(ref _cascFailedAtUtcTicks, DateTime.UtcNow.Ticks); _cascState = 3; return false; }
         }
     }
 

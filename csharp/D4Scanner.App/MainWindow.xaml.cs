@@ -1090,6 +1090,7 @@ public partial class MainWindow : Window
         // render-test seams (env-gated, no effect in normal use): exercise states the harness can't click to
         var seed = System.Environment.GetEnvironmentVariable("D4_RENDER_STATE");
         if (seed == "pin") { _pinned.Add("gear:0"); _pinned.Add("gear:1"); }
+        else if (seed == "compare") { _pinned.Add("gear:0"); _pinned.Add("gear:1"); _detailView = "compare"; }
         else if (seed == "focus") _focusKey = "gear:0";
         else if (seed == "steps") _stepsView = true;
         else if (seed == "raw") _rawView = true;
@@ -3193,12 +3194,23 @@ public partial class MainWindow : Window
     // one Do-Next row: verb chip + text + detail; click to jump to that slot/category (shared by DO NEXT + Next Steps)
     FrameworkElement StepRow(GuideStep a)
     {
-        var row = new DockPanel { Margin = new Thickness(0, 1, 0, 1), Background = System.Windows.Media.Brushes.Transparent };
-        var vb = VerbChip(a.Verb, 9.5, new Thickness(7, 2, 7, 2), 58); vb.Margin = new Thickness(0, 0, 10, 0);
-        DockPanel.SetDock(vb, Dock.Left); row.Children.Add(vb);
-        if (a.Detail != null) { var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(d, Dock.Right); row.Children.Add(d); }
+        // Grid with star columns, NOT a DockPanel: with the detail docked Right it was measured before
+        // the fill child, so a long detail ("have: El'druin, Sword Of Justice, … — equip it") consumed
+        // nearly the whole row and squeezed the step text into a sliver that wrapped letter-by-letter.
+        // Stars give the text a guaranteed share and let BOTH sides wrap.
+        var row = new Grid { Margin = new Thickness(0, 1, 0, 1), Background = System.Windows.Media.Brushes.Transparent };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var vb = VerbChip(a.Verb, 9.5, new Thickness(7, 2, 7, 2), 58); vb.Margin = new Thickness(0, 0, 10, 0); vb.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(vb, 0); row.Children.Add(vb);
         var tx = TB(a.Text, Ink, 12.5, false); tx.VerticalAlignment = VerticalAlignment.Center; tx.TextWrapping = TextWrapping.Wrap;
-        row.Children.Add(tx);
+        Grid.SetColumn(tx, 1); row.Children.Add(tx);
+        if (a.Detail != null)
+        {
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+            var d = TB(a.Detail, Soft, 11.5, false, new Thickness(10, 0, 0, 0)); d.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(d, 2); row.Children.Add(d);
+        }
         if (a.FocusKey is string fk)
         {
             row.Cursor = System.Windows.Input.Cursors.Hand;
@@ -3690,13 +3702,19 @@ public partial class MainWindow : Window
     {
         if (s.Gear == null) return;
         var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
+        // EXPLICIT width, budgeted to the window (not Min/Max bounds): a Popup measures its child with
+        // INFINITE space, where the card's star columns size to their content — long affix rows pushed
+        // the card past the window edge and the right panel rendered clipped mid-word. A fixed width
+        // forces the two panels to split it evenly and their text to wrap; small windows get a
+        // proportionally narrower card instead of a cut-off one.
+        double cardW = Math.Clamp(ActualWidth - 80, 480, 760);
         // adaptive placement: slots near the right edge open their card to the LEFT so it doesn't clip off-screen
         if (target is FrameworkElement fe)
         {
             try
             {
                 var pt = fe.TransformToAncestor(this).Transform(new Point(0, 0));
-                bool nearRight = pt.X + fe.ActualWidth + 680 > ActualWidth;   // ~680 = compare-card width budget
+                bool nearRight = pt.X + fe.ActualWidth + cardW > ActualWidth;
                 _hoverPopup.Placement = nearRight
                     ? System.Windows.Controls.Primitives.PlacementMode.Left
                     : System.Windows.Controls.Primitives.PlacementMode.Right;
@@ -3705,9 +3723,10 @@ public partial class MainWindow : Window
         }
         _hoverPopup.PlacementTarget = target;
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
-        // the 2 star columns need a real width or they collapse to a thin, tall strip in the free-floating popup
-        cc.MinWidth = 640; cc.MaxWidth = 820;
-        _hoverPopup.Child = cc;   // no outer wrapper — each panel has its own opaque background
+        cc.Width = cardW;
+        // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
+        _hoverPopup.Child = new ScrollViewer
+        { Content = cc, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Max(300, ActualHeight - 60) };
         _hoverPopup.IsOpen = true;
     }
 
