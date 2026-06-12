@@ -2151,6 +2151,62 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     try { Directory.Delete(tmpDir, recursive: true); } catch { }
 }
 
+// ---- v0.36: extras as rows, harvested max target, DO NEXT presence notes ----
+{
+    // ExtraRows: off-build affixes become rows with Status="extra", carrying value/range/IsGreater
+    var extras = DiffEngine.ExtraRows(new[] {
+        new Affix { Text = "Thorns", Value = 500, Min = 200, Max = 600 },
+        new Affix { Text = "Lucky Hit Chance", Value = 12, IsPercent = true, IsGreater = true },
+        new Affix { Text = "50 (+30/25) Quality" } });   // quality meta line is skipped
+    Eq("ExtraRows: skips the quality meta line", 2, extras.Count);
+    Check("ExtraRows: status is 'extra'", extras.All(r => r.Status == "extra"));
+    Check("ExtraRows: carries value + range + GA", extras[0].ValueNum == 500 && extras[0].MaxNum == 600
+        && extras.First(r => r.Label.Contains("Lucky")).IsGreater);
+
+    // Diff populates Group.ExtraAffixes with the equipped item's off-build affixes (as Affix objects)
+    var exTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };
+    var exLive = new LiveBuild { Gear = { new Item { Name = "H", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1500 }, new Affix { Text = "Thorns", Value = 400, Max = 600 } } } } };
+    var exGroup = DiffEngine.Diff(exTarget, exLive, 50).Categories.First(c => c.Id == "gear").Groups[0];
+    Check("Diff: ExtraAffixes holds the off-build Thorns affix", exGroup.ExtraAffixes.Any(a => a.Text == "Thorns" && a.Max == 600));
+    Check("Diff: ExtraAffixes excludes the build-matched affix", !exGroup.ExtraAffixes.Any(a => a.Text.Contains("Maximum Life")));
+
+    // AffixAggregate harvests the max-roll ceiling from ANY owned copy — even when the equipped piece had no range
+    var aggTarget = new TargetBuild { Gear = {
+        new TargetGear { Slot = "Ring1", Affixes = { new TargetAffix { Name = "All Damage Multiplier" } } },
+        new TargetGear { Slot = "Ring2", Affixes = { new TargetAffix { Name = "All Damage Multiplier" } } } } };
+    var equippedNoRange = new Item { Name = "Band", Slot = "ring", Affixes = { new Affix { Text = "All Damage Multiplier", Value = 13, IsMultiplier = true } } };
+    var aggLive = new LiveBuild { Gear = { equippedNoRange } };
+    var aggCat = DiffEngine.Diff(aggTarget, aggLive, 50).Categories.First(c => c.Id == "gear");
+    var ownedCopy = new Item { Name = "Better Band", Slot = "ring", Affixes = { new Affix { Text = "All Damage Multiplier", Value = 16, Min = 10, Max = 18, IsMultiplier = true } } };
+    var harvested = AffixAggregate.ForGear(aggCat, new[] { equippedNoRange, ownedCopy })[0];
+    Check("Harvest: a max from an inventory copy gives a real target", harvested.WantsKnown);
+    Eq("Harvest: target = harvested max (18) × pieces (2)", 36.0, harvested.WantsTotal);
+    // with NO copy carrying a range, the best VALUE seen becomes the ceiling
+    var valueOnly = AffixAggregate.ForGear(aggCat, new[] { equippedNoRange })[0];
+    Eq("Harvest: value-only fallback ceiling = best value (13) × pieces (2)", 26.0, valueOnly.WantsTotal);
+
+    // BuildGuide presence notes: aspect on a DIFFERENT owned piece, and a rune socketed elsewhere
+    var bgTarget = new TargetBuild {
+        Gear = { new TargetGear { Slot = "Helm", Sockets = { "Rune: Bac" }, Affixes = { new TargetAffix { Name = "Maximum Life" } } } },
+        Aspects = { "Aspect of Disobedience" } };
+    var bgLive = new LiveBuild {
+        Gear = { new Item { Name = "Bare Helm", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } } },
+        Inventory = {
+            new Item { Name = "Chest of Disobedience", Slot = "chest", Rarity = "Legendary" },   // carries the wanted aspect by name
+            new Item { Name = "Old Boots", Slot = "boots", SocketedRunes = { "Bac" } } } };       // has the wanted rune socketed
+    var bgRep = DiffEngine.Diff(bgTarget, bgLive, 50);
+    var bgSteps = BuildGuide.Steps(bgRep, bgLive);
+    var imprint = bgSteps.FirstOrDefault(s => s.Verb == "IMPRINT");
+    Check("BuildGuide: IMPRINT notes the aspect exists on another piece", imprint != null && imprint.Detail!.Contains("Chest of Disobedience"));
+    var socket = bgSteps.FirstOrDefault(s => s.Verb == "SOCKET");
+    Check("BuildGuide: a SOCKET step is emitted for the unfilled wanted socket", socket != null && socket.Text.Contains("Bac"));
+    Check("BuildGuide: the SOCKET step notes the rune is socketed elsewhere", socket!.Detail!.Contains("Old Boots"));
+    // back-compat: no live build → plain Occultist detail, no presence note
+    var plain = BuildGuide.Steps(bgRep).FirstOrDefault(s => s.Verb == "IMPRINT");
+    Check("BuildGuide: without a live build the IMPRINT detail stays plain", plain != null && plain.Detail == "at the Occultist");
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);

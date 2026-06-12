@@ -168,6 +168,17 @@ public static class DiffEngine
             RollPct = RollPct(a), IsGreater = a.IsGreater,
         }).ToList();
 
+    /// <summary>Display rows for an item's OFF-BUILD (extra) affixes — same shape as a met affix row (value,
+    /// roll quality, ★) but Status="extra" so the UI marks them as not part of the build. Skips the quality line.</summary>
+    public static List<ReqItem> ExtraRows(IEnumerable<Affix> extras) =>
+        extras.Where(a => !Regex.IsMatch(a.Text, "quality", RegexOptions.IgnoreCase))
+            .Select(a => new ReqItem
+            {
+                Label = a.Text, Done = false, Status = "extra", Source = "tts",
+                Val = FmtVal(a), ValueNum = a.Value, MaxNum = a.Max, IsMultiplier = a.IsMultiplier, IsPercent = a.IsPercent,
+                RollPct = RollPct(a), IsGreater = a.IsGreater,
+            }).ToList();
+
     /// <summary>How many of a target slot's affixes are PRESENT on the item at ANY value (no roll/threshold
     /// gate; each item affix matched once). The primary upgrade signal: having the right affix at a low roll
     /// beats not having it at all — rolls can be masterworked up, missing affixes can only be enchanted in
@@ -415,9 +426,10 @@ public static class DiffEngine
                 var grp = MakeGroup(g.Label ?? g.Slot, items);
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
-                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, IsAncestral = it.IsAncestral, Aspect = it.Aspect } }
+                    ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, IsAncestral = it.IsAncestral, Aspect = it.Aspect, PowerText = it.PowerText } }
                     : new();
                 grp.Extras = extras;
+                grp.ExtraAffixes = it != null ? UnmatchedAffixes(g, it) : new();   // off-build affixes as objects (bars/★)
                 grp.WantAspect = g.Aspect;
                 grp.WantSockets = g.Sockets;
                 // Socket HAVE/NEED — only when the target actually wants sockets here (zero-risk for non-socket slots).

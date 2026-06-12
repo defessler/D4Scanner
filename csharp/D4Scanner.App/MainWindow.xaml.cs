@@ -1063,7 +1063,8 @@ public partial class MainWindow : Window
 
     // D4-style markers: filled diamond when present, hollow diamond when missing (like an empty socket)
     (string glyph, Brush col) Look(string status) =>
-        status == "met" ? ("◆", Green) : status == "under" ? ("◆", Amber) : ("◇", Miss);
+        status == "met" ? ("◆", Green) : status == "under" ? ("◆", Amber)
+        : status == "extra" ? ("◇", Faint) : ("◇", Miss);
 
     static string ShortName(string id) => id switch
     {
@@ -3033,7 +3034,7 @@ public partial class MainWindow : Window
     // (equip a better item you already own). Null when the build is complete.
     UIElement? GuidancePanel(DiffReport r)
     {
-        var acts = BuildGuide.Steps(r);
+        var acts = BuildGuide.Steps(r, EffectiveLive());
         if (acts.Count == 0)
         {
             // closed the loop — guide all the way to the finish line
@@ -3208,7 +3209,7 @@ public partial class MainWindow : Window
     // the full Next-Steps screen: searchable, filterable by effort tier, paged 10-at-a-time
     UIElement NextStepsView(DiffReport r)
     {
-        var all = BuildGuide.Steps(r);
+        var all = BuildGuide.Steps(r, EffectiveLive());
         var root = new StackPanel();
 
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
@@ -3740,7 +3741,7 @@ public partial class MainWindow : Window
             var rows = new StackPanel();
             if (tg != null)
             {
-                var mine = DiffEngine.EvalSlot(tg, item, gate, out var extras);
+                var mine = DiffEngine.EvalSlot(tg, item, gate, out _);
                 var theirs = DiffEngine.EvalSlot(tg, other, gate, out _);
                 for (int i = 0; i < mine.Count; i++)
                 {
@@ -3748,28 +3749,23 @@ public partial class MainWindow : Window
                         ? mine[i].ValueNum - theirs[i].ValueNum : null;
                     rows.Children.Add(EquippedRow(mine[i], ghostPct: theirs[i].RollPct, delta: delta, deltaPercent: mine[i].IsPercent));
                 }
-                if (extras.Count > 0)
-                {
-                    rows.Children.Add(Divider(RarityColor(item?.Rarity), 0x44));
-                    rows.Children.Add(TB("also: " + string.Join("   ·   ", extras), Soft, 11, false));
-                }
+                // the item's OFF-BUILD affixes, rendered like the build rows but flagged NOT IN BUILD
+                if (item != null) AddNotInBuildRows(rows, DiffEngine.UnmatchedAffixes(tg, item), item.Rarity);
             }
             else
             {
-                // no affix targets for this slot (e.g. a unique-only slot) — plain affix list with deltas
-                foreach (var r in ItemCompare.Rows(item ?? new Item(), other))
+                // no affix targets for this slot (e.g. a unique) — show the item's OWN affixes with bars + ★,
+                // and a numeric delta vs the other item's same affix
+                var self = DiffEngine.SelfRows(item ?? new Item());
+                var otherRows = other != null ? DiffEngine.SelfRows(other) : new();
+                foreach (var sr in self)
                 {
-                    if (r.CandidateText == "—") continue;
-                    var line = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
-                    line.Children.Add(TB(r.CandidateText + "  ", Ink, 13, true));
-                    line.Children.Add(TB(r.Label, Soft, 13, false));
-                    if (r.Delta is double d && Math.Abs(d) > 0.0001)
-                        line.Children.Add(TB((d > 0 ? "   ▲ +" : "   ▼ ") + Math.Abs(d).ToString("#,0.##") + (r.DeltaIsPercent ? "%" : ""),
-                            d > 0 ? Green : Crimson, 11.5, true));
-                    rows.Children.Add(line);
+                    var m = otherRows.FirstOrDefault(o => DiffEngine.PhraseMatch(sr.Label, o.Label));
+                    double? delta = sr.ValueNum != null && m?.ValueNum != null ? sr.ValueNum - m.ValueNum : null;
+                    rows.Children.Add(EquippedRow(sr, ghostPct: m?.RollPct, delta: delta, deltaPercent: sr.IsPercent));
                 }
             }
-            if (!string.IsNullOrEmpty(item?.Aspect)) rows.Children.Add(AspectBox(item!.Aspect!));
+            if (PowerBoxFor(item) is UIElement pb) rows.Children.Add(pb);
             return rows;
         }
 
@@ -3927,8 +3923,11 @@ public partial class MainWindow : Window
         {
             ItemHeader(sp, it);
             foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
-            if (g.Extras.Count > 0)
-                sp.Children.Add(TB("also on your item:  " + string.Join("   ·   ", g.Extras), Soft, 11.5, false, new Thickness(0, 12, 0, 0)));
+            AddNotInBuildRows(sp, g.ExtraAffixes, it?.Rarity);
+            // a unique's power (or a legendary's aspect) so its substance shows in the list view too
+            if (it?.PowerText is { Count: > 0 } && it.IsUnique)
+                sp.Children.Add(AspectBox(string.Join("   ", it.PowerText), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
+            else if (!string.IsNullOrEmpty(it?.Aspect)) sp.Children.Add(AspectBox(it!.Aspect!));
         }
         else
         {
@@ -4084,11 +4083,11 @@ public partial class MainWindow : Window
     }
 
     // the item's legendary aspect / special ability, shown in a D4-style orange box
-    UIElement AspectBox(string aspect)
+    UIElement AspectBox(string aspect, string title = "ASPECT / POWER", Brush? textCol = null)
     {
         var inner = new StackPanel();
-        inner.Children.Add(TB("ASPECT / POWER", Faint, 9.5, true, new Thickness(0, 0, 0, 2)));
-        var t = TB(aspect, RLegend, 12.5, false); t.TextWrapping = TextWrapping.Wrap;
+        inner.Children.Add(TB(title, Faint, 9.5, true, new Thickness(0, 0, 0, 2)));
+        var t = TB(aspect, textCol ?? RLegend, 12.5, false); t.TextWrapping = TextWrapping.Wrap;
         inner.Children.Add(t);
         return new Border
         {
@@ -4097,6 +4096,26 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
             Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 9, 0, 0), Child = inner,
         };
+    }
+
+    // off-build affixes rendered like the build-affix rows (bar + value + ★) under a "NOT IN BUILD" caption
+    void AddNotInBuildRows(StackPanel target, List<Affix> extras, string? rarity)
+    {
+        var rows = DiffEngine.ExtraRows(extras);
+        if (rows.Count == 0) return;
+        target.Children.Add(Divider(RarityColor(rarity), 0x44));
+        target.Children.Add(TBs("NOT IN BUILD", Faint, 9.5, true, new Thickness(0, 4, 0, 1)));
+        foreach (var er in rows) target.Children.Add(EquippedRow(er));
+    }
+
+    // a unique/legendary item's power paragraph — shown beside its affixes so the unique's substance is visible
+    UIElement? PowerBoxFor(Item? it)
+    {
+        if (it == null) return null;
+        if (it.PowerText is { Count: > 0 } pt && it.IsUnique)
+            return AspectBox(string.Join("   ", pt), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique);
+        if (!string.IsNullOrEmpty(it.Aspect)) return AspectBox(it.Aspect!);
+        return null;
     }
 
     static string Sub(GearLiveItem it) =>
@@ -4126,22 +4145,20 @@ public partial class MainWindow : Window
         if (g.WantSockets.Count > 0)
             eq.Children.Add(TB("Sockets:  " + (g.SocketStatus ?? $"0/{g.WantSockets.Count} filled"),
                 g.SocketsDone ? Green : Amber, 11.5, false, new Thickness(0, 6, 0, 0)));
-        if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
-        if (g.Extras.Count > 0)
-        {
-            eq.Children.Add(Divider(RarityColor(it?.Rarity), 0x44));
-            eq.Children.Add(TB("also: " + string.Join("   ·   ", g.Extras), Soft, 11, false));
-        }
-        // For compare-card EQUIPPED panel: use name-only resolution so we show the player's actual
-        // item art, not the build's template icon (which would be wrong for a different weapon type).
-        // Unique items already matched above via EquippedFor, so just pass the live item name here.
-        var eqIconId  = (string?)null;
-        var eqIconImg = (long?)null;
+        // the equipped item's OFF-BUILD affixes, rendered like the build rows but flagged NOT IN BUILD
+        AddNotInBuildRows(eq, g.ExtraAffixes, it?.Rarity);
+        // the item's unique power (or legendary aspect) — so a unique's substance is always visible
+        if (it?.PowerText is { Count: > 0 } && it.IsUnique)
+            eq.Children.Add(AspectBox(string.Join("   ", it.PowerText), "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
+        else if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
+        // EQUIPPED panel art: resolve the player's actual item by NAME (real game art, not the build template)
+        var liveIt = it != null ? EffectiveLive().Gear.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name)) : null;
+        long? eqIconImg = it != null ? BaseIconIndex.HandleFor(it.Name, liveIt?.ItemType, liveIt?.Slot) : null;
         var left = TooltipPanel("EQUIPPED",
             it != null ? it.Name.ToUpperInvariant() : "— EMPTY SLOT —",
             it != null ? RarityBrush(it.Rarity) : Miss,
             it != null ? Sub(it) : "nothing scanned in this slot yet",
-            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label), eqIconId, eqIconImg);
+            RarityColor(it?.Rarity), eq, it?.Name, SlotKey(label), null, eqIconImg);
 
         // BUILD WANTS (right): the wanted item + wanted affixes/thresholds.
         // Only show a specific unique when this is a synthesised unique section (uni:*).
@@ -4158,15 +4175,15 @@ public partial class MainWindow : Window
         // unique sections carry the EQUIPPED item's own affixes in g.Items (SelfRows) — those are details
         // of what you have, not requirements; the build's "want" for a unique is the unique itself.
         if (isUniqueSection)
-            wp.Children.Add(TB(wantUnique != null ? "the unique itself — its affix set is fixed by the item"
+            wp.Children.Add(TB(wantUnique != null ? "its secondary affixes roll per copy — compare your roll on the left; chase a better copy from its Lair Boss"
                                                   : "any unique that fits this slot", Soft, 11.5, false));
         else
             foreach (var i in g.Items) wp.Children.Add(WantedRow(i));
         if (!string.IsNullOrEmpty(g.WantAspect)) wp.Children.Add(AspectBox(g.WantAspect!));
         if (g.WantSockets.Count > 0) wp.Children.Add(SocketsBox(g.WantSockets));
-        // Use the unique's real icon when a specific unique is targeted; silhouette when it's "Any <slot>".
-        var wantIconId  = wantUnique?.ItemId;
-        var wantIconImg = wantUnique?.Image;
+        // Real icon: the unique's own art when targeted, else the build's gear-slot template (id/image).
+        var wantIconId  = wantUnique?.ItemId ?? tg?.ItemId;
+        var wantIconImg = wantUnique?.Image ?? tg?.Image;
         var right = TooltipPanel("BUILD WANTS",
             wantUnique != null ? wantUnique.Name.ToUpperInvariant() : "ANY " + label.ToUpperInvariant(),
             wbr,
@@ -4381,7 +4398,7 @@ public partial class MainWindow : Window
                 // OVERALL view: aggregate every affix ACROSS all slots into one row per distinct affix, so the
                 // panel reads as overall progress ("Maximum Life  3/4 pieces  ·  have +3,200 / wants +6,000")
                 // rather than a slot-by-slot breakdown. The roll-up lives in Core (AffixAggregate) for testing.
-                foreach (var p in AffixAggregate.ForGear(c))
+                foreach (var p in AffixAggregate.ForGear(c, EffectiveLive().Gear.Concat(EffectiveLive().Inventory)))
                     sp.Children.Add(AggregateRow(p));
                 // sockets / runes: a roll-up header (N/M slots filled + bar) then one scannable row PER slot
                 // showing the slot, what the build wants socketed there, and whether it's filled
@@ -4575,10 +4592,11 @@ public partial class MainWindow : Window
         var col = done ? Green : Amber;
         var row = ProgressRowGrid();
         var mark = TB(done ? "◆" : "◇", col, 12, true);
-        mark.VerticalAlignment = VerticalAlignment.Center; mark.Margin = new Thickness(14, 0, 0, 0);
+        mark.VerticalAlignment = VerticalAlignment.Center;   // stays inside column 0 (no margin → no bleed into the label)
         Grid.SetColumn(mark, 0); row.Children.Add(mark);
 
-        var lblSp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        // indent the LABEL (not the mark) so the row reads as a sub-item without overlapping the marker
+        var lblSp = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) };
         lblSp.Children.Add(TB(g.Name, Ink, 12, false));
         var wl = TB(CleanSockets(g.WantSockets), B("#7FA8DC"), 11, false); wl.TextWrapping = TextWrapping.Wrap;
         lblSp.Children.Add(wl);

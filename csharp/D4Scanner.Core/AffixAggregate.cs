@@ -41,8 +41,11 @@ public sealed class AffixProgress
 public static class AffixAggregate
 {
     /// <summary>Roll up a gear category's per-slot affix <see cref="ReqItem"/>s into one
-    /// <see cref="AffixProgress"/> per distinct affix, ordered by how many slots want it (desc) then name.</summary>
-    public static List<AffixProgress> ForGear(Category gear)
+    /// <see cref="AffixProgress"/> per distinct affix, ordered by how many slots want it (desc) then name.
+    /// When <paramref name="owned"/> is supplied, the max-roll ceiling is harvested from ANY owned copy of the
+    /// affix (best captured range max, else the best value seen) — so an affix whose equipped piece voiced no
+    /// range still gets a real "perfect" target from another copy in the bags or on another character.</summary>
+    public static List<AffixProgress> ForGear(Category gear, IEnumerable<Item>? owned = null)
     {
         var by = new Dictionary<string, AffixProgress>(StringComparer.OrdinalIgnoreCase);
         var order = new List<string>();
@@ -54,6 +57,15 @@ public static class AffixAggregate
                 if (!by.TryGetValue(key, out var p)) { p = new AffixProgress { Name = key }; by[key] = p; order.Add(key); }
                 Accumulate(p, i);
             }
+        // harvest a max-roll ceiling from any owned copy of each affix (range max preferred, else best value)
+        if (owned != null)
+        {
+            var allAffixes = owned.SelectMany(it => it.Affixes ?? new()).ToList();
+            foreach (var p in by.Values)
+                foreach (var a in allAffixes)
+                    if (DiffEngine.PhraseMatch(p.Name, a.Text))
+                        p.MaxRoll = Math.Max(p.MaxRoll, a.Max ?? a.Value ?? 0);
+        }
         foreach (var key in order) Finish(by[key]);
         return order
             .OrderByDescending(k => by[k].TargetPieces)

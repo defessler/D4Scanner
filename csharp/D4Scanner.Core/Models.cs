@@ -307,6 +307,7 @@ public class GearLiveItem
     public bool IsUnique { get; set; }
     public bool IsAncestral { get; set; }
     public string? Aspect { get; set; }   // the item's legendary/unique power, if captured
+    public List<string> PowerText { get; set; } = new();   // unique/legendary power paragraph(s) from the tooltip
 }
 
 public class Group
@@ -318,7 +319,8 @@ public class Group
     public int Under { get; set; }            // matched but under-rolled
     public string? Kind { get; set; }                 // "gear" => value layout
     public List<GearLiveItem> LiveItems { get; set; } = new();
-    public List<string> Extras { get; set; } = new();
+    public List<string> Extras { get; set; } = new();                  // off-build affix lines as display strings (legacy/markdown)
+    public List<Affix> ExtraAffixes { get; set; } = new();             // …same, as Affix objects (value/range/IsGreater preserved)
     public string? WantAspect { get; set; }           // aspect the build wants in this slot
     public List<string> WantSockets { get; set; } = new();   // gems/runes the build wants socketed here
     public List<string> UpgradeItems { get; set; } = new();  // non-equipped items that beat the equipped one
