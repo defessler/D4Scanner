@@ -174,6 +174,14 @@ amber accent** — do not add warm brown or heavy gold fills to large areas.
   attached` marker so a prior session's loadout doesn't linger on the HAVE side after a relaunch.
 - `LatestPerSlot` deduplicates by `(name, SlotPosition)` for character-panel items and by
   `name` only for bag hovers. Multi-ring / multi-weapon slots require `SlotPosition > 0`.
+  Same-position ties break by recency (LogTimeUtc/LastScannedTicks), never alphabetically.
+- `ClassifyContext` is fail-safe (v0.38): a bare standalone `EQUIPPED` voice line is NOT worn
+  evidence — D4 voices it before most bag/stash/vendor hover names too. Worn needs a slot header
+  with a Character/unknown panel, the Character panel itself, or an `Unequip` action tail. Items
+  parsed at a poll-chunk edge wait in `LogWatcher._pending` until their action tail arrives (~2
+  quiet polls force the safe default). Bare item-type words (Helm/Ring/Boots/…) are deliberately
+  NOT `PanelMarkers` — the Purveyor's gamble categories voice exactly those words, which used to
+  flip the panel Vendor→Character and stamp vendor hovers as worn (the v0.37 vendor-gear leak).
 - `StartWatching()` is idempotent — it disposes and recreates all watchers. Re-call it
   when any capture setting changes (same pattern as `PickLog()`).
 - The D3D/WGC capture path requires `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` in

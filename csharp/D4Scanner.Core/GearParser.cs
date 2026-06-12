@@ -381,6 +381,7 @@ public class GearParser
     List<string> _body = new();
     bool _equip, _blockEquip;
     bool _seenSlotHeader, _blockFromCharPanel;
+    int _slotHeaderAge;           // lines fed since the header armed — expires stray labels (see Feed)
     string? _currentSlotHeader;   // most recent character-panel slot header
     int _blockSlotPosition;       // 1-based position within a multi-slot category (rings, weapons)
     DateTimeOffset? _lastLogTime; // '[ISO]' time of the most recently fed line — the block's hover time
@@ -398,6 +399,15 @@ public class GearParser
     /// <summary>Reset slot-position counters so re-opening the character panel starts fresh.
     /// Without this, the same weapon can accumulate position 1, 2, 3 … across panel opens.</summary>
     public void ResetSlotPositions() => _slotPositionCounts.Clear();
+
+    /// <summary>True when a cleaned line starts a NEW tooltip block or context (EQUIPPED marker, slot
+    /// header, ALL-CAPS item name, session marker). The watcher's post-end-marker lookahead stops here:
+    /// the previous item's action tail has ended, so no further action verb can belong to that item.</summary>
+    internal static bool IsBlockBoundary(string cleanedLine) =>
+        cleanedLine.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)
+        || SlotHeaders.Contains(cleanedLine)
+        || cleanedLine.StartsWith("=== d4scanner", StringComparison.OrdinalIgnoreCase)
+        || NameCandidate(cleanedLine) != null;
 
     void Start(string nc)
     {
@@ -429,6 +439,7 @@ public class GearParser
             _currentSlotHeader = ln;
             _slotPositionCounts[ln] = _slotPositionCounts.GetValueOrDefault(ln, 0) + 1;
             _seenSlotHeader = true;
+            _slotHeaderAge = 0;
             return null;
         }
         // Session restart marker — fully reset all parser state so stale blocks from a previous
@@ -444,6 +455,11 @@ public class GearParser
         if (ln.Equals("EQUIPPED", StringComparison.OrdinalIgnoreCase)) { _equip = true; return null; }
         var low = ln.ToLowerInvariant();
         var nc = NameCandidate(ln);
+        // A pending slot header is only good for the block that starts right after it — a few lines at
+        // most ("Ring" → "Slot Transmog: ON" → "EQUIPPED" → NAME). If no name consumed it within 6
+        // non-name lines it was a stray label (inventory paper-doll dump, vendor gamble category), and
+        // letting it survive would stamp the NEXT unrelated hover FromCharPanel=true (a verified leak).
+        if (_seenSlotHeader && nc == null && ++_slotHeaderAge > 6) _seenSlotHeader = false;
         if (_name == null) { if (nc != null) Start(nc); return null; }
         // New ALL-CAPS name while already in a block: previous block had no end-marker (e.g. interrupted
         // hover). Discard the stale block and start fresh — avoids mixing two items' body lines.
