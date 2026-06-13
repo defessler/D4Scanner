@@ -264,7 +264,7 @@ public partial class MainWindow : Window
         TargetBtn.Click += (_, _) => ShowBuilds();
         // LogBtn removed from header — log actions live in Settings
         // ("Build spec" moved from the header into the doll tab strip — see DollToggle)
-        TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "Unpin" : "Pin"; };
+        TopmostBtn.Click += (_, _) => { Topmost = !Topmost; TopmostBtn.Content = Topmost ? "On top ✓" : "On top"; };   // "Pin" freed for the slot-compare concept
         MinBtn.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseBtn.Click += (_, _) => Close();
         InstallCaptureBtn.Click += (_, _) => RunInstall(InstallCaptureBtn);
@@ -1528,6 +1528,7 @@ public partial class MainWindow : Window
         Body.Children.Clear();
         AddTopBanners();
         if (_shimNeedsUpgrade) Body.Children.Add(UpgradeBanner());
+        if (_live.Gear.Count == 0) Body.Children.Add(EmptyGearBanner());   // C1: never a silent empty doll
         Body.Children.Add(SummaryStrip(r));
 
         // quick compare actions: pin every slot that still needs work, or clear what's pinned
@@ -1653,6 +1654,41 @@ public partial class MainWindow : Window
             Soft, 12, false, new Thickness(0, 2, 0, 0)));
         dp.Children.Add(txt);
 
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0xA5, 0x2E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xE0, 0xA5, 0x2E)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(16, 12, 16, 12), Child = dp,
+        };
+    }
+
+    // Shown in the main view when a build is loaded but NO gear has been captured — the #1 "is it broken?"
+    // moment. Tells "capture isn't set up" apart from "set up, nothing seen yet", and always offers the
+    // next action (open Settings to set up, or Diagnose when a channel is already configured).
+    UIElement EmptyGearBanner()
+    {
+        bool configured = (_useTts && CaptureSetup.Installed()) || _useCapture;   // TTS shim, or OCR
+        var dp = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var btn = new Button { Style = (Style)FindResource("Primary"), Padding = new Thickness(16, 6, 16, 6), VerticalAlignment = VerticalAlignment.Center };
+        if (configured) { btn.Content = "Diagnose capture"; btn.Click += (_, _) => ShowTtsDiagnostics(); }
+        else            { btn.Content = "Set up capture";   btn.Click += (_, _) => ShowSettings(); }
+        DockPanel.SetDock(btn, Dock.Right); dp.Children.Add(btn);
+
+        var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        if (configured)
+        {
+            txt.Children.Add(TBs("Connected — no gear captured yet", Amber, 13.5, true));
+            txt.Children.Add(TB("Open Diablo IV's character screen (press C) and hover your equipped items to fill in your gear. Still nothing after that? Run Diagnose.",
+                Soft, 12, false, new Thickness(0, 2, 0, 0)));
+        }
+        else
+        {
+            txt.Children.Add(TBs("Gear capture isn’t set up yet", Amber, 13.5, true));
+            txt.Children.Add(TB("Your build is loaded, but nothing is reading your equipped gear yet. Set up TTS capture (or enable OCR) in Settings to start scanning.",
+                Soft, 12, false, new Thickness(0, 2, 0, 0)));
+        }
+        dp.Children.Add(txt);
         return new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x1E, 0xE0, 0xA5, 0x2E)),
@@ -1811,6 +1847,10 @@ public partial class MainWindow : Window
         var t = TB(text, color, 12, false);
         t.Cursor = System.Windows.Input.Cursors.Hand;
         t.VerticalAlignment = VerticalAlignment.Center;
+        // Hover affordance: a text link must signal it's clickable. Underline on hover (the universal cue) —
+        // these links previously had no hover state and read as plain text until you happened to mouse over.
+        t.MouseEnter += (_, _) => t.TextDecorations = System.Windows.TextDecorations.Underline;
+        t.MouseLeave += (_, _) => t.TextDecorations = null;
         return t;
     }
 
@@ -2165,8 +2205,9 @@ public partial class MainWindow : Window
         var x = MakeLink("✕", Soft); x.FontSize = 15; x.HorizontalAlignment = HorizontalAlignment.Right;
         x.MouseLeftButtonUp += (_, _) => HelpHost.Visibility = Visibility.Collapsed;
         DockPanel.SetDock(x, Dock.Right); hd.Children.Add(x);
-        hd.Children.Add(TBs("Keyboard shortcuts", Gold, 16, true));
+        hd.Children.Add(TBs("Shortcuts & interactions", Gold, 16, true));
         sp.Children.Add(hd);
+        sp.Children.Add(TBs("KEYBOARD", Faint, 10.5, true, new Thickness(0, 0, 0, 4)));
 
         void Row(string keys, string desc)
         {
@@ -2184,6 +2225,12 @@ public partial class MainWindow : Window
         Row("Ctrl  + / − / 0", "Zoom in · out · reset");
         Row("Esc", "Close popup → clear focus → clear pins → back to overview");
         Row("? · F1", "Show / hide this list");
+
+        sp.Children.Add(TBs("INTERACTIONS", Faint, 10.5, true, new Thickness(0, 14, 0, 4)));
+        Row("Click slot", "Pin it for side-by-side compare (click again to unpin)");
+        Row("Hover slot", "Peek a quick compare card");
+        Row("Doll tabs", "My Gear · Target · All Items — switch what the doll shows");
+        Row("↑ badge", "An owned item upgrades this slot — click it to locate the item");
 
         var panel = new Border
         {
