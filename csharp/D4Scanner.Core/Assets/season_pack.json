@@ -71,7 +71,8 @@
     { "tier": 6, "unlocks": "Greater Lair Keys" },
     { "tier": 8, "unlocks": "sharply higher Greater Affix odds" },
     { "tier": 10, "unlocks": "Mythic Seals" },
-    { "tier": 11, "unlocks": "Resplendent Sparks" }
+    { "tier": 11, "unlocks": "Resplendent Sparks" },
+    { "tier": 12, "unlocks": "the best drop rates — the endgame gear-farming tier" }
   ],
   "pitToTorment": [
     { "torment": 1, "pit": 10 }, { "torment": 2, "pit": 15 }, { "torment": 3, "pit": 20 },
