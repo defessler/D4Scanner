@@ -736,6 +736,19 @@ Check("LoH charm: 'Set Charm' still recognized (regression)", GearParser.ParseTo
     Check("TalismanView: Any true when pieces exist", tv.Any);
     Eq("TalismanView: seal charm-slot capacity parsed from power text", 5, TalismanView.CharmSlots(tv.Seals[0]));
     Check("TalismanView: empty live -> no pieces", !TalismanView.From(new LiveBuild()).Any);
+
+    // Set-bonus progress from Set Charms (GearParser captures SetName/SetActive/SetTotal via ReSetName; the
+    // real log showed a complete "Legacy of the Sightless (5/5)" set on the user's Phoba set charm).
+    var setLive = new LiveBuild { Inventory = {
+        new Item { Name = "Phoba Of The Sightless", Slot = "charm", ItemType = "Set Charm", SetName = "Legacy of the Sightless", SetActive = 5, SetTotal = 5 },
+        new Item { Name = "Other Set Charm", Slot = "charm", ItemType = "Set Charm", SetName = "Applied Alchemy", SetActive = 2, SetTotal = 5 },
+        new Item { Name = "Plain Charm", Slot = "charm", ItemType = "Charm", Rarity = "Rare" },   // no set
+    } };
+    var sets = TalismanView.Sets(TalismanView.From(setLive).Charms);
+    Eq("TalismanView Sets: two distinct sets (plain charm excluded)", 2, sets.Count);
+    Check("TalismanView Sets: most-complete first (5/5 before 2/5)", sets[0].Name == "Legacy of the Sightless" && sets[0].Complete);
+    Check("TalismanView Sets: partial set not marked complete", !sets[1].Complete && sets[1].Active == 2 && sets[1].Total == 5);
+    Eq("TalismanView Sets: no sets when no set charms", 0, TalismanView.Sets(tv.Charms).Count);
 }
 // Charm survives the FULL stateful Feed path even though its real block trails a "Properties lost when
 // equipped:" comparison section (the parser still captures it; downstream routes charms separately).

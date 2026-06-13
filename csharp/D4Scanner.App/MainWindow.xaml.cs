@@ -3744,6 +3744,14 @@ public partial class MainWindow : Window
         foreach (var s in t.Seals) AddItem(s, "seal");
         foreach (var c in t.Charms) AddItem(c, "charm");
         foreach (var rn in t.Runes) AddItem(rn, "rune");
+        // set-bonus progress (LoH set bonuses come via Set Charms) — complete sets in green
+        var sets = TalismanView.Sets(t.Charms);
+        if (sets.Count > 0)
+        {
+            sp.Children.Add(TBs("SET BONUSES", Faint, 11, true, new Thickness(0, 4, 0, 4)));
+            foreach (var st in sets)
+                sp.Children.Add(TB($"{st.Name}   ({st.Active}/{st.Total})", st.Complete ? Green : Soft, 11.5, false));
+        }
         return new Border
         {
             Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
