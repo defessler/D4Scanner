@@ -130,8 +130,8 @@ public static class LogStore
             using var fs = new FileStream(s.File, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             fs.Seek(s.StartOffset, SeekOrigin.Begin);
             var buf = new byte[s.EndOffset - s.StartOffset];
-            int read = fs.Read(buf, 0, buf.Length);
-            return System.Text.Encoding.UTF8.GetString(buf, 0, read).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+            fs.ReadExactly(buf);   // FileStream.Read may return a PARTIAL read for a large session; ReadExactly fills the buffer (or throws) so a big session never replays truncated
+            return System.Text.Encoding.UTF8.GetString(buf).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         }
         catch { return Array.Empty<string>(); }
     }
