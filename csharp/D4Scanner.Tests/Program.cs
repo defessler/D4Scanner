@@ -346,6 +346,15 @@ Check("ParseTooltipLines: no name returns null",
     }
 }
 
+// E7: long affixed item names (>64 chars) must not be silently dropped — the name-length ceiling was 64,
+// which clipped legitimately long names; raised to 96. This name is ~65 chars (fails under the old ceiling).
+{
+    var longName = "ADVENTURER'S CEREMONIAL WAR HELM OF THE ETERNAL MENDING OBSCURITY";
+    var li = GearParser.ParseTooltipLines(new[] { longName, "Legendary Helm", "800 Item Power",
+        "+100 Dexterity [80 - 120]", "Requires Level 70" });
+    Check("E7: long item name parses (not dropped by the length ceiling)", li != null && li.Name.Length > 40);
+}
+
 // ReQuality: both TTS "50 +50/25 Quality" (no parens) and OCR "50 (+30/25) Quality" (parens) formats
 var qualityBlock = new[] { "MYTHIC RING", "Mythic Unique Ring", "800 Item Power", "50 +50/25 Quality", "+500 Maximum Life" };
 var qualityItem = GearParser.ParseTooltipLines(qualityBlock);
