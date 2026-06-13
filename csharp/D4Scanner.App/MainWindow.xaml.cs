@@ -541,8 +541,11 @@ public partial class MainWindow : Window
             bool mx = WindowState == WindowState.Maximized;
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() }));
+            var settingsJson = JsonSerializer.Serialize(
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() });
+            var stmp = SettingsPath + ".tmp";
+            File.WriteAllText(stmp, settingsJson);
+            File.Move(stmp, SettingsPath, overwrite: true);   // atomic — a crash mid-write must not corrupt app.json (the B1 class; settings were missed)
         }
         catch { }
     }
@@ -1044,7 +1047,9 @@ public partial class MainWindow : Window
             var t = await MaxrollImporter.ImportAsync(input, profile, s => Dispatcher.Invoke(() => Status.Text = s));
             Directory.CreateDirectory(BuildsDir);
             var path = Path.Combine(BuildsDir, SafeFile(t.Name) + ".json");   // one file per build (kept for comparison switching)
-            File.WriteAllText(path, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
+            var btmp = path + ".tmp";
+            File.WriteAllText(btmp, JsonSerializer.Serialize(t, D4Scanner.Core.Json.Opts));
+            File.Move(btmp, path, overwrite: true);   // atomic — a crash mid-write must not leave a half-written build file
             _target = t; _targetPath = path; _targetMtime = File.GetLastWriteTimeUtc(path);
             _lastUrl = UrlBox.Text.Trim(); _lastImportInput = input; _profile = t.Profile;
             if (!LooksLikeUrl(input))   // remember the build slug for the search "recents"
