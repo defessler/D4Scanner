@@ -3072,7 +3072,7 @@ public partial class MainWindow : Window
         // "Clear shown" — tombstone the currently-filtered rows so the app stops listing items you no longer
         // own (salvaged / traded / dropped). With a search active it clears just that subset; otherwise all.
         // A prominent pill button, disabled (dimmed, no-op) when there's nothing to clear.
-        var clearLbl = TB("🗑  Clear shown", Crimson, 12, true); clearLbl.VerticalAlignment = VerticalAlignment.Center;
+        var clearLbl = TB("✕  Clear shown", Crimson, 12, true); clearLbl.VerticalAlignment = VerticalAlignment.Center;
         var clearBtn = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x26, 0xC9, 0x2B, 0x2B)),
@@ -3086,8 +3086,8 @@ public partial class MainWindow : Window
         hd.Children.Add(TBs($"Unequipped items  ·  {items.Count}", Gold, 17, true));
         sp.Children.Add(hd);
         sp.Children.Add(TB(scoring
-            ? $"Everything {(activeClass ?? "this character")} could equip — across all your characters' bags, stash and loadouts — scored against the build, best upgrades first.  Click a row to compare vs equipped · 📌 pins it to the overview."
-            : "Everything this character could equip, across all your characters (load a build to score upgrades).  Click a row to compare vs equipped · 📌 pins it to the overview.",
+            ? $"Everything {(activeClass ?? "this character")} could equip — across all your characters' bags, stash and loadouts — scored against the build, best upgrades first.  Click a row to compare vs equipped · ＋ pins it to the overview."
+            : "Everything this character could equip, across all your characters (load a build to score upgrades).  Click a row to compare vs equipped · ＋ pins it to the overview.",
             Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
 
         // ---- filter / sort bar ----
@@ -3135,7 +3135,7 @@ public partial class MainWindow : Window
             clearBtn.Opacity = any ? 1.0 : 0.35;
             clearBtn.IsHitTestVisible = any;
             clearBtn.Cursor = any ? System.Windows.Input.Cursors.Hand : System.Windows.Input.Cursors.Arrow;
-            clearLbl.Text = any ? $"🗑  Clear shown ({view.Count})" : "🗑  Clear shown";
+            clearLbl.Text = any ? $"✕  Clear shown ({view.Count})" : "✕  Clear shown";
         }
 
         // tombstone every currently-shown row (the filtered view) so items the player no longer owns stop
@@ -3442,7 +3442,7 @@ public partial class MainWindow : Window
                 BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3),
                 Padding = new Thickness(5, 1, 5, 2), Cursor = System.Windows.Input.Cursors.Hand,
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, -4, 22, 0), Child = TB("📌", Soft, 9.5, true), Visibility = Visibility.Collapsed,
+                Margin = new Thickness(0, -4, 22, 0), Child = TB("＋", Soft, 12, true), Visibility = Visibility.Collapsed,
                 ToolTip = "Pin to the compare deck on the overview",
             };
             delGrid.Children.Add(pinBtn);
@@ -3691,7 +3691,7 @@ public partial class MainWindow : Window
                 "Most accurate. D4 voices item text which is logged and parsed. Requires a one-click DLL install and D4 accessibility settings.",
                 "Install DLL", b => RunInstall(b));
 
-            OptionCard("👁", "Screen capture (OCR)",
+            OptionCard("◉", "Screen capture (OCR)",
                 "No install needed — grabs the game window every 20 s and reads tooltip text via Windows OCR. Works in borderless and exclusive fullscreen.",
                 "Enable OCR", _ => { _useCapture = true; SaveSettings(); StartWatching(); Render(); });
         }
