@@ -297,6 +297,24 @@ var aspPreset = System.Text.Json.JsonSerializer.Serialize(LootFilter.CompanionPr
 Check("LootFilter preset: loose aspect present", aspPreset.Contains("Loose Flex Aspect"));
 Check("LootFilter preset: bound aspect present", aspPreset.Contains("Bound Aspect"));
 
+// D7: the loot filter is a native-filter SETUP guide — it states the Ancestral/Item-Power floor (the #1
+// endgame filter rule) and ranks affixes by how many slots want them (a higher-value filter condition).
+var d7Target = new TargetBuild
+{
+    Name = "D7",
+    Gear =
+    {
+        new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Intelligence" } } },
+        new TargetGear { Slot = "Chest", Affixes = { new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Armor" } } },
+    },
+};
+var d7md = LootFilter.Markdown(d7Target);
+Check("LootFilter md: states the Ancestral/Item-Power floor", d7md.Contains("Item Power:") && d7md.Contains("Ancestral"));
+Check("LootFilter md: priority section ranks the 2-slot affix", d7md.Contains("## Priority affixes") && d7md.Contains("Maximum Life  (2 slots)"));
+// a single-slot affix must NOT appear in the priority summary (the portion before the first per-slot header)
+var d7Head = d7md.Substring(0, d7md.IndexOf("## Helm", StringComparison.Ordinal));
+Check("LootFilter md: single-slot affix excluded from priority summary", !d7Head.Contains("Intelligence"));
+
 // ---- BuildGuide dedup + RE-TEMPER verb ----
 var guideTarget = new TargetBuild { Gear = {
     new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } },
