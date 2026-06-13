@@ -110,8 +110,12 @@ public static class WindowsGraphicsCapture
         using var frame = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         if (frame == null) return null;
 
-        // 4. Surface → SoftwareBitmap → System.Drawing.Bitmap
-        var sb = await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface).AsTask().ConfigureAwait(false);
+        // 4. Surface → SoftwareBitmap → System.Drawing.Bitmap.
+        // `sb` is a CreateCopy we own; the helper consumes it synchronously into an independent
+        // System.Drawing.Bitmap (its own copied pixel buffer), so dispose it deterministically at
+        // method exit rather than leaking a full-screen-sized native bitmap to the finalizer on
+        // every periodic OCR grab.
+        using var sb = await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface).AsTask().ConfigureAwait(false);
         if (sb == null) return null;
         return await SoftwareBitmapToBitmapAsync(sb).ConfigureAwait(false);
     }
