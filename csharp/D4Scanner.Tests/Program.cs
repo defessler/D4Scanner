@@ -403,6 +403,28 @@ Eq("D2: valid class normalized to canonical casing", "Barbarian", MaxrollImporte
 Check("D2: unknown/garbage class -> null", MaxrollImporter.NormalizeClass("Generic") == null);
 Check("D2: empty token -> null", MaxrollImporter.NormalizeClass("") == null);
 
+// CI-12: an unmapped legendary-aspect/unique key that humanized to a raw id must be detected so it's skipped
+// from the imported Aspects/Uniques (real build: a boots aspect imported as "BSK Barbarian 001 2"). The
+// detector now catches CLASS-keyed ids, not only rarity-keyed ones, while never flagging a real affix/aspect.
+Check("CI-12: class-keyed humanized id detected", MaxrollImporter.LooksLikeItemId("BSK Barbarian 001 2"));
+Check("CI-12: rarity-keyed humanized id still detected", MaxrollImporter.LooksLikeItemId("1HDagger Unique Rogue 003 2"));
+Check("CI-12: real 'Aspect of' name NOT flagged", !MaxrollImporter.LooksLikeItemId("Aspect of Channeling"));
+Check("CI-12: real 'X Aspect' name NOT flagged", !MaxrollImporter.LooksLikeItemId("Edgemaster's Aspect"));
+Check("CI-12: real affix name NOT flagged", !MaxrollImporter.LooksLikeItemId("Critical Strike Damage"));
+Check("CI-12: a class word WITHOUT a number is NOT flagged", !MaxrollImporter.LooksLikeItemId("Barbarian Power"));
+// CI-12: TargetLoader.Load heals a build saved BEFORE the import fix (garbage aspect baked in) — no re-import needed.
+{
+    var tmpBuild = Path.Combine(Path.GetTempPath(), "d4scanner_loadheal_test.json");
+    File.WriteAllText(tmpBuild, "{\"Name\":\"B\",\"Aspects\":[\"Aspect of Channeling\",\"BSK Barbarian 001 2\"]," +
+        "\"Gear\":[{\"Slot\":\"boots\",\"Aspect\":\"BSK Barbarian 001 2\"},{\"Slot\":\"chest\",\"Aspect\":\"Aspect of Heavenly Strength\"}]}");
+    var healed = TargetLoader.Load(tmpBuild);
+    try { File.Delete(tmpBuild); } catch { }
+    Check("CI-12: load drops garbage from Aspects list", !healed.Aspects.Any(a => a.Contains("BSK")));
+    Check("CI-12: load keeps the real aspect", healed.Aspects.Contains("Aspect of Channeling"));
+    Check("CI-12: load clears garbage aspect off its slot", healed.Gear.First(g => g.Slot == "boots").Aspect == null);
+    Check("CI-12: load keeps a real slot aspect", healed.Gear.First(g => g.Slot == "chest").Aspect == "Aspect of Heavenly Strength");
+}
+
 // ReQuality: both TTS "50 +50/25 Quality" (no parens) and OCR "50 (+30/25) Quality" (parens) formats
 var qualityBlock = new[] { "MYTHIC RING", "Mythic Unique Ring", "800 Item Power", "50 +50/25 Quality", "+500 Maximum Life" };
 var qualityItem = GearParser.ParseTooltipLines(qualityBlock);

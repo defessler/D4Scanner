@@ -732,7 +732,13 @@ public static class TargetLoader
     public static TargetBuild Load(string path)
     {
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<TargetBuild>(json, Json.Opts) ?? new TargetBuild();
+        var t = JsonSerializer.Deserialize<TargetBuild>(json, Json.Opts) ?? new TargetBuild();
+        // Heal builds an OLDER import baked an unmapped-id garbage aspect into ("BSK Barbarian 001 2"): drop it
+        // from the Aspects list and clear it off any slot so it can't surface as a junk "IMPRINT …" target.
+        // The current importer filters these at import time; this covers builds saved before that fix (no re-import needed).
+        if (t.Aspects.Count > 0) t.Aspects = t.Aspects.Where(a => !MaxrollImporter.LooksLikeItemId(a)).ToList();
+        foreach (var g in t.Gear) if (g.Aspect != null && MaxrollImporter.LooksLikeItemId(g.Aspect)) g.Aspect = null;
+        return t;
     }
 
     public static string DefaultLogPath() =>
