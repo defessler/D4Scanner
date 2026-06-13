@@ -335,6 +335,15 @@ public class GearParser
     /// </summary>
     static void FinalizeGreaterAffixes(Item item)
     {
+        // Mythics are always all-Greater-Affix (doc §2) — independent of the temper/masterwork signal, which
+        // a comparison/bag tooltip or a poll-edge-truncated block may not carry. Floor it from the rarity.
+        if (item.IsMythic && item.Affixes.Count > 0)
+        {
+            foreach (var a in item.Affixes) a.IsGreater = true;
+            item.GreaterAffixCount = item.Affixes.Count;
+            return;
+        }
+
         int? count = item.TemperMax.HasValue ? Math.Clamp(item.TemperMax.Value - 3, 0, 4) : (int?)null;
 
         double infl = 1.0 + (item.Quality ?? 0) / 100.0;

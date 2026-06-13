@@ -316,6 +316,9 @@ Check("ParseTooltipLines: no name returns null",
     {
         Check("A1: Mythic flagged IsMythic", mythic.IsMythic);
         Check("A1: Mythic flagged Ancestral even without the word", mythic.IsAncestral);
+        Check("A7: Mythic is all-GA (count = affix count) with no temper line",
+            mythic.GreaterAffixCount == mythic.Affixes.Count && mythic.Affixes.Count > 0);
+        Check("A7: every Mythic affix flagged IsGreater", mythic.Affixes.All(a => a.IsGreater));
     }
 }
 

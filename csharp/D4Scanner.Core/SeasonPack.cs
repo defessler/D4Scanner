@@ -27,6 +27,7 @@ public sealed class SeasonPack
     public BossLadderData BossLadder { get; set; } = new();
     public Dictionary<string, int> ObolPrices { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public int ObolCap { get; set; }
+    public int AncestralFloorIP { get; set; } = 900;   // endgame IP floor — a sub-floor non-Ancestral item is temporary (centralized here; doc flags hard-coded IP caps as the #1 staleness tripwire)
     public List<TormentGate> TormentGates { get; set; } = new();
     public List<PitTorment> PitToTorment { get; set; } = new();
     public MasterworkConstants Masterwork { get; set; } = new();
