@@ -24,6 +24,10 @@ public sealed class LogWatcher : IDisposable
     readonly List<Item> _invOrdered = new();
     long _pos;
     string _buf = "";
+    // Stream UTF-8 across poll chunks: a multibyte char split at a read boundary stays buffered in the
+    // decoder until its continuation arrives next poll, instead of decoding to a replacement char (which
+    // would corrupt name-keyed dedup / tombstones / profiles for accented item or character names).
+    readonly System.Text.Decoder _utf8 = Encoding.UTF8.GetDecoder();
     System.Threading.Timer? _timer;
 
     // Cross-chunk classification: a tooltip block that ends near a poll-chunk edge has not seen its
@@ -143,7 +147,7 @@ public sealed class LogWatcher : IDisposable
             long size = new FileInfo(_path).Length;
             if (size < _pos)   // log cleared/rotated
             {
-                _pos = 0; _buf = ""; _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+                _pos = 0; _buf = ""; _utf8.Reset(); _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
                 _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset();
                 _pending.Clear(); _recent.Clear(); _recentStart = 0; _lineNo = 0;
             }
@@ -156,11 +160,7 @@ public sealed class LogWatcher : IDisposable
                 var bytes = new byte[size - _pos];
                 int read = fs.Read(bytes, 0, bytes.Length);
                 _pos = fs.Position;
-                _buf += Encoding.UTF8.GetString(bytes, 0, read);
-
-                var lines = _buf.Split('\n');
-                _buf = lines[^1];   // keep the (possibly partial) last line for next poll
-                changed = FeedChunk(lines, lines.Length - 1);
+                changed = FeedBytes(bytes, read);
             }
             else
                 // No new data — the game went quiet. Age the pending classifications so a block whose
@@ -177,6 +177,20 @@ public sealed class LogWatcher : IDisposable
         }
         catch { /* file was mid-write; retry on the next tick */ }
         finally { System.Threading.Interlocked.Exchange(ref _polling, 0); }
+    }
+
+    /// <summary>Decode a raw byte chunk — streaming UTF-8 ACROSS calls, so a multibyte char split at the
+    /// chunk boundary is reassembled instead of decoding to a replacement char — then split into lines
+    /// (keeping a partial trailing line for the next call) and feed the complete ones. Public so tests can
+    /// drive the real byte pipeline, mirroring <see cref="FeedChunk"/> for the already-split line pipeline.</summary>
+    public bool FeedBytes(byte[] bytes, int count)
+    {
+        var chars = new char[count];   // ≤ count chars decode from count bytes
+        int nc = _utf8.GetChars(bytes, 0, count, chars, 0, flush: false);
+        _buf += new string(chars, 0, nc);
+        var lines = _buf.Split('\n');
+        _buf = lines[^1];   // keep the (possibly partial) last line for next call
+        return FeedChunk(lines, lines.Length - 1);
     }
 
     /// <summary>

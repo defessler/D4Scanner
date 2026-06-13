@@ -2594,6 +2594,24 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("ChunkSafe: force-resolved item is still visible in inventory",
         wC.Build.Inventory.Any(g => g.RawName == "FROSTBITTEN LICH BLADE"));
 
+    // (B5) a UTF-8 multibyte char split across two byte chunks must reassemble (streaming Decoder), not
+    //      mojibake — the old per-chunk GetString decoded each lone half to U+FFFD, corrupting the name.
+    var wU = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_utf8_split_does_not_exist.log"));
+    var b5Block = "Head\nEQUIPPED\nFLEUR DÉ LIS\nUnique Helm\n800 Item Power\n+100 Dexterity [80 - 120]\nRight mouse button\n";
+    var b5Bytes = System.Text.Encoding.UTF8.GetBytes(b5Block);
+    int b5split = System.Array.IndexOf(b5Bytes, (byte)0xC3) + 1;   // split BETWEEN the two bytes of 'É' (UTF-8 0xC3 0x89)
+    wU.FeedBytes(b5Bytes[..b5split], b5split);                     // chunk ends mid-character
+    var b5rest = b5Bytes[b5split..];
+    wU.FeedBytes(b5rest, b5rest.Length);                           // continuation completes 'É'
+    wU.FeedChunk(System.Array.Empty<string>());                    // force-resolve any pending
+    var b5helm = wU.Build.Gear.FirstOrDefault(g => g.RawName != null && g.RawName.Contains("FLEUR"));
+    Check("B5: split-multibyte worn item parsed", b5helm != null);
+    if (b5helm != null)
+    {
+        Check("B5: accented char reassembled correctly (contains 'DÉ')", b5helm.RawName.Contains("DÉ"));
+        Check("B5: no U+FFFD replacement char in the name", !b5helm.RawName.Contains('�'));
+    }
+
     // (j) self-healing gate: a later correctly-classified non-equipped sighting EVICTS the equipped
     //     copy (the gate used to be a one-way ratchet — junked gear stayed on the paper doll forever).
     var wD = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_chunk_test_does_not_exist.log"));
