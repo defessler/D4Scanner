@@ -441,9 +441,12 @@ public static class MaxrollImporter
         if (!File.Exists(path))
         {
             var bytes = await Http.GetByteArrayAsync(url, ct);
-            await File.WriteAllBytesAsync(path, bytes, ct);
+            var tmp = path + ".tmp";
+            await File.WriteAllBytesAsync(tmp, bytes, ct);
+            File.Move(tmp, path, overwrite: true);   // atomic — a partial/truncated download must never land at `path`
         }
-        return JsonDocument.Parse(await File.ReadAllBytesAsync(path, ct));
+        try { return JsonDocument.Parse(await File.ReadAllBytesAsync(path, ct)); }
+        catch { try { File.Delete(path); } catch { } throw; }   // a corrupt cache breaks every future call; drop it so the next call re-downloads
     }
 
     /// <summary>The local path of the Maxroll game-data DB (the item database BaseIconIndex reads to

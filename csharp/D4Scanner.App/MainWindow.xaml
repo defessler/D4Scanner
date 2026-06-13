@@ -144,7 +144,8 @@
           <TextBlock x:Name="StatusDetail" DockPanel.Dock="Right" Foreground="{StaticResource Faint}"
                      FontSize="11.5" VerticalAlignment="Center" Margin="0,0,18,0"/>
           <TextBlock x:Name="Status" Foreground="{StaticResource Faint}" FontSize="13" Text="starting…"
-                     VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                     VerticalAlignment="Center" TextWrapping="Wrap"
+                     ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
         </DockPanel>
       </Border>
     </Grid>

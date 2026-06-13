@@ -250,6 +250,7 @@ public partial class MainWindow : Window
     string? _pendingUpdateTag;          // tag of a downloaded update ready to apply
     string? _skipUpdateVersion;         // user-chosen "remind me later" version (persisted)
     bool _updateModalOpen;
+    Action? _rootModalClose;   // Esc closes whichever RootLayer modal is open (inventory / update); set on open, cleared on close
 
     string SettingsPath => Path.Combine(
         Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "app.json");
@@ -600,7 +601,7 @@ public partial class MainWindow : Window
         // GATED during a full-log replay: replayed historical sightings (and un-prefixed lines stamped
         // "now") would otherwise out-date and purge tombstones, resurrecting long-deleted items.
         if (!_replayFromZero) _tombstones.ObserveSightings(gear);
-        inv = _tombstones.Apply(inv);
+        inv = _tombstones.Apply(inv, observe: !_replayFromZero);   // Apply observes too — gate it the same as the gear path or replay resurrects deleted bag items
         var merged = new LiveBuild
         {
             Gear      = gear,
@@ -1082,7 +1083,12 @@ public partial class MainWindow : Window
     {
         if (_live.Gear.Count == 0) return;   // never overwrite good persisted data with empty
         // legacy mirror (kept so a downgrade / external reader still finds the active loadout)
-        try { File.WriteAllText(LivePath, JsonSerializer.Serialize(_live, D4Scanner.Core.Json.Opts)); }
+        try
+        {
+            var tmp = LivePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(_live, D4Scanner.Core.Json.Opts));
+            File.Move(tmp, LivePath, overwrite: true);   // atomic — a crash mid-write can't truncate live.json to garbage
+        }
         catch { }
         PersistActiveProfile();
     }
@@ -1849,19 +1855,26 @@ public partial class MainWindow : Window
 
     // ---- auto-updater ----
 
+    bool _updateInFlight;   // a check/download is running — StartWatching re-fires this on every settings change / session end; don't stack the ~70 MB download
     async void CheckForUpdatesAsync()
     {
-        var latest = await Updater.GetLatestTagAsync();
-        if (latest == null) return;
-        if (!Updater.IsNewer(latest, Updater.RunningVersion())) return;   // already current
-        if (latest == _skipUpdateVersion) return;                         // user skipped this version
+        if (_updateInFlight) return;
+        _updateInFlight = true;
+        try
+        {
+            var latest = await Updater.GetLatestTagAsync();
+            if (latest == null) return;
+            if (!Updater.IsNewer(latest, Updater.RunningVersion())) return;   // already current
+            if (latest == _skipUpdateVersion) return;                         // user skipped this version
 
-        // Already staged from a prior check?
-        if (Updater.FindStagedUpdate().HasValue) { ShowUpdateReady(latest); return; }
+            // Already staged from a prior check?
+            if (Updater.FindStagedUpdate().HasValue) { ShowUpdateReady(latest); return; }
 
-        // Download in background; ~70 MB — show Toast when done
-        bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));
-        if (ok) Dispatcher.Invoke(() => ShowUpdateReady(latest));
+            // Download in background; ~70 MB — show Toast when done
+            bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));
+            if (ok) Dispatcher.Invoke(() => ShowUpdateReady(latest));
+        }
+        finally { _updateInFlight = false; }   // all calls marshal to the UI thread, so this flag needs no lock
     }
 
     void ShowUpdateReady(string tag)
@@ -1912,9 +1925,10 @@ public partial class MainWindow : Window
         _updateModalOpen = true;
 
         var host = new Grid { Background = new SolidColorBrush(Color.FromArgb(0xC0, 0, 0, 0)) };
-        void CloseModal() { _updateModalOpen = false; RootLayer.Children.Remove(host); }
+        void CloseModal() { _updateModalOpen = false; RootLayer.Children.Remove(host); _rootModalClose = null; }
         host.MouseLeftButtonDown += (_, e) => { if (e.Source == host) CloseModal(); };
         RootLayer.Children.Add(host);
+        _rootModalClose = CloseModal;   // Esc-closable (Window_KeyDown)
 
         // Outer container — no fixed Width, just min/max so it breathes
         var wa = SystemParameters.WorkArea;
@@ -2919,10 +2933,10 @@ public partial class MainWindow : Window
     {
         var overlay = new Grid { IsHitTestVisible = true };
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xBB, 0, 0, 0)) };
-        backdrop.MouseLeftButtonDown += (_, _) => { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; };
+        void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; _rootModalClose = null; }
+        backdrop.MouseLeftButtonDown += (_, _) => Close();
         overlay.Children.Add(backdrop);
-
-        void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; }
+        _rootModalClose = Close;   // Esc-closable (Window_KeyDown)
 
         var live = EffectiveLive();
         // The SHARED pool: gear moves between characters via the stash, so candidates come from every saved
@@ -3462,6 +3476,10 @@ public partial class MainWindow : Window
             // Esc on the diagnostics VIEWER returns to the parked settings draft; on settings it discards
             if (_diagShowing) CloseDiagnostics(); else CloseSettings();
             e.Handled = true; return;
+        }
+        if (k == System.Windows.Input.Key.Escape && _rootModalClose != null)   // All-Items / Update modal (RootLayer)
+        {
+            _rootModalClose(); e.Handled = true; return;
         }
         if (ctrl && (k == System.Windows.Input.Key.OemPlus || k == System.Windows.Input.Key.Add)) { Zoom(0.1); e.Handled = true; }
         else if (ctrl && (k == System.Windows.Input.Key.OemMinus || k == System.Windows.Input.Key.Subtract)) { Zoom(-0.1); e.Handled = true; }
