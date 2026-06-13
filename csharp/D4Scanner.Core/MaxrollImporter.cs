@@ -230,11 +230,13 @@ public static class MaxrollImporter
     static string? AspectName(long nid, Maps m) =>
         m.AspectNameById.TryGetValue(nid, out var n) ? n : AffixName(nid, m);
 
-    /// <summary>True when a resolved affix name is really an unmapped item-id key (a unique's inherent power
-    /// fell through to Humanize(itemId), e.g. "1HDagger Unique Rogue 003 2") rather than a real rollable affix.
-    /// A genuine affix never carries a rarity word alongside a number.</summary>
-    static bool LooksLikeItemId(string name) =>
-        Regex.IsMatch(name, @"\b(Unique|Legendary|Mythic|Set)\b", RegexOptions.IgnoreCase)
+    /// <summary>True when a resolved name is really an unmapped id key humanized — a unique's inherent power
+    /// ("1HDagger Unique Rogue 003 2") or a legendary aspect whose key never resolved ("BSK Barbarian 001 2") —
+    /// rather than a real affix/aspect. A genuine affix or aspect never carries a rarity OR class word alongside
+    /// a number, so that combination is the tell. (Class words added after a real build's boots aspect imported
+    /// as the raw "BSK Barbarian 001 2" — the rarity-only check missed class-keyed ids.)</summary>
+    public static bool LooksLikeItemId(string name) =>
+        Regex.IsMatch(name, @"\b(Unique|Legendary|Mythic|Set|Barbarian|Druid|Necromancer|Rogue|Sorcerer|Spiritborn|Paladin|Warlock)\b", RegexOptions.IgnoreCase)
         && Regex.IsMatch(name, @"\d");
 
     static string? CleanAffix(string? name)
@@ -379,7 +381,10 @@ public static class MaxrollImporter
                     // "do you own this aspect?" requirement — counting it twice inflates the Aspects total.
                     // (The per-slot WantAspect is display-only and never enters a group's Total, so the
                     // aspect is otherwise counted exactly once — no gear-vs-Aspects double-count exists.)
-                    if (an != null) { if (!aspects.Contains(an)) aspects.Add(an); aspectName ??= an; }
+                    // skip an unmapped legendary-aspect key that humanized to a raw id ("BSK Barbarian 001 2")
+                    // — same fall-through the uniques path already guards: a garbage name would pollute the
+                    // Aspects list and the "IMPRINT …" guidance with something the player can't act on.
+                    if (an != null && !LooksLikeItemId(an)) { if (!aspects.Contains(an)) aspects.Add(an); aspectName ??= an; }
                 }
 
                 var affixes = ParseItemAffixes(item);
