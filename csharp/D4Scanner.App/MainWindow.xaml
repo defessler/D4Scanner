@@ -28,7 +28,7 @@
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
           <Button x:Name="HelpBtn" Style="{StaticResource Caption}" Content="?" FontSize="15" Width="40" ToolTip="Keyboard shortcuts (?)"/>
-          <Button x:Name="TopmostBtn" Style="{StaticResource Caption}" Content="Pin" FontSize="13" Width="58"/>
+          <Button x:Name="TopmostBtn" Style="{StaticResource Caption}" Content="On top" FontSize="13" Width="64" ToolTip="Keep this window above other windows"/>
           <Button x:Name="MinBtn" Style="{StaticResource Caption}" Content="—"/>
           <Button x:Name="CloseBtn" Style="{StaticResource Caption}" Content="✕"/>
         </StackPanel>
