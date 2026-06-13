@@ -1313,6 +1313,9 @@ public partial class MainWindow : Window
         var renderLog = System.Environment.GetEnvironmentVariable("D4_RENDER_LOG");   // render-test seam: load gear from a fixture log
         if (!string.IsNullOrWhiteSpace(renderLog) && File.Exists(renderLog)) _log = renderLog;
         try { _live = LogWatcher.BuildFromFile(_log, equippedOnly: true); } catch { }
+        var renderLive = System.Environment.GetEnvironmentVariable("D4_RENDER_LIVE");   // render-test seam: load a persisted live.json directly
+        if (!string.IsNullOrWhiteSpace(renderLive) && File.Exists(renderLive))
+            try { _live = JsonSerializer.Deserialize<LiveBuild>(File.ReadAllText(renderLive), D4Scanner.Core.Json.Opts) ?? _live; } catch { }
         // render-test seams (env-gated, no effect in normal use): exercise states the harness can't click to
         var seed = System.Environment.GetEnvironmentVariable("D4_RENDER_STATE");
         if (seed == "pin") { _pinned.Add("gear:0"); _pinned.Add("gear:1"); }
@@ -5557,8 +5560,12 @@ public partial class MainWindow : Window
             var (glyph, col) = Look(i.Status);
             var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
             if (i.Have != null) row.Children.Add(Right(TB("have: " + i.Have, Miss, 12, false, new Thickness(8, 0, 0, 0))));
-            var mark = TB(glyph + "  ", col, 13, true); DockPanel.SetDock(mark, Dock.Left); row.Children.Add(mark);
-            row.Children.Add(TB(i.Label, i.Status == "met" ? Soft : Ink, 13, false));
+            var mark = TB(glyph + "  ", col, 13, true); DockPanel.SetDock(mark, Dock.Left); mark.VerticalAlignment = VerticalAlignment.Top; row.Children.Add(mark);
+            // label + optional advisory roll-note (A6: an owned unique missing some of the build's secondaries)
+            var labelCol = new StackPanel();
+            labelCol.Children.Add(TB(i.Label, i.Status == "met" ? Soft : Ink, 13, false));
+            if (i.RollNote != null) { var rn = TB(i.RollNote, Amber, 11, false); rn.TextWrapping = TextWrapping.Wrap; labelCol.Children.Add(rn); }
+            row.Children.Add(labelCol);
             sp.Children.Add(row);
         }
     }

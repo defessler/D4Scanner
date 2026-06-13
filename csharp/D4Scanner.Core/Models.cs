@@ -302,6 +302,7 @@ public class ReqItem
     public string? ViaUmbrella { get; set; }  // satisfied by an umbrella affix (e.g. "All Stats") — its text, for a "· via X" note
     public bool NeedIsMax { get; set; }       // Need describes the MAX-roll target ("max 1,600"), not a build requirement
     public double? ThresholdPct { get; set; } // explicit build minimum as a % of the roll range (the bar's tick); null = no minimum
+    public string? RollNote { get; set; }     // advisory note for an OWNED unique: how many build secondaries its copy actually rolled (A6)
 }
 
 public class GearLiveItem

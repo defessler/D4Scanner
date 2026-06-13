@@ -570,15 +570,29 @@ public static class DiffEngine
         {
             var uitems = target.Uniques.Select(u =>
             {
-                bool done = live.Gear.Any(it => PhraseMatch(u.Name, it.Name));
+                var owned = live.Gear.FirstOrDefault(it => PhraseMatch(u.Name, it.Name));
+                bool done = owned != null;
                 var slotItems = !string.IsNullOrEmpty(u.Slot) ? PooledItems(live, SlotBase(u.Slot)) : new List<Item>();
                 var have = string.Join(", ", slotItems.Select(it => it.Name).Where(n => !string.IsNullOrEmpty(n)));
-                return new ReqItem
+                var req = new ReqItem
                 {
                     Label = u.Name + (u.Mythic ? " (Mythic)" : ""),
                     Done = done, Source = done ? "tts" : null,
                     Have = (have.Length > 0 && !done) ? have : null,
                 };
+                // A6: an OWNED unique still rolls secondary affixes (S13). Presence still counts it as met
+                // (the v0.42 presence-based model), but surface how many of the build's wanted secondaries
+                // the owned copy actually has — a badly-rolled copy should prompt chasing a better one.
+                if (done && u.Affixes.Count > 0)
+                {
+                    var missing = u.Affixes.Where(a => !AffixMet(a, owned!))
+                        .Select(a => Regex.Replace(a.Name, @"^to\s+", "", RegexOptions.IgnoreCase)).ToList();
+                    int total = u.Affixes.Count, met = total - missing.Count;
+                    if (missing.Count > 0)
+                        req.RollNote = $"{met}/{total} build secondaries"
+                            + (met == 0 ? " — chase a better-rolled copy" : " · missing " + string.Join(", ", missing));
+                }
+                return req;
             }).ToList();
             cats.Add(MakeCategory("uniques", "Uniques & Mythics", new() { MakeGroup("Equipped", uitems) }));
         }
