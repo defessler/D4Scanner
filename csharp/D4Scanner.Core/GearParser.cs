@@ -267,16 +267,20 @@ public class GearParser
             { item.ItemPower = (int?)ToNum(mp.Groups[1].Value); continue; }
             var md = ReDps.Match(ln);
             if (md.Success && item.Dps == null) { item.Dps = ToNum(md.Groups[1].Value); continue; }
+            // Numeric fields use ToNum (TryParse-based, never throws), uniformly with ItemPower/Dps/Socket
+            // above. A throwing int.Parse here would fault the whole block on a malformed digit run — and TTS
+            // format is season-volatile (CLAUDE.md), so a future format gluing digits must degrade gracefully,
+            // not crash the parse, exactly like the rest of the parser.
             var mq = ReQuality.Match(ln);
-            if (mq.Success && item.Quality == null) { item.Quality = int.Parse(mq.Groups[1].Value); continue; }
+            if (mq.Success && item.Quality == null) { item.Quality = (int?)ToNum(mq.Groups[1].Value); continue; }
             var mm = ReMasterwork.Match(ln);
-            if (mm.Success) { item.MasterworkRank = int.Parse(mm.Groups[1].Value); item.MasterworkMax = int.Parse(mm.Groups[2].Value); continue; }
+            if (mm.Success) { item.MasterworkRank = (int?)ToNum(mm.Groups[1].Value); item.MasterworkMax = (int?)ToNum(mm.Groups[2].Value); continue; }
             var mt = ReTemper.Match(ln);
-            if (mt.Success) { item.TemperUsed = int.Parse(mt.Groups[1].Value); item.TemperMax = int.Parse(mt.Groups[2].Value); continue; }
+            if (mt.Success) { item.TemperUsed = (int?)ToNum(mt.Groups[1].Value); item.TemperMax = (int?)ToNum(mt.Groups[2].Value); continue; }
             var mr = ReReqLevel.Match(ln);
             if (mr.Success)
             {
-                item.RequiresLevel = int.Parse(mr.Groups[1].Value);
+                item.RequiresLevel = (int?)ToNum(mr.Groups[1].Value);
                 var mc = ReClassLock.Match(ln);
                 if (mc.Success) item.ClassLock = char.ToUpper(mc.Groups[1].Value[0]) + mc.Groups[1].Value[1..].ToLowerInvariant();
                 continue;
