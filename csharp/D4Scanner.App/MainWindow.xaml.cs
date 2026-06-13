@@ -2208,7 +2208,7 @@ public partial class MainWindow : Window
         // ── content StackPanel — no fixed Width; the outer Border controls sizing ─
         var sp = new StackPanel();
 
-        var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 24) };
+        var hd = new DockPanel { Margin = new Thickness(0, 0, 16, 24) };   // right margin clears the scroll gutter so the ✕ aligns with scrolling content
         var xb = new Border
         {
             Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4),
@@ -2399,7 +2399,8 @@ public partial class MainWindow : Window
         retRow.Children.Add(TB("Rotate at ", Soft, 11.5, false)); retRow.Children.Add(mbBox);
         retRow.Children.Add(TB(" MB   ·   keep ", Soft, 11.5, false)); retRow.Children.Add(nBox);
         retRow.Children.Add(TB(" archives   ·   max age ", Soft, 11.5, false)); retRow.Children.Add(ageBox);
-        retRow.Children.Add(TB(" days   (rotation runs at app start / game exit — never mid-session)", Faint, 10.5, false));
+        retRow.Children.Add(TB(" days", Soft, 11.5, false));   // match "MB" / "archives" styling, not the dim hint
+        retRow.Children.Add(TB("   (rotation runs at app start / game exit — never mid-session)", Faint, 10.5, false));
         sp.Children.Add(retRow);
         // (clearing logs moved to the CACHE card below — it's a one-shot clear, like the other caches)
 
@@ -2511,7 +2512,7 @@ public partial class MainWindow : Window
         });
 
         // ── sticky footer: pending changes + Revert / Save (outside the scroll) ───────────────
-        var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+        var footer = new StackPanel { Margin = new Thickness(0, 14, 16, 0) };   // match the header's scroll-gutter clearance
         footer.Children.Add(new Border { Height = 1, Background = Edge, Margin = new Thickness(0, 0, 0, 10) });
         footer.Children.Add(TB("PENDING CHANGES", Faint, 10, true, new Thickness(0, 0, 0, 4)));
         footer.Children.Add(pendingList);
@@ -2537,7 +2538,7 @@ public partial class MainWindow : Window
         var waS = SystemParameters.WorkArea;
         double settingsW = Math.Min(780, waS.Width * 0.62);
         var maxH = waS.Height * 0.84;
-        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 6, 0) };
         var body = new DockPanel { LastChildFill = true, MaxHeight = maxH };
         DockPanel.SetDock(hd, Dock.Top); body.Children.Add(hd);          // header + ✕ pinned, always visible
         DockPanel.SetDock(footer, Dock.Bottom); body.Children.Add(footer);
@@ -2546,7 +2547,7 @@ public partial class MainWindow : Window
         {
             Background = B("#1A1921"),
             BorderBrush = EdgeHi, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(32, 28, 32, 30),
+            Padding = new Thickness(32, 28, 14, 30),   // tight right pad → scrollbar hugs the panel edge
             Width = settingsW,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             Child = body,
@@ -2714,8 +2715,10 @@ public partial class MainWindow : Window
         waitTitle.Children.Add(TBs("◆ ", Gold, 15, true));
         waitTitle.Children.Add(TBs("TTS capture diagnostics", Gold, 17, true));
         wait.Children.Add(waitTitle);
-        wait.Children.Add(TB($"Analyzing capture log ({mb:0.0} MB)…", Soft, 12.5, false, new Thickness(0, 0, 0, 12)));
-        wait.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 6, Foreground = Gold, Background = B("#26242E"), BorderThickness = new Thickness(0) });
+        wait.Children.Add(TB($"Analyzing capture log ({mb:0.0} MB)…", Soft, 12.5, false, new Thickness(0, 0, 0, 10)));
+        wait.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 8 });   // theme template drives the colour + looping sweep animation
+        var diagSub = TB("Reading the whole log off the UI thread — the app stays responsive.", Faint, 11, false, new Thickness(0, 10, 0, 0));
+        diagSub.TextWrapping = TextWrapping.Wrap; wait.Children.Add(diagSub);
         panel.Child = wait;
         SettingsHost.Children.Add(panel);
         SettingsHost.Visibility = Visibility.Visible;

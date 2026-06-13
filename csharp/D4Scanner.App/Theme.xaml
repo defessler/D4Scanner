@@ -150,6 +150,76 @@
     </Setter>
   </Style>
 
+  <!-- ============ ComboBox (themed — replaces the stock white Win32 combo) ============ -->
+  <Style TargetType="ComboBoxItem">
+    <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Padding" Value="10,6"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ComboBoxItem">
+          <Border x:Name="bd" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="3" Margin="3,1">
+            <ContentPresenter/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#22201C"/></Trigger>
+            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="#22201C"/></Trigger>
+            <Trigger Property="IsSelected" Value="True"><Setter TargetName="bd" Property="Background" Value="#2A2622"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{StaticResource Faint}"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style TargetType="ComboBox">
+    <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    <Setter Property="Background" Value="#0C0C0F"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Edge}"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Height" Value="30"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ComboBox">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="22"/>
+            </Grid.ColumnDefinitions>
+            <Border x:Name="bd" Grid.ColumnSpan="2" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="3"/>
+            <ToggleButton Grid.ColumnSpan="2" Focusable="False" ClickMode="Press" Background="Transparent"
+                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+              <ToggleButton.Template>
+                <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent"/></ControlTemplate>
+              </ToggleButton.Template>
+            </ToggleButton>
+            <ContentPresenter Grid.Column="0" Margin="10,0,0,0" IsHitTestVisible="False"
+                              TextElement.Foreground="{StaticResource Ink}"
+                              Content="{TemplateBinding SelectionBoxItem}"
+                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                              VerticalAlignment="Center" HorizontalAlignment="Left"/>
+            <Path Grid.Column="1" IsHitTestVisible="False" VerticalAlignment="Center" HorizontalAlignment="Center"
+                  Data="M0,0 L8,0 L4,5 Z" Fill="{StaticResource Soft}"/>
+            <Popup x:Name="PART_Popup" Placement="Bottom" Focusable="False" AllowsTransparency="True"
+                   IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Slide">
+              <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Edge}" BorderThickness="1"
+                      CornerRadius="3" Margin="0,3,0,0" Padding="0,4"
+                      MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                <ScrollViewer MaxHeight="320"><ItemsPresenter/></ScrollViewer>
+              </Border>
+            </Popup>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- ============ Slider ============ -->
   <Style TargetType="Thumb" x:Key="AccentThumb">
     <Setter Property="Template">
@@ -275,6 +345,7 @@
           <Border CornerRadius="3" Background="#2B2A35" BorderBrush="#0A0A0C" BorderThickness="1" ClipToBounds="True">
             <Grid>
               <Border x:Name="PART_Track"/>
+              <!-- determinate fill (value-driven by WPF) -->
               <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="2">
                 <Border.Background>
                   <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
@@ -282,8 +353,32 @@
                   </LinearGradientBrush>
                 </Border.Background>
               </Border>
+              <!-- indeterminate sweep (hidden unless IsIndeterminate) — a gold sliver that loops across -->
+              <Border x:Name="sweep" Width="90" HorizontalAlignment="Left" CornerRadius="2" Visibility="Collapsed">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#007A5E10" Offset="0"/><GradientStop Color="#D4A730" Offset="0.5"/><GradientStop Color="#007A5E10" Offset="1"/>
+                  </LinearGradientBrush>
+                </Border.Background>
+                <Border.RenderTransform><TranslateTransform x:Name="sweepT" X="-100"/></Border.RenderTransform>
+              </Border>
             </Grid>
           </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsIndeterminate" Value="True">
+              <Setter TargetName="PART_Indicator" Property="Visibility" Value="Collapsed"/>
+              <Setter TargetName="sweep" Property="Visibility" Value="Visible"/>
+              <Trigger.EnterActions>
+                <BeginStoryboard Name="sweepSb">
+                  <Storyboard RepeatBehavior="Forever">
+                    <DoubleAnimation Storyboard.TargetName="sweepT" Storyboard.TargetProperty="X"
+                                     From="-100" To="900" Duration="0:0:1.25"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions><StopStoryboard BeginStoryboardName="sweepSb"/></Trigger.ExitActions>
+            </Trigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
