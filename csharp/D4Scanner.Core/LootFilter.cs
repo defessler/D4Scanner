@@ -33,6 +33,33 @@ public static class LootFilter
         sb.AppendLine($"_Class: {t.Class ?? "?"}{(string.IsNullOrEmpty(t.Profile) ? "" : "  ·  Profile: " + t.Profile)}_");
         sb.AppendLine();
 
+        // Global filter rule: at endgame the native loot filter's #1 condition is Ancestral / Item-Power floor.
+        int floor = SeasonPack.Current.AncestralFloorIP;
+        if (floor > 0)
+        {
+            sb.AppendLine($"**Item Power:** keep Ancestral — ≥ {floor:#,0} Item Power at endgame (below that is leveling/salvage fodder).");
+            sb.AppendLine();
+        }
+
+        // Cross-slot priority: an affix the build wants on MULTIPLE slots is a higher-value filter condition than
+        // a single-slot one — surface that ranking up front (the per-slot lists below still hold the full detail).
+        var affixSlots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in t.Gear)
+            foreach (var a in g.Affixes)
+            {
+                var n = (a.Name ?? "").Trim();
+                if (n.Length == 0) continue;
+                affixSlots[n] = affixSlots.TryGetValue(n, out var c) ? c + 1 : 1;
+            }
+        var priority = affixSlots.Where(kv => kv.Value >= 2)
+            .OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToList();
+        if (priority.Count > 0)
+        {
+            sb.AppendLine("## Priority affixes (wanted on multiple slots)");
+            foreach (var kv in priority) sb.AppendLine($"- {kv.Key}  ({kv.Value} slots)");
+            sb.AppendLine();
+        }
+
         foreach (var g in t.Gear)
         {
             sb.AppendLine($"## {g.Label ?? g.Slot}");
