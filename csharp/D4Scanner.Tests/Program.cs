@@ -2875,6 +2875,9 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     {
         int n = store.ResetAllLive();
         Eq("ResetAllLive: exactly the one real profile reset", 1, n);
+        // All() must skip the tombstones.json stray too — else a phantom blank profile shows in the switcher
+        Check("ProfileStore.All: skips the non-profile stray (no phantom blank profile)",
+            store.All().Count == 1 && store.All()[0].Slug == "heoki-rogue");
         var p = store.Get("heoki-rogue")!;
         Eq("ResetAllLive: gear wiped", 0, p.Live.Gear.Count);
         Eq("ResetAllLive: inventory wiped", 0, p.Live.Inventory.Count);
