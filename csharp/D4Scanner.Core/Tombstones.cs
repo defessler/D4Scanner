@@ -76,10 +76,12 @@ public sealed class TombstoneStore
         return n;
     }
 
-    /// <summary>Observe sightings, then filter out the still-tombstoned items. Saves if anything changed.</summary>
-    public List<Item> Apply(List<Item> items)
+    /// <summary>Observe sightings, then filter out the still-tombstoned items. Saves if anything changed.
+    /// During a full TTS-log replay the caller passes <paramref name="observe"/>=false: un-prefixed (older
+    /// shim) lines take "now" ticks on replay, so observing them would resurrect long-deleted items.</summary>
+    public List<Item> Apply(List<Item> items, bool observe = true)
     {
-        ObserveSightings(items);
+        if (observe) ObserveSightings(items);
         var kept = items.Where(it => !ShouldHide(it)).ToList();
         if (_dirty) Save();
         return kept;

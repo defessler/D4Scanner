@@ -34,7 +34,7 @@ public class GearParser
     static readonly Regex ReItemPower = new(@"([\d,]+)\s+Item Power", RegexOptions.IgnoreCase);
     static readonly Regex ReDps = new(@"([\d,]+(?:\.\d+)?)\s+Damage Per Second", RegexOptions.IgnoreCase);
     static readonly Regex ReMasterwork = new(@"Masterwork[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
-    // Season 8 Quality: "50 (+50/25) Quality" or "50 +50/25 Quality" — current score, optional bonus/max
+    // Masterwork Quality (S11 rework, capped /25): "50 (+50/25) Quality" or "50 +50/25 Quality" — score, optional bonus/max
     static readonly Regex ReQuality = new(@"^(\d+)\s*(?:\(\s*[+-]?\d+(?:/\d+)?\s*\)|[+-]?\d+(?:/\d+)?)?\s+Quality", RegexOptions.IgnoreCase);
     static readonly Regex ReTemper = new(@"Tempers?[:\s]+(\d+)\s*/\s*(\d+)", RegexOptions.IgnoreCase);
     static readonly Regex ReReqLevel = new(@"Requires Level\s+(\d+)", RegexOptions.IgnoreCase);
@@ -73,9 +73,10 @@ public class GearParser
     // bracketed affix that paren is already gone (core = text before the '['), so equipped rolls are safe.
     static readonly Regex ReCompareDelta = new(@"\s*\([+-]?[\d.,]+%?[^)]*\)\s*$");
     static readonly Regex ReTrailingClarifier = new(@"\s*\((?=[^)]*\p{L})[^)]*\)\s*$");
-    // Skill-rank / dangling-connective noise: "+2 to Heartseeker" -> text "to Heartseeker"; strip the
-    // leading "to " so DiffEngine.PhraseMatch (substring) sees the clean skill name "Heartseeker".
-    static readonly Regex ReLeadingConnective = new(@"^to\s+", RegexOptions.IgnoreCase);
+    // Skill-rank / dangling-connective noise: "+2 to Heartseeker" -> "Heartseeker"; "+3 Ranks to Core
+    // Skill" -> "Core Skill". Strip a leading "to "/"Ranks to " so DiffEngine.PhraseMatch (substring) sees
+    // the clean skill name — +Ranks is the game's #2 highest-leverage affix, it must match build targets.
+    static readonly Regex ReLeadingConnective = new(@"^(?:ranks?\s+)?to\s+", RegexOptions.IgnoreCase);
     // Recover-dropped-affix fallback (conservative): only the clean "value-first" seal/charm power-name
     // shape is recovered, e.g. "+8%[x] [7-10]% Shadow Damage" -> {Shadow Damage, 8, x-mult}. The value MUST
     // be the leading token (after an optional "Name:." prefix); multi-clause powers / "Lucky Hit: Up to a…"
@@ -163,7 +164,7 @@ public class GearParser
             if (Regex.IsMatch(ln, @"\b" + Regex.Escape(r) + @"\b", RegexOptions.IgnoreCase))
             {
                 item.Rarity = r;
-                if (r.StartsWith("Mythic", StringComparison.OrdinalIgnoreCase)) { item.IsMythic = true; item.IsUnique = true; }
+                if (r.StartsWith("Mythic", StringComparison.OrdinalIgnoreCase)) { item.IsMythic = true; item.IsUnique = true; item.IsAncestral = true; }   // Mythics are always Ancestral (doc §2), even when the tooltip doesn't voice the word
                 else if (r.Equals("Unique", StringComparison.OrdinalIgnoreCase)) item.IsUnique = true;
                 break;
             }

@@ -281,6 +281,44 @@ Check("ParseTooltipLines: empty list returns null", GearParser.ParseTooltipLines
 Check("ParseTooltipLines: no name returns null",
     GearParser.ParseTooltipLines(new[] { "Legendary Helm", "780 Item Power" }) == null);
 
+// A3: "+N Ranks to <Skill>" must strip the "Ranks to" connective so the clean skill name matches build
+// targets (the parser used to leave affix text "Ranks to Core Skill"). +Ranks is a top-tier affix.
+{
+    var rankItem = GearParser.ParseTooltipLines(new[]
+    {
+        "STORMCALLER GRASP", "Legendary Gloves", "800 Item Power",
+        "+3 Ranks to Core Skill [2 - 3]",
+        "+2 Ranks to Ball Lightning [1 - 2]",
+        "Requires Level 70",
+    });
+    Check("A3: skill-rank item parsed", rankItem != null);
+    if (rankItem != null)
+    {
+        Check("A3: '+3 Ranks to Core Skill' -> clean 'Core Skill' (value 3)",
+            rankItem.Affixes.Any(a => a.Text.Equals("Core Skill", StringComparison.Ordinal) && a.Value == 3));
+        Check("A3: '+2 Ranks to Ball Lightning' -> clean 'Ball Lightning'",
+            rankItem.Affixes.Any(a => a.Text.Equals("Ball Lightning", StringComparison.Ordinal)));
+        Check("A3: no affix retains the 'Ranks to' connective",
+            rankItem.Affixes.All(a => !a.Text.StartsWith("Ranks", StringComparison.OrdinalIgnoreCase)));
+    }
+}
+
+// A1: a Mythic Unique is always Ancestral (doc §2) even when the tooltip doesn't voice "Ancestral" — so it
+// can never trip the sub-900 "below the Ancestral floor" junk verdict.
+{
+    var mythic = GearParser.ParseTooltipLines(new[]
+    {
+        "TYRAEL'S MIGHT", "Mythic Unique Helm", "800 Item Power",
+        "+200 All Stats [150 - 250]", "Requires Level 70",
+    });
+    Check("A1: mythic parsed", mythic != null);
+    if (mythic != null)
+    {
+        Check("A1: Mythic flagged IsMythic", mythic.IsMythic);
+        Check("A1: Mythic flagged Ancestral even without the word", mythic.IsAncestral);
+    }
+}
+
 // ReQuality: both TTS "50 +50/25 Quality" (no parens) and OCR "50 (+30/25) Quality" (parens) formats
 var qualityBlock = new[] { "MYTHIC RING", "Mythic Unique Ring", "800 Item Power", "50 +50/25 Quality", "+500 Maximum Life" };
 var qualityItem = GearParser.ParseTooltipLines(qualityBlock);
@@ -2411,6 +2449,21 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("VendorLeak: gamble-Ring item parsed", 1, dr.Items.Count);
     Check("VendorLeak: a header word voiced at a vendor does not classify as worn", !dr.Items[0].Equipped);
     Eq("VendorLeak: hijacked-header hover classified VendorItem", "VendorItem", dr.Items[0].Context);
+
+    // (b2) Purveyor marker scrolled out of the rolling window (panel unknown) while the gamble category
+    //      'Ring' still arms FromCharPanel: the OLD null-trusting fast-path stamped this WORN. A positive
+    //      Character panel is now required, so a missed-marker vendor hover stays non-worn (its tail / the
+    //      fail-safe classify it instead). This case fails without that fix.
+    var gambleRingNoMarker = new[] {
+        "Ring", "50 Obols",
+        "EQUIPPED",
+        "ZEALOUS BAND", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]",
+        "Right mouse button", "Buy",
+    };
+    var dn = LogWatcher.DiagnoseLines(gambleRingNoMarker);
+    Eq("VendorLeak: missed-marker gamble item parsed", 1, dn.Items.Count);
+    Check("VendorLeak: missed-marker gamble-Ring is NOT worn (positive Character panel now required)", !dn.Items[0].Equipped);
+    Check("VendorLeak: missed-marker gamble-Ring not classified WornGear", dn.Items[0].Context != "WornGear");
 
     // (c) favorited bag item: the tail is Equip/…/Mark as Favorite — no "Mark as Junk" anywhere.
     //     'Equip', 'Drop', 'Hide Comparison' and 'Mark as Favorite' are now demote tokens.

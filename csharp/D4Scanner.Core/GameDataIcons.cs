@@ -229,15 +229,17 @@ public static class GameDataIcons
     {
         lock (_defGate) { if (_defs.TryGetValue(atlas, out var cached)) return cached; }
         Def? def = null;
+        var file = Path.Combine(DefCacheDir, atlas + ".json");
         try
         {
             Directory.CreateDirectory(DefCacheDir);
-            var file = Path.Combine(DefCacheDir, atlas + ".json");
             string? json = File.Exists(file) ? File.ReadAllText(file) : null;
             if (json == null)
             {
                 json = Http.GetStringAsync(DefBase + Uri.EscapeDataString(atlas) + ".tex.json").GetAwaiter().GetResult();
-                File.WriteAllText(file, json);
+                var tmp = file + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, file, overwrite: true);   // atomic — never leave a half-written def cache
             }
             using var doc = JsonDocument.Parse(json);
             var r = doc.RootElement;
@@ -247,8 +249,15 @@ public static class GameDataIcons
                     def.Uv[hv] = (f.GetProperty("flU0").GetSingle(), f.GetProperty("flV0").GetSingle(),
                                   f.GetProperty("flU1").GetSingle(), f.GetProperty("flV1").GetSingle());
         }
-        catch { def = null; }
-        lock (_defGate) { _defs[atlas] = def; }
+        catch
+        {
+            def = null;
+            // A corrupt/partial cached def re-throws on every call; drop it so the next request re-fetches.
+            try { if (File.Exists(file)) File.Delete(file); } catch { }
+        }
+        // Cache only SUCCESS: a one-time fetch failure (offline, GitHub hiccup) must not latch this atlas to
+        // silhouettes for the whole process — leaving it uncached lets the next request retry.
+        if (def != null) lock (_defGate) { _defs[atlas] = def; }
         return def;
     }
 

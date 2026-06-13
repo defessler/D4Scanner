@@ -73,7 +73,7 @@ public static class Verdicts
             return new ItemVerdict(Verdict.Stash, $"a {it.ClassLock} item", $"Stash for your {it.ClassLock} alt");
 
         // 6. JUNK — nothing the build needs. In Torment, a sub-900 non-Ancestral item is below the endgame floor.
-        bool belowFloor = ctx.Torment.HasValue && !it.IsAncestral && (it.ItemPower ?? 0) is > 0 and < 900;
+        bool belowFloor = ctx.Torment.HasValue && !it.IsAncestral && !it.IsMythic && !it.IsUnique && (it.ItemPower ?? 0) is > 0 and < 900;
         string junkReason = belowFloor ? "below the 900 Ancestral floor for Torment"
             : s.SlotTarget > 0 ? $"weaker than your equipped {slot}" : "off-build";
         return new ItemVerdict(Verdict.Junk, junkReason, "Salvage for materials");

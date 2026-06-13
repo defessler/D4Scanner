@@ -42,7 +42,7 @@ public class Item
     public int? MasterworkMax { get; set; }
     public int? TemperUsed { get; set; }
     public int? TemperMax { get; set; }
-    public int? Quality { get; set; }    // Season 8 item quality score
+    public int? Quality { get; set; }    // masterwork Quality score (S11 rework, 0-25)
     public int? RequiresLevel { get; set; }
     public string? ClassLock { get; set; }   // "Rogue Only" class restriction voiced on the requires line
     public string? Aspect { get; set; }

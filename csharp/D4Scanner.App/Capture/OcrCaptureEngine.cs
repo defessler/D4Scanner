@@ -37,8 +37,12 @@ public sealed class OcrCaptureEngine : IDisposable
 
     public Task ScanNowAsync() => ScanCoreAsync();
 
+    int _scanning;   // 0 = idle, 1 = a scan is running
     async Task ScanCoreAsync()
     {
+        // Skip-if-busy: a 4K WGC grab + OCR can exceed the 20 s interval, so the next timer tick must not
+        // start a second scan that races the shared _orderedGear/_orderedInv/_lastHash state (torn lists).
+        if (System.Threading.Interlocked.Exchange(ref _scanning, 1) == 1) return;
         try
         {
             var proc = Process.GetProcessesByName("Diablo IV").FirstOrDefault();
@@ -65,6 +69,7 @@ public sealed class OcrCaptureEngine : IDisposable
             ProcessOcrLines(lines);
         }
         catch { /* best-effort */ }
+        finally { System.Threading.Interlocked.Exchange(ref _scanning, 0); }
     }
 
     void ProcessOcrLines(List<string> lines)

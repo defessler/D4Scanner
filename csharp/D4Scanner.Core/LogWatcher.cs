@@ -385,11 +385,14 @@ public sealed class LogWatcher : IDisposable
             return true;
         }
 
-        // Fast path 2: slot header (Head/Torso/Ring/Main Hand/…) immediately preceded the block AND the
-        // panel state agrees (Character, or unknown — headers themselves set the panel, so null only means
-        // no marker was ever voiced). A header word with a CONFLICTING panel (Vendor gamble category
-        // "Ring", inventory paper-doll label) is a hijack — fall through to the action-tail scan instead.
-        if (item.FromCharPanel && item.UiPanel is "Character" or null)
+        // Fast path 2: a slot header immediately preceded the block AND the panel is positively Character.
+        // Every char-sheet slot header EXCEPT "Ring" is also a PanelMarker→Character, so FromCharPanel with
+        // a non-Character panel arises almost only from the Purveyor's "Ring" gamble category (a hijack):
+        //   · panel "Vendor"/"Stash" → not worn (this fast-path already skipped it);
+        //   · panel null → the Vendor marker scrolled out of the rolling window — DON'T trust it as worn
+        //     (the residual vendor-leak hole). A genuine worn item still resolves via its "Unequip" action
+        //     tail in ScanTail below, so requiring a POSITIVE Character panel here loses no real worn gear.
+        if (item.FromCharPanel && item.UiPanel == "Character")
         {
             item.Equipped = true;
             item.Context = UiContext.WornGear;

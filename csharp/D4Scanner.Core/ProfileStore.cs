@@ -59,7 +59,15 @@ public sealed class ProfileStore
     public void Save(CharacterProfile profile)
     {
         if (string.IsNullOrEmpty(profile.Slug)) profile.Slug = Slugify(profile.Name);
-        try { File.WriteAllText(PathFor(profile.Slug), JsonSerializer.Serialize(profile, Json.Opts)); }
+        try
+        {
+            // Atomic write: a crash/power-loss mid-write must not truncate the profile (a half-written
+            // file deserializes to null and the character silently vanishes from All()). Temp + Move.
+            var dest = PathFor(profile.Slug);
+            var tmp = dest + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(profile, Json.Opts));
+            File.Move(tmp, dest, overwrite: true);
+        }
         catch { }
     }
 
@@ -78,7 +86,12 @@ public sealed class ProfileStore
         }
         set
         {
-            try { File.WriteAllText(ActivePath, JsonSerializer.Serialize(new ActiveRef { Slug = value }, Json.Opts)); }
+            try
+            {
+                var tmp = ActivePath + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(new ActiveRef { Slug = value }, Json.Opts));
+                File.Move(tmp, ActivePath, overwrite: true);   // atomic — never strand a half-written active.json
+            }
             catch { }
         }
     }
