@@ -1130,6 +1130,18 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var all = GearList.Build(live);
     Eq("Build: dedups identical captures by fingerprint", 3, all.Count);
 
+    // Capture-artifact filter: a completed block with an Item Power line but NO slot, type, rarity, OR affixes
+    // (stale Talisman-panel "RING" residue, found in the user's real live.json) is uncategorizable junk —
+    // dropped from the displayed pool. An item with even ONE of slot/type/rarity/affixes is NOT an artifact.
+    var artifact = new Item { Name = "Ring", RawName = "RING", ItemPower = 850 };
+    artifact.PowerText.Add("118 All Resist (-6.2% Toughness)");
+    var built = GearList.Build(new LiveBuild { Gear = { razorA, helm }, Inventory = { artifact } });
+    Check("Build: drops pure capture artifact", !built.Any(i => i.Name == "Ring" && string.IsNullOrEmpty(i.Slot)));
+    Eq("Build: keeps the 2 real items, drops the artifact", 2, built.Count);
+    var slotOnly = new Item { Name = "Partial", Slot = "ring", ItemPower = 900 };
+    Eq("Build: an item with a slot is NOT an artifact (not over-eager)", 1,
+        GearList.Build(new LiveBuild { Inventory = { slotOnly } }).Count);
+
     Check("HasAffix: PhraseMatch hit", GearList.HasAffix(helm, "Dexterity"));
     Check("HasAffix: miss", !GearList.HasAffix(ring, "Dexterity"));
     Check("AffixKeys: distinct labels include Maximum Life", GearList.AffixKeys(all).Contains("Maximum Life"));

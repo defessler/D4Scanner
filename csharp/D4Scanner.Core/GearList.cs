@@ -59,11 +59,21 @@ public static class GearList
     public static long AcquiredTicks(Item it) =>
         it.LogTimeUtc?.UtcTicks ?? it.LastScannedTicks;
 
+    /// <summary>A pure capture artifact: a block that completed with (typically) an Item Power line but NO
+    /// slot, type, rarity, OR affixes — uncategorizable and unusable (can't be equipped, compared, or matched).
+    /// These are stale residue from pre-fix captures (e.g. a Talisman-panel "RING" slot-header that briefly
+    /// parsed as an item with a stray summary stat); the current parser no longer produces them, but they
+    /// linger in persisted live.json until the slot is re-hovered. Hidden from the item pool so they don't
+    /// show as a meaningless junk row in All Items. Display-only — never touches scoring/verdicts/diff.</summary>
+    static bool IsCaptureArtifact(Item it) =>
+        string.IsNullOrEmpty(it.Slot) && string.IsNullOrEmpty(it.ItemType)
+        && string.IsNullOrEmpty(it.Rarity) && (it.Affixes?.Count ?? 0) == 0;
+
     /// <summary>Every captured item (equipped + inventory), de-duplicated by <see cref="Fingerprint"/>,
-    /// keeping the most-recently-seen instance of each.</summary>
+    /// keeping the most-recently-seen instance of each. Pure capture artifacts are dropped.</summary>
     public static List<Item> Build(LiveBuild live)
     {
-        var all = (live.Gear ?? new()).Concat(live.Inventory ?? new());
+        var all = (live.Gear ?? new()).Concat(live.Inventory ?? new()).Where(it => !IsCaptureArtifact(it));
         return all.GroupBy(Fingerprint)
                   .Select(g => g.OrderByDescending(AcquiredTicks).First())
                   .ToList();
@@ -98,7 +108,7 @@ public static class GearList
         foreach (var p in otherProfiles)
         {
             var label = p.Name + (p.Class != null ? " · " + p.Class : "");
-            foreach (var it in (p.Live.Gear ?? new()).Concat(p.Live.Inventory ?? new()))
+            foreach (var it in (p.Live.Gear ?? new()).Concat(p.Live.Inventory ?? new()).Where(it => !IsCaptureArtifact(it)))
                 pool.Add(new OwnedItem(it, label, p.Slug));
         }
 
