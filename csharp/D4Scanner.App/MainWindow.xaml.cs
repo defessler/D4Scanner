@@ -1301,6 +1301,8 @@ public partial class MainWindow : Window
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         _uiReady = true;
         _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
+        var renderTarget = System.Environment.GetEnvironmentVariable("D4_RENDER_TARGET");   // render-test seam: point at a specific build
+        if (!string.IsNullOrWhiteSpace(renderTarget) && File.Exists(renderTarget)) _targetPath = renderTarget;
         ReloadTarget();
         var renderLog = System.Environment.GetEnvironmentVariable("D4_RENDER_LOG");   // render-test seam: load gear from a fixture log
         if (!string.IsNullOrWhiteSpace(renderLog) && File.Exists(renderLog)) _log = renderLog;
@@ -3975,7 +3977,7 @@ public partial class MainWindow : Window
                 .SelectMany(s => s.Gear?.LiveItems ?? new())
                 .Select(li => li.Name));
 
-        var weaponsRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+        var weaponCellList = new List<UIElement>();   // collected, then laid out (single row for ≤2, 2-col grid for 3-4) so the arsenal doesn't blow out the doll width
         int weaponCells = 0;
         void PlaceWeapons(string[] order)
         {
@@ -3987,14 +3989,14 @@ public partial class MainWindow : Window
                     if (s.Key.StartsWith("uni:") && s.Gear?.LiveItems.Count > 0
                         && LiveGearResolver.ShouldHideDuplicateWeapon(shownWeaponLiveNames, s.Gear.LiveItems[0].Name))
                     { used.Add(s); continue; }
-                    weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s);
+                    weaponCellList.Add(SlotCell(s, prio.GetValueOrDefault(s), false)); used.Add(s);
                     if (k == "weapon") weaponCells++;
                 }
         }
         PlaceWeapons(new[] { "weapon", "offhand" });
         foreach (var s in gear.Where(x => !used.Contains(x)))
         {
-            weaponsRow.Children.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
+            weaponCellList.Add(SlotCell(s, prio.GetValueOrDefault(s), false));
             if (SlotKey(s.Label) == "weapon") weaponCells++;
         }
         // Pad to the class's REAL arsenal (Barbarian 4 weapons, Rogue 3): a new / sparsely-captured
@@ -4005,7 +4007,7 @@ public partial class MainWindow : Window
             && (dollClass.Equals("Barbarian", StringComparison.OrdinalIgnoreCase)
              || dollClass.Equals("Rogue", StringComparison.OrdinalIgnoreCase)))
             for (int i = weaponCells; i < ClassRules.WeaponSlots(dollClass); i++)
-                weaponsRow.Children.Add(EmptyWeaponCell());
+                weaponCellList.Add(EmptyWeaponCell());
 
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
 
@@ -4041,7 +4043,7 @@ public partial class MainWindow : Window
 
         var dollStack = new StackPanel();
         dollStack.Children.Add(grid);
-        if (weaponsRow.Children.Count > 0) dollStack.Children.Add(weaponsRow);
+        if (weaponCellList.Count > 0) dollStack.Children.Add(WeaponsLayout(weaponCellList));
 
         // Stack the view toggle (tabs) above the paper doll. (The class-coloured radial bloom backdrop was
         // removed: it hard-clipped at the panel edge and couldn't be masked cleanly across the doll's
@@ -4503,6 +4505,37 @@ public partial class MainWindow : Window
         box.Margin = new Thickness(0, 0, 12, 0); DockPanel.SetDock(box, Dock.Left);
         dp.Children.Add(box); dp.Children.Add(text);
         return new Border { Child = dp, Padding = new Thickness(7, 5, 7, 5), Margin = new Thickness(0, 0, 0, 6) };
+    }
+
+    // Lay the weapon cells out under the doll. 1-2 weapons → a single centered row (Sorcerer / Necro /
+    // Druid / Spiritborn). 3-4 (Rogue / Barbarian arsenal) → a centered 2-column grid so the row doesn't
+    // blow the doll's width out: 4 → 2×2, 3 → two on top with the third centered below. (Each cell is a
+    // fixed ~256px, so a 4-wide row ran ~1024px — far wider than the ~700px doll grid above it.)
+    static UIElement WeaponsLayout(List<UIElement> cells)
+    {
+        if (cells.Count <= 2)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+            foreach (var c in cells) row.Children.Add(c);
+            return row;
+        }
+        var g = new Grid { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (int r = 0; r < (cells.Count + 1) / 2; r++) g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (int i = 0; i < cells.Count; i++)
+        {
+            var cell = (FrameworkElement)cells[i];
+            Grid.SetRow(cell, i / 2);
+            if (i == cells.Count - 1 && cells.Count % 2 == 1)   // odd count: last cell centered under the pair
+            {
+                Grid.SetColumn(cell, 0); Grid.SetColumnSpan(cell, 2);
+                cell.HorizontalAlignment = HorizontalAlignment.Center;
+            }
+            else Grid.SetColumn(cell, i % 2);
+            g.Children.Add(cell);
+        }
+        return g;
     }
 
     UIElement MiniBar(double pct, Brush fill)
