@@ -720,6 +720,23 @@ var lohSeal = GearParser.ParseTooltipLines(new[] { "REMEDIAL HORADRIC SEAL OF BL
 Check("LoH seal: Horadric Seal captured as a seal", lohSeal != null && lohSeal.Slot == "seal");
 Check("LoH seal: 'Charm Slots' line did NOT flip it to a charm", lohSeal == null || lohSeal.Slot != "charm");
 Check("LoH charm: 'Set Charm' still recognized (regression)", GearParser.ParseTooltipLines(new[] { "SOME CHARM", "Set Charm", "+5 Dexterity [1 - 5]" })?.Slot == "charm");
+
+// TalismanView: the "what talisman pieces do I own" view (Maxroll exports no talisman targets) — collects
+// captured seal/charm/rune items, deduped, excluding non-talisman gear; parses the seal's charm-slot capacity.
+{
+    var talLive = new LiveBuild { Inventory = {
+        new Item { Name = "Remedial Horadric Seal Of Bloodshed", Slot = "seal", ItemType = "Horadric Seal", Rarity = "Legendary", PowerText = { "Unlocks 5 Charm Slots" } },
+        new Item { Name = "Trapper's Charm Of The Artisan", Slot = "charm", ItemType = "Charm", Rarity = "Rare", Affixes = { new Affix { Text = "Dexterity", Value = 50 } } },
+        new Item { Name = "Some Helm", Slot = "helm", ItemType = "Helm", Rarity = "Legendary" },   // NOT a talisman piece
+    } };
+    var tv = TalismanView.From(talLive);
+    Eq("TalismanView: one seal collected", 1, tv.Seals.Count);
+    Eq("TalismanView: one charm collected", 1, tv.Charms.Count);
+    Eq("TalismanView: non-talisman gear excluded", 0, tv.Runes.Count);
+    Check("TalismanView: Any true when pieces exist", tv.Any);
+    Eq("TalismanView: seal charm-slot capacity parsed from power text", 5, TalismanView.CharmSlots(tv.Seals[0]));
+    Check("TalismanView: empty live -> no pieces", !TalismanView.From(new LiveBuild()).Any);
+}
 // Charm survives the FULL stateful Feed path even though its real block trails a "Properties lost when
 // equipped:" comparison section (the parser still captures it; downstream routes charms separately).
 {
