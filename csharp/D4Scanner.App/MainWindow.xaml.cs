@@ -1596,6 +1596,7 @@ public partial class MainWindow : Window
         var rail = new StackPanel();
         var guide = GuidancePanel(r); if (guide != null) rail.Children.Add(guide);
         var acts = ActivitiesPanel(r); if (acts != null) rail.Children.Add(acts);
+        var tal = TalismanPanel(EffectiveLive()); if (tal != null) rail.Children.Add(tal);
         var exp = MakeLink("⤓  Export loot filter", Steel); exp.Margin = new Thickness(2, 2, 0, 0);
         exp.MouseLeftButtonUp += (_, _) => ExportLootFilter();
         rail.Children.Add(exp);
@@ -3720,6 +3721,36 @@ public partial class MainWindow : Window
     // actionable gap across gear, uniques, aspects, skills and paragon, grouped by effort and ordered by
     // impact. This method only renders it (verb colors, focus filter, click-to-focus). Leads with free wins
     // (equip a better item you already own). Null when the build is complete.
+    // The player's captured Talisman (LoH): seal + charms + runes, as a rail card. Maxroll exports no talisman
+    // TARGETS, so this is a pure "what you own" view, populated from live seal/charm/rune captures. Returns null
+    // (no card) until a talisman piece is captured.
+    UIElement? TalismanPanel(LiveBuild live)
+    {
+        var t = TalismanView.From(live);
+        if (!t.Any) return null;
+        var sp = new StackPanel();
+        sp.Children.Add(TBs("TALISMAN", Gold, 13, true, new Thickness(0, 0, 0, 8)));
+        void AddItem(Item it, string kind)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 7) };
+            string head = it.Name ?? "";
+            if (!string.IsNullOrEmpty(it.Rarity)) head += "  ·  " + it.Rarity;
+            if (kind == "seal") { int cs = TalismanView.CharmSlots(it); if (cs > 0) head += $"  ·  {cs} charm slots"; }
+            row.Children.Add(TB(head, Ink, 12.5, true));
+            var affs = (it.Affixes ?? new()).Where(a => !string.IsNullOrEmpty(a.Text)).Take(3).Select(a => a.Text).ToList();
+            if (affs.Count > 0) row.Children.Add(TB(string.Join("   ·   ", affs), Soft, 11.5, false));
+            sp.Children.Add(row);
+        }
+        foreach (var s in t.Seals) AddItem(s, "seal");
+        foreach (var c in t.Charms) AddItem(c, "charm");
+        foreach (var rn in t.Runes) AddItem(rn, "rune");
+        return new Border
+        {
+            Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = sp,
+        };
+    }
+
     UIElement? GuidancePanel(DiffReport r)
     {
         var acts = BuildGuide.Steps(r, EffectiveLive());
