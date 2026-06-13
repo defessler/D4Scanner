@@ -3727,7 +3727,22 @@ public partial class MainWindow : Window
     UIElement? TalismanPanel(LiveBuild live)
     {
         var t = TalismanView.From(live);
-        if (!t.Any) return null;
+        if (!t.Any)
+        {
+            // Every build runs a talisman (seal + charms). If the player has captured gear but no talisman, nudge
+            // them to scan it (so the capture/display/set-bonus tracking populates) — but stay silent on a fresh,
+            // nothing-captured-yet launch (no gear either) so it isn't noise before they've scanned anything.
+            bool hasGear = (live?.Gear?.Count ?? 0) > 0 || (live?.Inventory?.Count ?? 0) > 0;
+            if (!hasGear) return null;
+            var hint = new StackPanel();
+            hint.Children.Add(TBs("TALISMAN", Gold, 13, true, new Thickness(0, 0, 0, 6)));
+            hint.Children.Add(TB("Not captured yet — open the Talisman screen in-game and hover your seal & charms to track them here.", Soft, 11.5, false));
+            return new Border
+            {
+                Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14), Child = hint,
+            };
+        }
         var sp = new StackPanel();
         sp.Children.Add(TBs("TALISMAN", Gold, 13, true, new Thickness(0, 0, 0, 8)));
         void AddItem(Item it, string kind)
