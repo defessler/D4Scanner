@@ -30,6 +30,24 @@ public static class TalismanView
         return new Pieces(Pick("seal"), Pick("charm"), Pick("rune"));
     }
 
+    /// <summary>Set-bonus progress (LoH: set bonuses come via Set Charms). A Set Charm voices its set's
+    /// "&lt;Name&gt; (active/total)" header — GearParser captures it into SetName/SetActive/SetTotal.</summary>
+    public sealed record SetProgress(string Name, int Active, int Total)
+    {
+        public bool Complete => Total > 0 && Active >= Total;
+    }
+
+    /// <summary>Distinct set memberships across the supplied charms (the active/total is the highest seen),
+    /// ordered most-complete-first.</summary>
+    public static List<SetProgress> Sets(IEnumerable<Item>? charms) =>
+        (charms ?? Enumerable.Empty<Item>())
+        .Where(c => !string.IsNullOrEmpty(c.SetName))
+        .GroupBy(c => c.SetName!, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new SetProgress(g.Key, g.Max(c => c.SetActive ?? 0), g.Max(c => c.SetTotal ?? 0)))
+        .OrderByDescending(s => s.Total > 0 ? (double)s.Active / s.Total : 0)
+        .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
     static readonly Regex ReCharmSlots = new(@"Unlocks\s+(\d+)\s+Charm\s+Slots", RegexOptions.IgnoreCase);
 
     /// <summary>A seal voices "Unlocks N Charm Slots" (its capacity — gated by seal rarity); pull N from the
