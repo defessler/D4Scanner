@@ -270,6 +270,23 @@ Check("LootFilter preset: affix id present", preset.Contains("Maximum Life"));
 Check("LootFilter preset: unique id present", preset.Contains("Cowl of the Homeless"));
 Check("LootFilter preset: affix typed by slot", preset.Contains("\"Type\":\"Helm\""));
 
+// LootFilter: a loose aspect (in Aspects but pinned to no gear piece) must still export — both markdown
+// ("Other Aspects") and the companion preset. Real-data gap: a build had 8 aspects but only 7 were
+// slot-bound, so the 8th was silently dropped from the exported filter.
+var aspTarget = new TargetBuild
+{
+    Name = "AspT",
+    Gear = { new TargetGear { Slot = "Helm", Aspect = "Bound Aspect", Affixes = { new TargetAffix { Name = "Dexterity" } } } },
+    Aspects = { "Bound Aspect", "Loose Flex Aspect" },
+};
+var aspMd = LootFilter.Markdown(aspTarget);
+Check("LootFilter md: bound aspect under its slot", aspMd.Contains("**Aspect:** Bound Aspect"));
+Check("LootFilter md: loose aspect listed in Other Aspects", aspMd.Contains("## Other Aspects") && aspMd.Contains("Loose Flex Aspect"));
+Check("LootFilter md: bound aspect NOT duplicated into Other Aspects", aspMd.IndexOf("Bound Aspect", StringComparison.Ordinal) == aspMd.LastIndexOf("Bound Aspect", StringComparison.Ordinal));
+var aspPreset = System.Text.Json.JsonSerializer.Serialize(LootFilter.CompanionPreset(aspTarget));
+Check("LootFilter preset: loose aspect present", aspPreset.Contains("Loose Flex Aspect"));
+Check("LootFilter preset: bound aspect present", aspPreset.Contains("Bound Aspect"));
+
 // ---- BuildGuide dedup + RE-TEMPER verb ----
 var guideTarget = new TargetBuild { Gear = {
     new TargetGear { Slot = "weapon", Affixes = { new TargetAffix { Name = "Damage Over Time" } } },
