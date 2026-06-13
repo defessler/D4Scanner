@@ -43,7 +43,10 @@ public sealed class ProfileStore
         {
             return Directory.EnumerateFiles(_root, "*.json")
                 .Where(f => !string.Equals(Path.GetFileName(f), "active.json", StringComparison.OrdinalIgnoreCase))
-                .Select(LoadFile).Where(p => p != null).Cast<CharacterProfile>()
+                // skip non-profile JSONs that share the folder (e.g. tombstones.json) — they deserialize to a
+                // CharacterProfile with empty slug/name, which would otherwise surface as a PHANTOM blank
+                // character in the switcher and keep All().Count > 0 (blocking legacy migration).
+                .Select(LoadFile).Where(p => p != null && !string.IsNullOrEmpty(p.Slug) && !string.IsNullOrEmpty(p.Name)).Cast<CharacterProfile>()
                 .OrderByDescending(p => p.LastSeenUtcTicks).ToList();
         }
         catch { return new(); }
