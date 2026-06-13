@@ -53,8 +53,10 @@ public static class Activities
             if (nextGate != null)
             {
                 var pit = pack.PitForTorment(nextGate.Tier);
+                // The "higher tiers also…" nudge only makes sense below the cap; Torment 12 IS the top tier.
+                string tail = nextGate.Tier < 12 ? "; higher tiers also raise Greater Affix odds and item rolls." : ".";
                 acts.Add(new($"Push to Torment {nextGate.Tier}" + (pit is int p ? $" — clear Pit {p}" : ""),
-                    $"You're on Torment {t}. Torment {nextGate.Tier} unlocks {nextGate.Unlocks}; higher tiers also raise Greater Affix odds and item rolls."));
+                    $"You're on Torment {t}. Torment {nextGate.Tier} unlocks {nextGate.Unlocks}{tail}"));
             }
         }
 

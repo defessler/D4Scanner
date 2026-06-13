@@ -2250,6 +2250,13 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     // no torment known ⇒ no push rec (graceful), and at T12 there's nothing higher to push to
     Check("Tier gate: no push rec without a known Torment", !Activities.Recommend(gapReport).Any(a => a.Title.StartsWith("Push to Torment")));
     Check("Tier gate: no push rec at Torment 12 (capped)", !Activities.Recommend(gapReport, new GuideContext(12, "Rogue")).Any(a => a.Title.StartsWith("Push to Torment")));
+    // Torment 11 (one below the cap) must still get a push to T12 — the doc's gear-farm tier (previously
+    // dropped because tormentGates had no T12 entry, leaving near-endgame players with no progression nudge).
+    var t11 = Activities.Recommend(gapReport, new GuideContext(11, "Rogue"));
+    Check("Tier gate: at Torment 11 a 'Push to Torment 12' rec appears", t11.Any(a => a.Title.Contains("Push to Torment 12")));
+    Check("Tier gate: the T12 push names Pit 100", t11.Any(a => a.Title.Contains("Pit 100")));
+    Check("Tier gate: the T12 push omits the 'higher tiers' nudge (it IS the top tier)",
+        t11.Where(a => a.Title.Contains("Push to Torment 12")).All(a => !a.Detail.Contains("higher tiers")));
 
     // IP-tier: at endgame, a 900 Ancestral candidate beats a sub-900 equipped piece at an otherwise-equal slot
     var ipTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Gloves", Affixes = {
