@@ -319,9 +319,36 @@ public partial class MainWindow : Window
         {
             bool n = ActualWidth < TwoColMin;
             if (n != _narrow) { _narrow = n; if (_target != null && !_rawView && !_stepsView) Render(); }
+            ReflowHeader();
         };
         KeyDown += Window_KeyDown;
         ApplyZoom();
+    }
+
+    bool _hdrStacked;
+    // C8: below ~900px the action buttons squeeze the search box to a sliver. Stack them onto their own
+    // (wrapping) row beneath the search instead — the search then spans the full width. Guarded so it only
+    // re-lays-out on a state change, and uses a header-specific threshold (NOT the doll's TwoColMin=1200).
+    void ReflowHeader(double? widthOverride = null)
+    {
+        double w = widthOverride ?? ActualWidth;
+        bool stack = w > 50 && w < 900;
+        if (stack == _hdrStacked) return;
+        _hdrStacked = stack;
+        if (stack)
+        {
+            Grid.SetColumnSpan(HdrSearch, 2);
+            Grid.SetRow(HdrButtons, 1); Grid.SetColumn(HdrButtons, 0); Grid.SetColumnSpan(HdrButtons, 2);
+            HdrButtons.HorizontalAlignment = HorizontalAlignment.Left;
+            HdrButtons.Margin = new Thickness(0, 8, 0, 0);
+        }
+        else
+        {
+            Grid.SetColumnSpan(HdrSearch, 1);
+            Grid.SetRow(HdrButtons, 0); Grid.SetColumn(HdrButtons, 1); Grid.SetColumnSpan(HdrButtons, 1);
+            HdrButtons.HorizontalAlignment = HorizontalAlignment.Stretch;
+            HdrButtons.Margin = new Thickness(0);
+        }
     }
 
     void SetUrlText(string text)
@@ -1308,6 +1335,7 @@ public partial class MainWindow : Window
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         _uiReady = true;
         _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
+        ReflowHeader(w);           // seed the header stack/unstack from the requested width too (no SizeChanged headless)
         var renderTarget = System.Environment.GetEnvironmentVariable("D4_RENDER_TARGET");   // render-test seam: point at a specific build
         if (!string.IsNullOrWhiteSpace(renderTarget) && File.Exists(renderTarget)) _targetPath = renderTarget;
         ReloadTarget();

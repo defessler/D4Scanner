@@ -48,10 +48,11 @@
         </Border.BorderBrush>
         <StackPanel>
           <!-- Row 1: search/import box (= primary build selector) + action buttons -->
-          <Grid>
+          <Grid x:Name="HdrGrid">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <!-- search box: when a build is loaded its name shows as placeholder text; click to search / switch -->
-            <Grid Grid.Column="0" Margin="0,0,10,0">
+            <Grid x:Name="HdrSearch" Grid.Column="0" Margin="0,0,10,0">
               <TextBox x:Name="UrlBox" HorizontalContentAlignment="Left" TextAlignment="Left"
                        ToolTip="Type a build name to search, or paste a Maxroll build-guide / planner URL"/>
               <!-- left margin = TextBox border (1) + style Padding.Left (10) + caret inset (2), so the
@@ -75,7 +76,7 @@
                 </Border>
               </Popup>
             </Grid>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <WrapPanel x:Name="HdrButtons" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <Button x:Name="ImportBtn" Style="{StaticResource Primary}" Content="Import" Padding="20,8"/>
               <Button x:Name="ProfileBtn" Content="Profile" FontSize="14" Visibility="Collapsed" Margin="9,0,0,0"/>
               <Popup x:Name="ProfilePopup" PlacementTarget="{Binding ElementName=ProfileBtn}" Placement="Bottom"
@@ -104,7 +105,7 @@
                 </Border>
               </Popup>
               <Button x:Name="SettingsBtn" Content="⚙" FontSize="14" Margin="9,0,0,0" ToolTip="Settings"/>
-            </StackPanel>
+            </WrapPanel>
           </Grid>
 
           <!-- Row 2: overall % + progress bar (threshold slider moved to ⚙ Settings) -->
