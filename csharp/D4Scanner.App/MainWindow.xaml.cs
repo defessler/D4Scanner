@@ -2226,18 +2226,14 @@ public partial class MainWindow : Window
             if (d.DebugMode != _debugMode) list.Add(d.DebugMode ? "Show debug info on paper-doll cells" : "Hide debug info");
             if (!string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase))
                 list.Add($"Watch a different TTS log: {System.IO.Path.GetFileName(d.Log)}");
-            var cacheNames = new[] { "game item icons", "build index", "Maxroll data", "live gear" };
-            var picked = Enumerable.Range(0, 4).Where(i => d.CacheChecked[i]).Select(i => cacheNames[i]).ToList();
-            if (picked.Count > 0)
-                list.Add("Clear cache: " + string.Join(", ", picked)
-                    + (d.CacheChecked[3] ? " — every character's gear is rebuilt by replaying the whole TTS log" : ""));
+            // NB: cache clearing is NOT here — it has its own "Clear selected" button in the cache card
+            // and applies immediately, separate from this deferred Save (a one-shot maintenance action).
             if (d.MoveLogTo != null && !string.Equals(d.MoveLogTo, _log, StringComparison.OrdinalIgnoreCase))
                 list.Add($"MOVE the TTS log (and archives) to {d.MoveLogTo} — needs Diablo IV closed; the game writes there from its next launch");
             if (d.LogMaxFileMB != _logMaxFileMB || d.LogMaxFiles != _logMaxFiles || d.LogMaxAgeDays != _logMaxAgeDays)
                 list.Add($"Log retention: rotate at {d.LogMaxFileMB} MB, keep {d.LogMaxFiles} archives, max age {d.LogMaxAgeDays} days");
             if (d.ClearLogs)
-                list.Add("Clear logs: delete archives + empty the active TTS log"
-                    + (d.CacheChecked[3] ? "  ⚠ combined with the gear rebuild this replays an EMPTY log — your characters will show no gear until re-hovered" : ""));
+                list.Add("Clear logs: delete archives + empty the active TTS log");
             return list;
         }
         void RefreshPending()
@@ -2365,7 +2361,7 @@ public partial class MainWindow : Window
         sp.Children.Add(retRow);
 
         // clear logs (staged): archives + the active file + the legacy d4_tts.jsonl orphan
-        ToggleRow("Clear logs on Save", "Deletes archived logs and empties the active TTS log (plus the legacy d4_tts.jsonl). Your captured gear is NOT touched — but a queued gear rebuild would then find an empty log.",
+        ToggleRow("Clear logs on Save", "Deletes archived logs and empties the active TTS log (plus the legacy d4_tts.jsonl). Your captured gear is NOT touched — but clearing the live gear cache afterwards would then have an empty log to rebuild from.",
             d.ClearLogs, on => { d.ClearLogs = on; RefreshPending(); });
 
         // session history: load a past session's loadout as a READ-ONLY preview (a viewer — parks the draft)
@@ -2400,22 +2396,31 @@ public partial class MainWindow : Window
         sessRow.Children.Add(sessCombo);
         sp.Children.Add(sessRow);
 
-        // ── CACHE section — one card; checking a row STAGES the clear (applied on Save) ──────
+        // ── CACHE section — its own card with its OWN "Clear selected" button: clearing happens
+        //    immediately (a one-shot maintenance action), NOT through the deferred settings Save ──────
         Section("CACHE");
         var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
         var cacheCard = new StackPanel();
-        var cacheDesc = TB("Check what to clear — it happens on Save. Icons re-extract from your D4 install, the build index and Maxroll data re-download on next use, and clearing live gear rebuilds every character by replaying the whole TTS log (the log itself is never deleted).", Soft, 11.5, false);
+        var cacheDesc = TB("Check what to clear, then press Clear selected — it applies right away (independent of Save). Icons re-extract from your D4 install, the build index and Maxroll data re-download on next use, and clearing live gear rebuilds every character by replaying the whole TTS log (the log itself is never deleted).", Soft, 11.5, false);
         cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); cacheCard.Children.Add(cacheDesc);
+
+        Button clearCacheBtn = null!;
+        void RefreshCacheBtn()
+        {
+            if (clearCacheBtn == null) return;
+            bool any = d.CacheChecked.Any(x => x);
+            clearCacheBtn.IsEnabled = any; clearCacheBtn.Opacity = any ? 1.0 : 0.45;
+        }
 
         var cacheRows = new (string label, string detail, Func<bool> exists)[]
         {
             ("Game item icons", $"{CountFiles(gameIconDir, "*.png")} files — extracted from your D4 install; re-extract lazily",
                 () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0),
-            ("Build index", "Maxroll guide list (build_index.json) — re-fetched right after Save",
+            ("Build index", "Maxroll guide list (build_index.json) — re-fetched right after clearing",
                 () => File.Exists(BuildIndex.CachePath) || File.Exists(IconResolver.IndexPath)),
             ("Maxroll data", "Planner item/affix data — re-fetched on next import",
                 () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json"))),
-            ("Live gear cache", "Every character's captured loadout — rebuilt by replaying the entire TTS log on Save. Items you deleted long ago may reappear until cleared again.",
+            ("Live gear cache", "Every character's captured loadout — rebuilt by replaying the entire TTS log when cleared. Items you deleted long ago may reappear until cleared again.",
                 () => File.Exists(LivePath) || _live.Gear.Count > 0 || _profiles.All().Count > 0),
         };
         for (int i = 0; i < cacheRows.Length; i++)
@@ -2424,17 +2429,37 @@ public partial class MainWindow : Window
             var (label, detail, exists) = cacheRows[i];
             var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var chk = new CheckBox { IsChecked = d.CacheChecked[idx], IsEnabled = exists(), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 10, 0) };
-            chk.Checked   += (_, _) => { d.CacheChecked[idx] = true; RefreshPending(); };
-            chk.Unchecked += (_, _) => { d.CacheChecked[idx] = false; RefreshPending(); };
+            chk.Checked   += (_, _) => { d.CacheChecked[idx] = true; RefreshCacheBtn(); };
+            chk.Unchecked += (_, _) => { d.CacheChecked[idx] = false; RefreshCacheBtn(); };
             DockPanel.SetDock(chk, Dock.Left); row.Children.Add(chk);
             var col = new StackPanel();
             col.Children.Add(TB(label, exists() ? Ink : Faint, 13, true));
             var det = TB(detail, Soft, 11, false); det.TextWrapping = TextWrapping.Wrap; col.Children.Add(det);
             row.Children.Add(col); cacheCard.Children.Add(row);
         }
-        var cacheHint = TB("✓ staged clears apply on Save — see Pending changes below", Faint, 10.5, false);
-        cacheHint.HorizontalAlignment = HorizontalAlignment.Right; cacheHint.Margin = new Thickness(0, 2, 0, 0);
-        cacheCard.Children.Add(cacheHint);
+        // the cache section's own action button — applies the checked clears immediately
+        var cacheBtnRow = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
+        clearCacheBtn = new Button { Content = "Clear selected", Style = (Style)FindResource("Primary"), Padding = new Thickness(16, 6, 16, 6), HorizontalAlignment = HorizontalAlignment.Right };
+        clearCacheBtn.Click += (_, _) =>
+        {
+            if (!d.CacheChecked.Any(x => x)) return;
+            if (d.CacheChecked[3])
+            {
+                var confirm = MessageBox.Show(
+                    "Clear the live gear cache?\n\nThis wipes every character's captured loadout and rebuilds it by replaying the whole TTS log. Items you deleted long ago may reappear.\n\nContinue?",
+                    "Clear live gear cache", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (confirm != MessageBoxResult.Yes) return;
+            }
+            ClearSelectedCache((bool[])d.CacheChecked.Clone());
+            for (int i = 0; i < d.CacheChecked.Length; i++) d.CacheChecked[i] = false;
+            Toast("Cache cleared");
+            RenderSettings();   // refresh the card (counts / enabled rows) — the draft is preserved
+        };
+        DockPanel.SetDock(clearCacheBtn, Dock.Right); cacheBtnRow.Children.Add(clearCacheBtn);
+        var cacheHint = TB("applies immediately — separate from Save", Faint, 10.5, false);
+        cacheHint.VerticalAlignment = VerticalAlignment.Center; cacheBtnRow.Children.Add(cacheHint);
+        cacheCard.Children.Add(cacheBtnRow);
+        RefreshCacheBtn();
         sp.Children.Add(new Border
         {
             Background = B("#15141B"), BorderBrush = Edge, BorderThickness = new Thickness(1),
@@ -2488,8 +2513,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Save: apply the whole draft atomically — prompts that used to fire at toggle time fire
-    /// HERE, side effects coalesce into one SaveSettings and at most one StartWatching, and staged cache
-    /// clears execute. On the TTS-uninstall prompt declining, nothing applies and the draft survives.</summary>
+    /// HERE, side effects coalesce into one SaveSettings and at most one StartWatching. (Cache clearing
+    /// is NOT part of Save — it's its own immediate action.) On the TTS-uninstall prompt declining or a
+    /// blocked log move, nothing applies and the draft survives.</summary>
     void ApplySettings()
     {
         var d = _settingsDraft;
@@ -2571,32 +2597,42 @@ public partial class MainWindow : Window
             AppLog("logs cleared (archives + active truncated)");
         }
 
-        // staged cache clears
+        // (cache clearing is NOT applied here — it has its own immediate "Clear selected" button)
+
+        SaveSettings();          // ONE persist (incl. cleared logSkipPos / retention / move sentinel)
+        CloseSettings();
+        if (needInstall) RunInstall(null);
+        if (watchChanged) StartWatching();                       // at most ONE (also reloads the build index)
+        Render();
+        Toast("Settings saved");
+    }
+
+    /// <summary>Perform the checked cache clears IMMEDIATELY — the cache section's own action, separate
+    /// from the deferred settings Save. Game icons / build index / Maxroll data just delete-and-refetch;
+    /// the live-gear clear wipes every profile's loadout and replays the whole TTS log (the one-shot
+    /// replay flag is persisted and retired only when the replay catches up — see OnLiveUpdate — so a
+    /// restart mid-replay resumes instead of stranding wiped profiles).</summary>
+    void ClearSelectedCache(bool[] sel)
+    {
         var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
-        if (d.CacheChecked[0]) { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }
-        if (d.CacheChecked[1]) { try { File.Delete(BuildIndex.CachePath); } catch { } try { File.Delete(IconResolver.IndexPath); } catch { } }
-        if (d.CacheChecked[2]) { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }
-        if (d.CacheChecked[3])
+        if (sel[0]) { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }
+        if (sel[1]) { try { File.Delete(BuildIndex.CachePath); } catch { } try { File.Delete(IconResolver.IndexPath); } catch { } }
+        if (sel[2]) { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }
+        bool rebuilt = false;
+        if (sel[3])
         {
-            // full rebuild: wipe live + EVERY profile's captured loadout, then replay the whole TTS
-            // log from byte 0 (the flag is one-shot persisted and retired only when the replay
-            // catches up — see OnLiveUpdate — so a restart mid-replay resumes instead of stranding).
             try { File.Delete(LivePath); } catch { }
             _live = new();
             _logSkipToPos = 0;
             _profiles.ResetAllLive();
             _replayFromZero = true;
-            watchChanged = true;
+            rebuilt = true;
         }
-        bool refetchIndex = d.CacheChecked[1];
-
-        SaveSettings();          // ONE persist (incl. replayFromZero / cleared logSkipPos)
-        CloseSettings();
-        if (needInstall) RunInstall(null);
-        if (watchChanged) StartWatching();                       // at most ONE (also reloads the build index)
-        else if (refetchIndex) LoadBuildIndex();                 // index cleared but watchers untouched
+        SaveSettings();                              // persist replayFromZero / cleared logSkipPos
+        if (rebuilt) StartWatching();                // replay the whole log from zero
+        else if (sel[1]) LoadBuildIndex();           // index cleared but watchers untouched
         Render();
-        Toast("Settings saved");
+        AppLog("cache cleared: " + string.Join(", ", new[] { "icons", "build-index", "maxroll", "live-gear" }.Where((_, i) => sel[i])));
     }
 
     static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
