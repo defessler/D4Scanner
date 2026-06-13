@@ -56,7 +56,10 @@ public sealed class OcrCaptureEngine : IDisposable
             if (hash == _lastHash) return;
             _lastHash = hash;
 
-            var sb = await BitmapToSoftwareBitmapAsync(bmp).ConfigureAwait(false);
+            // `using`: the SoftwareBitmap is consumed by RecognizeAsync below and not referenced
+            // afterward — dispose it deterministically rather than leaking a full-screen native
+            // bitmap to the finalizer on every changed-frame scan (same class as the WGC grab fix).
+            using var sb = await BitmapToSoftwareBitmapAsync(bmp).ConfigureAwait(false);
             if (sb == null) return;
 
             var engine = OcrEngine.TryCreateFromUserProfileLanguages();
@@ -179,6 +182,8 @@ public sealed class OcrCaptureEngine : IDisposable
         var writer = new Windows.Storage.Streams.DataWriter(iras);
         writer.WriteBytes(ms.ToArray());
         await writer.StoreAsync().AsTask().ConfigureAwait(false);
+        writer.DetachStream();   // detach before disposing: the writer's Dispose() closes its stream, but the decoder below still needs iras
+        writer.Dispose();
         iras.Seek(0);
         var decoder = await BitmapDecoder.CreateAsync(iras).AsTask().ConfigureAwait(false);
         return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied).AsTask().ConfigureAwait(false);
