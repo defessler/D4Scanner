@@ -4537,6 +4537,18 @@ public partial class MainWindow : Window
             lbl.TextAlignment = nm.TextAlignment = TextAlignment.Right;
         }
         text.Children.Add(lbl); text.Children.Add(nm);
+        // D9: at endgame (Torment captured) an equipped WEAPON below the IP cap is a flat DPS step-down —
+        // base weapon damage scales with IP, so a capped same-type weapon is a guaranteed upgrade. Advisory
+        // only. Cheap checks first; the profile read is reached ONLY for an already-sub-cap weapon (rare).
+        if (_dollView is "mine" or "all" && SlotKey(s.Label) == "weapon" && s.Gear?.LiveItems.Count > 0
+            && s.Gear.LiveItems[0].ItemPower is int wip && wip > 0 && wip < SeasonPack.Current.AncestralFloorIP
+            && (_activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null) is int)
+        {
+            int cap = SeasonPack.Current.AncestralFloorIP;
+            var ipNote = TB($"IP {wip} — below the {cap} cap (a {cap} weapon is a flat DPS upgrade)", Amber, 10.5, false);
+            ipNote.TextWrapping = TextWrapping.Wrap; ipNote.Margin = new Thickness(0, 2, 0, 0);
+            text.Children.Add(ipNote);
+        }
         if (_debugMode && s.Gear != null)
         {
             var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
