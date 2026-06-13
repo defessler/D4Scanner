@@ -2121,6 +2121,15 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     BaseIconIndex.HasMapping = h => GameDataIcons.HasMapping(h);   // restore the real predicate
 }
 
+// ---- v0.44.2: the item-DB self-heal must target the SAME file the cache clear deletes ----
+// (BaseIconIndex reads maxroll_data.min.json to resolve gear names → icons; a divergence between
+//  what the clear deletes and what the self-heal restores would silently leave icons broken)
+{
+    var p = MaxrollImporter.GameDataCachePath.Replace('/', '\\');
+    Check("GameDataCachePath is maxroll_data.min.json", p.EndsWith("maxroll_data.min.json", StringComparison.OrdinalIgnoreCase));
+    Check("GameDataCachePath lives under the d4scanner cache dir", p.Contains("\\d4scanner\\cache\\", StringComparison.OrdinalIgnoreCase));
+}
+
 // ---- v0.34: tombstones + inventory dedup ----
 {
     Item Mk(string name, string slot, long ticks, ItemSource src = ItemSource.Tts) =>
@@ -2356,13 +2365,18 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("Socket empties: known", sg3.SocketsKnown);
     Check("Socket empties: status reads 0/2 (not '2/2 filled')", sg3.SocketStatus!.Contains("0/2"));
 
-    // 4. nothing captured at all → NOT known, bar empty, text says so (the v0.37 bug fix)
+    // 4. nothing captured at all → NOT known, bar empty, text honest (v0.37 honesty; v0.44.2 reword).
+    //    D4 doesn't voice gem/empty sockets on equipped gear, so the message must NOT tell the user to
+    //    toggle Advanced Tooltips (they're already on) — it's a game limitation, stated plainly.
     var sg4 = SockGroup(new Item { Name = "H", Slot = "helm",
         Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } });
     Check("Socket no-info: not known", !sg4.SocketsKnown);
     Eq("Socket no-info: filled 0", 0, sg4.SocketsFilled);
     Eq("Socket no-info: wanted still 2 (denominator for the bar)", 2, sg4.SocketsWanted);
-    Check("Socket no-info: status says not captured", sg4.SocketStatus!.Contains("not captured"));
+    Check("Socket no-info: status is honest about D4 not voicing equipped sockets",
+        sg4.SocketStatus!.Contains("aren't voiced by D4"));
+    Check("Socket no-info: status no longer tells the user to toggle Advanced Tooltips",
+        !sg4.SocketStatus!.Contains("Advanced Tooltips"));
     Check("Socket no-info: status never claims it's filled", !sg4.SocketStatus!.Contains("2/2 filled"));
 }
 

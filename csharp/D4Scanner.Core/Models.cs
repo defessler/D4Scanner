@@ -334,7 +334,7 @@ public class Group
     public bool SocketsDone { get; set; }                    // all wanted sockets filled (no empties / runeword present)
     public int SocketsWanted { get; set; }                   // sockets the build wants here (drives the bar's denominator)
     public int SocketsFilled { get; set; }                   // sockets actually filled (clamped 0..wanted); 0 when unknown
-    public bool SocketsKnown { get; set; }                   // socket fill was actually captured (false ⇒ bar/text honest about "not captured")
+    public bool SocketsKnown { get; set; }                   // socket fill was actually captured (false ⇒ bar/text honest that D4 doesn't voice equipped-gear sockets)
 }
 
 /// <summary>A non-equipped item that beats the equipped piece for a slot — carried as a structured

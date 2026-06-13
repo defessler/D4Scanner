@@ -445,4 +445,25 @@ public static class MaxrollImporter
         }
         return JsonDocument.Parse(await File.ReadAllBytesAsync(path, ct));
     }
+
+    /// <summary>The local path of the Maxroll game-data DB (the item database BaseIconIndex reads to
+    /// resolve item names → icon handles, and that imports consume).</summary>
+    public static string GameDataCachePath => Path.Combine(CacheDir, "maxroll_data.min.json");
+
+    /// <summary>Ensure the Maxroll game-data DB is cached without needing a full build import. It is NOT
+    /// a discretionary cache — losing it (a cache clear, a stray delete) silhouettes EVERY gear icon and
+    /// blocks name resolution until the next import. This restores it on demand. Returns true when it had
+    /// to download (so the caller can repaint); a no-op (false) when the file is already present or the
+    /// fetch fails offline — never throws.</summary>
+    public static async Task<bool> EnsureGameDataCachedAsync(CancellationToken ct = default)
+    {
+        if (File.Exists(GameDataCachePath)) return false;
+        try
+        {
+            using var _ = await LoadJsonCached(DataUrl, "maxroll_data.min.json", ct);
+            BaseIconIndex.Reset();   // rebuild the name→handle index from the freshly cached file
+            return true;
+        }
+        catch { return false; }
+    }
 }
