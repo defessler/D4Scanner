@@ -137,7 +137,7 @@ public class GearParser
     {
         s = StripNameMarkers(s);
         var letters = s.Where(char.IsLetter).ToList();
-        if (letters.Count < 2 || s.Length > 64) return null;
+        if (letters.Count < 2 || s.Length > 96) return null;   // affix-prefixed/suffixed names run long; the all-caps gate below still rejects non-names
         if (!letters.All(char.IsUpper)) return null;
         return s;
     }
