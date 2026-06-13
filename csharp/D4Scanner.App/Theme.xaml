@@ -11,7 +11,7 @@
   <SolidColorBrush x:Key="EdgeHi"    Color="#524F5E"/>
   <SolidColorBrush x:Key="Ink"       Color="#E8E4DC"/>
   <SolidColorBrush x:Key="Soft"      Color="#9C9890"/>
-  <SolidColorBrush x:Key="Faint"     Color="#64615A"/>
+  <SolidColorBrush x:Key="Faint"     Color="#85827B"/>
   <SolidColorBrush x:Key="Accent"    Color="#D4A730"/>
   <SolidColorBrush x:Key="AccentHi"  Color="#F0C04A"/>
   <SolidColorBrush x:Key="AccentDim" Color="#7A5E10"/>
