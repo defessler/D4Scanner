@@ -98,6 +98,7 @@ public class LiveSkill
 {
     public string Name { get; set; } = "";
     public int? Rank { get; set; }
+    public int? BaseMax { get; set; }   // the "/Y" in the game's "RANK X/Y" — base cap; X-BaseMax is the +Ranks gear/paragon bonus
     public bool IsKeyPassive { get; set; }
     public bool Slotted { get; set; }
 }

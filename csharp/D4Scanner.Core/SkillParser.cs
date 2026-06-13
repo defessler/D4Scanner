@@ -30,8 +30,9 @@ public sealed class SkillParser
         if (m.Success && _prev is string name && IsSkillName(name) && int.TryParse(m.Groups[1].Value, out var rank))
         {
             _prev = null;
-            bool changed = !_byName.TryGetValue(name, out var ex) || ex.Rank != rank;
-            _byName[name] = new LiveSkill { Name = name, Rank = rank };
+            int? baseMax = int.TryParse(m.Groups[2].Value, out var bm) ? bm : (int?)null;
+            bool changed = !_byName.TryGetValue(name, out var ex) || ex.Rank != rank || ex.BaseMax != baseMax;
+            _byName[name] = new LiveSkill { Name = name, Rank = rank, BaseMax = baseMax };
             return changed;
         }
         _prev = line;

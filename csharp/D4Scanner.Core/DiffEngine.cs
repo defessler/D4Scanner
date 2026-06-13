@@ -623,7 +623,9 @@ public static class DiffEngine
                 {
                     Label = t.Name, Done = done,
                     Status = done ? "met" : hit != null ? "under" : "missing",
-                    Have = hit != null ? $"{have} pts" : null,
+                    // Show the game's own "rank X/Y" (effective/base): X-Y is the +Ranks gear/paragon bonus,
+                    // build-relevant info that the old "{X} pts" both mislabeled (it's a rank, not points) and hid.
+                    Have = hit != null ? (hit.BaseMax is int bm ? $"rank {have}/{bm}" : $"rank {have}") : null,
                     // Only a REAL rank target is worth showing: Maxroll often exports no explicit rank
                     // (actives are 1 base point; gear adds the rest), and a blanket "wants 1" reads as
                     // wrong next to a 20-point captured rank. Selection itself is the requirement then.
@@ -643,7 +645,7 @@ public static class DiffEngine
                 return new ReqItem
                 {
                     Label = name, Done = done, Status = done ? "met" : "missing",
-                    Have = hit?.Rank != null ? $"{hit.Rank} pts" : (done ? "selected" : null),
+                    Have = hit?.Rank is int hr ? (hit.BaseMax is int bm ? $"rank {hr}/{bm}" : $"rank {hr}") : (done ? "selected" : null),
                     Source = done ? "tts" : null,
                 };
             }).ToList();
