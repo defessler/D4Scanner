@@ -1274,6 +1274,8 @@ public partial class MainWindow : Window
         public int Matched, Total, Under;
         public Group? Gear;     // a gear slot
         public Category? Cat;   // a whole non-gear category
+        public TargetUnique? SlotUnique;   // a single-occupancy slot (gloves/helm/…) the build wants a unique in,
+                                           // merged onto its gear section so the slot is ONE cell not two
         public string Status => (Total - Matched) > 0 ? "missing" : Under > 0 ? "under" : "met";
     }
 
@@ -1467,6 +1469,26 @@ public partial class MainWindow : Window
                     : DiffEngine.SelfRows(eq);
             }
             sections.Add(new Section { Key = "uni:" + DiffEngine.Normalize(u.Name), Label = slotLabel, Matched = have ? 1 : 0, Total = 1, Gear = grp });
+        }
+
+        // Single-occupancy slots (helm/chest/gloves/pants/boots/amulet) hold ONE item, yet a build can
+        // list BOTH a gear-affix target AND a unique for the same slot (e.g. gloves: affix slot + the
+        // unique "Sea Lord's Fine Gloves"). That produced TWO doll cells — the equipped piece on one and
+        // an empty phantom on the other — which read as "the slot is being ignored". Collapse them: keep
+        // the gear section (it carries the equipped item + affix scoring) and stash the wanted unique on
+        // it (so the Target view still shows the unique); drop the separate empty uni: cell. Weapons and
+        // rings are excluded — those slots legitimately hold several items, each its own tile.
+        var singleSlots = new HashSet<string> { "helm", "chest", "gloves", "pants", "boots", "amulet" };
+        foreach (var u in _target?.Uniques ?? new())
+        {
+            var sk = SlotKey(u.Slot ?? "");
+            if (!singleSlots.Contains(sk)) continue;
+            var gearSec = sections.FirstOrDefault(s => s.Key.StartsWith("gear:") && s.Gear != null && SlotKey(s.Label) == sk);
+            if (gearSec == null) continue;   // unique-only slot (no competing gear section) — leave as its own cell
+            var uniSec = sections.FirstOrDefault(s => s.Key == "uni:" + DiffEngine.Normalize(u.Name));
+            if (uniSec == null) continue;
+            gearSec.SlotUnique = u;           // Target view / detail can now surface the wanted unique
+            sections.Remove(uniSec);          // collapse the phantom second cell
         }
 
         // My Gear / All: surface EVERY equipped weapon as its own tile, labelled by its real type — including
@@ -4162,6 +4184,10 @@ public partial class MainWindow : Window
             var u = _target?.Uniques.FirstOrDefault(x => DiffEngine.Normalize(x.Name) == normalizedKey);
             if (u != null) return (u.Name, u.Mythic ? RMythic : RUnique, u.Name, u.ItemId, u.Image);
         }
+        // a single-occupancy slot whose unique was merged onto this gear section (see the merge pass in
+        // Render) — the build wants this specific unique here, so the Target tile shows it
+        if (s.SlotUnique is TargetUnique su)
+            return (su.Name, su.Mythic ? RMythic : RUnique, su.Name, su.ItemId, su.Image);
         var tg = TargetGearOf(s);
         // Aspect — the build wants a specific legendary power; use the template icon for art if available
         if (!string.IsNullOrEmpty(s.Gear?.WantAspect)) return (s.Gear!.WantAspect!, RLegend, null, tg?.ItemId, tg?.Image);
