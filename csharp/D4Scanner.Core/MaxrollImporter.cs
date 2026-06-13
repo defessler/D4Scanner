@@ -361,7 +361,11 @@ public static class MaxrollImporter
                     var anid = Nid(asp);
                     if (anid == null) continue;
                     var an = AspectName(anid.Value, m);
-                    if (an != null) { aspects.Add(an); aspectName ??= an; }
+                    // dedup the global Aspects list: the same aspect imprinted on two slots is ONE
+                    // "do you own this aspect?" requirement — counting it twice inflates the Aspects total.
+                    // (The per-slot WantAspect is display-only and never enters a group's Total, so the
+                    // aspect is otherwise counted exactly once — no gear-vs-Aspects double-count exists.)
+                    if (an != null) { if (!aspects.Contains(an)) aspects.Add(an); aspectName ??= an; }
                 }
 
                 var affixes = ParseItemAffixes(item);

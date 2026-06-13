@@ -158,7 +158,8 @@ public static class UpgradeScorer
 
             // at a true tie, in Torment, a 900-IP Ancestral candidate beats a sub-900 equipped piece (below-cap
             // gear is strictly temporary at endgame — its same affixes roll higher at 900)
-            bool ipBreaks = torment.HasValue && (it.ItemPower ?? 0) >= 900 && bar.ip > 0 && bar.ip < 900;
+            int floorIp = SeasonPack.Current.AncestralFloorIP;
+            bool ipBreaks = torment.HasValue && (it.ItemPower ?? 0) >= floorIp && bar.ip > 0 && bar.ip < floorIp;
             // beats the piece it would displace when it's more complete (with the enchant credit), or equally
             // complete but with more REAL presence, more useful Greater Affixes, or — at endgame — a higher IP tier
             bool beats = pick >= 0 && (effective > bar.eff
