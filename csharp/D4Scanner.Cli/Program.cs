@@ -2,13 +2,14 @@ using D4Scanner.Core;
 
 // Verify/report CLI:  D4Scanner.Cli (--target t.json | --maxroll URL [--profile X]) [--log L] [--all] [--watch] [--save out.json]
 string log = TargetLoader.DefaultLogPath();
-string? targetPath = null, maxroll = null, profile = null, save = null;
+string? targetPath = null, maxroll = null, profile = null, save = null, livePath = null;
 bool equippedOnly = true, watch = false;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--log" when i + 1 < args.Length: log = args[++i]; break;
+        case "--live" when i + 1 < args.Length: livePath = args[++i]; break;   // diff a persisted live.json directly (validation/debug)
         case "--target" when i + 1 < args.Length: targetPath = args[++i]; break;
         case "--maxroll" when i + 1 < args.Length: maxroll = args[++i]; break;
         case "--profile" when i + 1 < args.Length: profile = args[++i]; break;
@@ -63,7 +64,8 @@ void Print(LiveBuild live)
                     else val = "  -";
                 }
                 var have = it.Have != null ? "   have: " + it.Have : "";
-                Console.WriteLine($"    {mark} {it.Label}{val}{have}");
+                var note = it.RollNote != null ? "   (" + it.RollNote + ")" : "";
+                Console.WriteLine($"    {mark} {it.Label}{val}{have}{note}");
             }
             if (g.Extras.Count > 0) Console.WriteLine("      also: " + string.Join(", ", g.Extras.Take(5)));
         }
@@ -121,6 +123,11 @@ if (watch)
     Print(w.Build);
     Console.WriteLine($"watching {log}  (Ctrl+C to stop)…");
     Thread.Sleep(Timeout.Infinite);
+}
+else if (livePath != null)
+{
+    var live = System.Text.Json.JsonSerializer.Deserialize<LiveBuild>(File.ReadAllText(livePath), D4Scanner.Core.Json.Opts) ?? new LiveBuild();
+    Print(live);
 }
 else
 {

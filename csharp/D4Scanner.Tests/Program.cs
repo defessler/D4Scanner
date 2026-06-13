@@ -85,6 +85,30 @@ Eq("Diff partial: matched 1 (ML present)", 1, rPart.Matched);
 Eq("Diff partial: under 1 (ML below min)", 1, rPart.Under);
 Eq("Diff partial: pct 33", 33, rPart.Pct);
 
+// ---- A6: owned-unique secondary-roll advisory (RollNote) — presence still counts; a badly-rolled copy is flagged ----
+{
+    var a6Target = new TargetBuild
+    {
+        Name = "A6",
+        Uniques = { new TargetUnique { Name = "Sea Lord's Fine Gloves", Slot = "Gloves",
+            Affixes = { new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Armor" } } } },
+    };
+    // owns the unique but only ONE of the two build secondaries (missing Armor)
+    var a6Partial = new LiveBuild { Gear = {
+        new Item { Name = "Sea Lord's Fine Gloves", Slot = "gloves", IsUnique = true, Affixes = {
+            new Affix { Text = "Dexterity", Value = 80 } } } } };
+    var a6u = DiffEngine.Diff(a6Target, a6Partial).Categories.First(c => c.Id == "uniques").Groups[0].Items[0];
+    Check("A6: owned unique still counts as met (presence)", a6u.Done);
+    Check("A6: under-rolled owned unique gets a RollNote (1/2)", a6u.RollNote != null && a6u.RollNote.Contains("1/2"));
+    Check("A6: RollNote names the missing build secondary", a6u.RollNote!.Contains("Armor"));
+    // owns the unique with BOTH build secondaries → no advisory note
+    var a6Full = new LiveBuild { Gear = {
+        new Item { Name = "Sea Lord's Fine Gloves", Slot = "gloves", IsUnique = true, Affixes = {
+            new Affix { Text = "Dexterity", Value = 80 }, new Affix { Text = "Armor", Value = 500 } } } } };
+    var a6uf = DiffEngine.Diff(a6Target, a6Full).Categories.First(c => c.Id == "uniques").Groups[0].Items[0];
+    Check("A6: fully-rolled owned unique has no RollNote", a6uf.Done && a6uf.RollNote == null);
+}
+
 // ---- BuildGuide ----
 Eq("Steps: none when complete", 0, BuildGuide.Steps(rMet).Count);
 var steps = BuildGuide.Steps(rPart);
