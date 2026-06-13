@@ -98,6 +98,12 @@ public class GearParser
     // (durability drops in combat, sell value tracks gold, scroll hints depend on tooltip height).
     // Dropped before the PowerText catch-all so item identity is content-only.
     static readonly Regex ReStatefulInfo = new(@"^(Durability:|Sell Value:|Armory Loadout$|Mousewheel scroll|Scroll (Down|Up)$)", RegexOptions.IgnoreCase);
+    // LoH Talisman CHARM type line: "<Rarity> Charm" / "Charm" / "Charm (Ancestral)" / "Ancestral Set Charm".
+    // Only "Set Charm"/"Unique Charm" are literal TypeSlot keys, so Rare/Magic/Legendary charms fell through
+    // unrecognized and were silently DROPPED (verified against the user's real Talisman-screen log). Anchored so
+    // the seal's "Unlocks N Charm Slots" line and all-caps charm NAMES ("TRAPPER'S CHARM OF …") never match.
+    static readonly Regex ReCharmType = new(
+        @"^(?:Ancestral\s+)?(?:Common|Magic|Rare|Legendary|Unique|Set|Mythic)?\s*Charm(?:\s*\(Ancestral\))?$", RegexOptions.IgnoreCase);
 
     public static string Clean(string s) => CleanWithTime(s, out _);
 
@@ -158,6 +164,9 @@ public class GearParser
         (string key, string slot)? hit = null;
         foreach (var ts in TypeSlot)
             if (Regex.IsMatch(ln, @"\b" + Regex.Escape(ts.key) + @"\b", RegexOptions.IgnoreCase)) { hit = ts; break; }
+        // Rarity-prefixed talisman charms ("Rare Charm", "Charm (Ancestral)", …) aren't literal TypeSlot keys —
+        // recognize the charm type designation so they're captured instead of dropped.
+        if (hit == null && ReCharmType.IsMatch(ln)) hit = ("Charm", "charm");
         if (hit == null) return false;
         item.ItemType = hit.Value.key; item.Slot = hit.Value.slot;
         foreach (var r in Rarities)
