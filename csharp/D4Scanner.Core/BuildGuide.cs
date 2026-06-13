@@ -35,9 +35,17 @@ public static class BuildGuide
             {
                 var g = gear.Groups[gi];
                 var key = "gear:" + gi;
-                foreach (var up in g.UpgradeItems)   // tier 0 — free win: equip a better item you already own
-                    acts.Add(new GuideStep(0, "EQUIP", $"{g.Name} — {up.Name}", "already in your bags",
+                // tier 0 — free win: equip a better item you already own. Show ONLY the best owned upgrade
+                // per slot (most build-affixes met), not every candidate — a slot with several owned upgrades
+                // (e.g. four boots) would otherwise flood the guide. Note how many more are sitting in bags.
+                if (g.UpgradeItems.Count > 0)
+                {
+                    var up = g.UpgradeItems.OrderByDescending(u => u.Met).First();
+                    int more = g.UpgradeItems.Count - 1;
+                    acts.Add(new GuideStep(0, "EQUIP", $"{g.Name} — {up.Name}",
+                        more > 0 ? $"already in your bags (+{more} more owned)" : "already in your bags",
                         $"Equip {up.Name} on your {g.Name} — you already own a better fit", key));
+                }
                 foreach (var i in g.Items)
                 {
                     if (i.Status == "missing")       // tier 2 — craft/temper the missing affix

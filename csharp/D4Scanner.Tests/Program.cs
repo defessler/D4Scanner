@@ -117,6 +117,29 @@ Check("Steps: IMPROVE for the under-rolled affix", steps.Any(s => s.Verb == "IMP
 Check("Steps: FIND for the missing unique", steps.Any(s => s.Verb == "FIND"));
 Check("Steps: impact-ordered by tier", steps.Select(s => s.Tier).SequenceEqual(steps.Select(s => s.Tier).OrderBy(t => t)));
 
+// BuildGuide: several owned upgrades for ONE slot collapse to a single EQUIP step (best by met) + a count,
+// instead of flooding the DO NEXT rail with one step per candidate (fresh-review find).
+{
+    var eqTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Boots", Affixes = {
+        new TargetAffix { Name = "Dexterity" }, new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Movement Speed" } } } } };
+    var eqLive = new LiveBuild
+    {
+        Gear = { new Item { Name = "Worn Boots", Slot = "boots", Equipped = true, Affixes = { new Affix { Text = "Dexterity", Value = 10 } } } },
+        Inventory =
+        {
+            new Item { Name = "Better Boots", Slot = "boots", Affixes = { new Affix { Text = "Dexterity", Value = 10 }, new Affix { Text = "Maximum Life", Value = 500 } } },
+            new Item { Name = "Best Boots",   Slot = "boots", Affixes = { new Affix { Text = "Dexterity", Value = 10 }, new Affix { Text = "Maximum Life", Value = 500 }, new Affix { Text = "Movement Speed", Value = 16 } } },
+        },
+    };
+    var eqSteps = BuildGuide.Steps(DiffEngine.Diff(eqTarget, eqLive), eqLive).Where(s => s.Verb == "EQUIP").ToList();
+    Check("Guide EQUIP-collapse: exactly one EQUIP step for the slot", eqSteps.Count == 1);
+    if (eqSteps.Count == 1)
+    {
+        Check("Guide EQUIP-collapse: picks the best owned upgrade (Best Boots)", (eqSteps[0].Text ?? "").Contains("Best Boots"));
+        Check("Guide EQUIP-collapse: detail notes the extra owned upgrade (+1 more)", (eqSteps[0].Detail ?? "").Contains("+1 more"));
+    }
+}
+
 // ---- GearParser: the seasonally-fragile TTS parser, against the canonical sample log fixture ----
 var sampleLog = Path.Combine(AppContext.BaseDirectory, "sample_tts.log");
 Check("sample_tts.log fixture present", File.Exists(sampleLog));
