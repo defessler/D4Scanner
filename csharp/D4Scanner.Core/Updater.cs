@@ -37,9 +37,25 @@ public static class Updater
 
     public static bool IsNewer(string latest, string running)
     {
-        if (!System.Version.TryParse(latest.TrimStart('v'), out var l)) return false;
-        if (!System.Version.TryParse(running.TrimStart('v'), out var r)) return false;
+        if (!System.Version.TryParse(Core(latest), out var l)) return false;
+        if (!System.Version.TryParse(Core(running), out var r)) return false;
         return l > r;
+        // strip the leading 'v' AND any pre-release suffix ("v1.0.0-rc1" → "1.0.0") so System.Version parses
+        static string Core(string tag) => tag.TrimStart('v', 'V').Split('-')[0];
+    }
+
+    /// <summary>Extract the FULL release tag from a staged-asset filename ("D4Scanner-{tag}-win-x64.exe"),
+    /// INCLUDING any hyphenated pre-release suffix — a naive Split('-')[1] truncates "v1.0.0-rc1" to "v1.0.0",
+    /// which mis-labels the update and can rename/clean the wrong file. Null if the name isn't the asset shape.</summary>
+    public static string? TagFromAssetFile(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        const string pre = "D4Scanner-", suf = "-win-x64";
+        return name.StartsWith(pre, StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(suf, StringComparison.OrdinalIgnoreCase)
+            && name.Length > pre.Length + suf.Length
+            ? name.Substring(pre.Length, name.Length - pre.Length - suf.Length)
+            : null;
     }
 
     // ---- GitHub API ----
@@ -79,9 +95,7 @@ public static class Updater
         var running = RunningVersion();
         foreach (var f in Directory.GetFiles(UpdateDir, "D4Scanner-v*-win-x64.exe"))
         {
-            // filename: "D4Scanner-v0.6.3-win-x64.exe" → parts[1] = "v0.6.3"
-            var parts = Path.GetFileNameWithoutExtension(f).Split('-');
-            var tag = parts.Length >= 2 ? parts[1] : null;
+            var tag = TagFromAssetFile(f);
             if (tag != null && IsNewer(tag, running)) return (f, tag);
         }
         return null;
@@ -211,8 +225,7 @@ public static class Updater
             foreach (var f in Directory.GetFiles(dir, "D4Scanner-v*-win-x64.exe"))
             {
                 if (string.Equals(Path.GetFullPath(f), self, StringComparison.OrdinalIgnoreCase)) continue;
-                var parts = Path.GetFileNameWithoutExtension(f).Split('-');
-                var tag = parts.Length >= 2 ? parts[1] : null;
+                var tag = TagFromAssetFile(f);
                 if (tag != null && IsNewer(running, tag))   // running > tag → superseded binary
                     try { File.Delete(f); } catch { }
             }

@@ -1678,6 +1678,16 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     try { Directory.Delete(dir, recursive: true); } catch { }
 }
 
+// ---- Updater: robust tag handling (a naive Split('-')[1] truncated hyphenated pre-release tags) ----
+{
+    Eq("Updater: tag from clean asset name", "v0.6.3", Updater.TagFromAssetFile("D4Scanner-v0.6.3-win-x64.exe") ?? "");
+    Eq("Updater: tag keeps a hyphenated pre-release suffix", "v1.0.0-rc1", Updater.TagFromAssetFile("D4Scanner-v1.0.0-rc1-win-x64.exe") ?? "");
+    Check("Updater: a non-asset filename -> null", Updater.TagFromAssetFile("something-else.exe") == null);
+    Check("Updater: IsNewer compares the numeric core (clean tags)", Updater.IsNewer("v1.0.1", "v1.0.0"));
+    Check("Updater: IsNewer parses a pre-release suffix (core 1.0.0 > 0.9.0)", Updater.IsNewer("v1.0.0-rc1", "v0.9.0"));
+    Check("Updater: IsNewer not-newer when cores tie across a suffix", !Updater.IsNewer("v1.0.0", "v1.0.0-rc1"));
+}
+
 // ---- Salvage upgrades, sort tiers, rarity rank, stale-copy exclusion ----
 {
     Eq("RarityRank: mythic top", 5, GearList.RarityRank("Mythic Unique"));
