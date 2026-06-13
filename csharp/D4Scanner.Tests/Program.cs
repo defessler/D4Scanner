@@ -1192,6 +1192,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var sk = sp.Skills;
     Eq("SkillParser: captured 3 skills", 3, sk.Count);
     Eq("SkillParser: Dance of Knives rank", 20, sk.First(s => s.Name == "Dance of Knives").Rank);
+    Eq("SkillParser: Dance of Knives base max (the /Y in RANK X/Y)", 15, sk.First(s => s.Name == "Dance of Knives").BaseMax);
     Eq("SkillParser: Concealment rank", 17, sk.First(s => s.Name == "Concealment").Rank);
     Check("SkillParser: prose line before RANK isn't mis-captured as a skill",
         !sk.Any(s => s.Name.StartsWith("Unhindered")));
@@ -1202,6 +1203,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     sp2.Feed("[2026-06-09T05:43:37Z]Concealment"); sp2.Feed("[2026-06-09T05:43:37Z]RANK 17/15");
     Eq("SkillParser: dedup keeps latest rank", 1, sp2.Skills.Count);
     Eq("SkillParser: latest rank wins", 17, sp2.Skills[0].Rank);
+    Eq("SkillParser: base max captured alongside rank", 15, sp2.Skills[0].BaseMax);
 }
 
 // ---- AffixAggregate (Gear & Affixes overview roll-up) ----
