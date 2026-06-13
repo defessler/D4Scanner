@@ -701,6 +701,25 @@ if (phoba != null)
     Check("ParseAffix #3: charm affix never retains the leading 'to '",
         phoba.Affixes.All(a => !a.Text.StartsWith("to ", StringComparison.OrdinalIgnoreCase)));
 }
+
+// LoH talisman charms of NON-Set/Unique rarity were SILENTLY DROPPED — only "Set Charm"/"Unique Charm" were
+// literal type keys, so "Rare Charm" / "Charm (Ancestral)" / "Magic Charm" matched nothing and failed
+// LooksLikeItem. Real Talisman-screen log format (the user's d4_tts.log).
+var rareCharm = GearParser.ParseTooltipLines(new[] { "TRAPPER'S CHARM OF THE ARTISAN", "Rare Charm", "+50 Dexterity [40 - 60]" });
+Check("LoH charm: a 'Rare Charm' is now captured (was dropped)", rareCharm != null);
+if (rareCharm != null)
+{
+    Eq("LoH charm: Rare Charm -> charm slot", "charm", rareCharm.Slot ?? "");
+    Eq("LoH charm: Rare Charm -> rarity Rare", "Rare", rareCharm.Rarity ?? "");
+    Check("LoH charm: keeps its affix", rareCharm.Affixes.Any(a => a.Text == "Dexterity" && a.Value == 50));
+}
+var ancCharm = GearParser.ParseTooltipLines(new[] { "CHARM OF GREED", "Charm (Ancestral)", "+10 Gold Find [5 - 12]" });
+Check("LoH charm: 'Charm (Ancestral)' captured + flagged ancestral", ancCharm != null && ancCharm.Slot == "charm" && ancCharm.IsAncestral);
+// the seal's "Unlocks N Charm Slots" line must NOT flip a seal into a charm (anchored charm regex)
+var lohSeal = GearParser.ParseTooltipLines(new[] { "REMEDIAL HORADRIC SEAL OF BLOODSHED", "Legendary Horadric Seal", "Unlocks 5 Charm Slots", "+100 Maximum Life [80 - 120]" });
+Check("LoH seal: Horadric Seal captured as a seal", lohSeal != null && lohSeal.Slot == "seal");
+Check("LoH seal: 'Charm Slots' line did NOT flip it to a charm", lohSeal == null || lohSeal.Slot != "charm");
+Check("LoH charm: 'Set Charm' still recognized (regression)", GearParser.ParseTooltipLines(new[] { "SOME CHARM", "Set Charm", "+5 Dexterity [1 - 5]" })?.Slot == "charm");
 // Charm survives the FULL stateful Feed path even though its real block trails a "Properties lost when
 // equipped:" comparison section (the parser still captures it; downstream routes charms separately).
 {
