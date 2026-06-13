@@ -662,19 +662,20 @@ public partial class MainWindow : Window
         catch { }
     }
 
-    /// <summary>Append everything the shim wrote to the OLD path after the move (the moved file took
-    /// all pre-move content with it, so a recreated old-path file is PURE stray writes) onto the new
-    /// active log, then delete the stray. The watcher picks the appended lines up on its next poll.</summary>
+    /// <summary>Adopt everything the shim wrote to the OLD path after the move (the moved file took all
+    /// pre-move content with it, so a recreated old-path file is PURE stray writes). The stray is parsed
+    /// OFFLINE and merged through the normal live-update path — NOT spliced as raw bytes onto the active
+    /// log's tail, where the watcher would re-parse it: an embedded "shim attached" marker would WIPE the
+    /// accumulated loadout, and a partial tooltip block at the splice seam would mis-parse.</summary>
     void AdoptStrayLog()
     {
         try
         {
             if (_logOldPath != null && File.Exists(_logOldPath))
             {
-                using (var src = new FileStream(_logOldPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var dst = new FileStream(_log, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-                    src.CopyTo(dst);
-                File.Delete(_logOldPath);
+                var strayLines = File.ReadAllLines(_logOldPath);
+                File.Delete(_logOldPath);   // delete first so a stray re-poll can't double-count it
+                OnLiveUpdate(LogWatcher.BuildFromLines(strayLines, equippedOnly: true));   // merge the stray's gear into the live build
                 Toast("Adopted the stray log content");
             }
         }
