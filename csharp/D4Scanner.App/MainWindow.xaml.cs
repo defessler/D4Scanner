@@ -228,9 +228,8 @@ public partial class MainWindow : Window
     {
         public bool UseTts, UseCapture, DebugMode;
         public string Log = "";
-        public bool[] CacheChecked = new bool[4];   // game icons · build index · maxroll data · live gear
+        public bool[] CacheChecked = new bool[5];   // game icons · build index · maxroll data · live gear · logs
         public string? MoveLogTo;                   // staged log RELOCATION (move + env var, on Save)
-        public bool ClearLogs;                      // staged: delete archives + empty the active log
         public int LogMaxFileMB, LogMaxFiles, LogMaxAgeDays;   // staged retention config
     }
     SettingsDraft? _settingsDraft;   // non-null = the modal is open (or parked behind a viewer) with edits
@@ -2201,7 +2200,8 @@ public partial class MainWindow : Window
         titleSp2.Children.Add(TB("⚙ ", Gold, 16, true));
         titleSp2.Children.Add(TBs("Settings", Ink, 17, true));
         hd.Children.Add(titleSp2);
-        sp.Children.Add(hd);
+        // (hd is docked at the TOP of the panel body below — not inside the scroll — so the ✕ stays
+        //  visible no matter how far the content scrolls; that's why the close button "went missing")
 
         // ── helpers ──────────────────────────────────────────────────────────
         void Section(string title) =>
@@ -2245,8 +2245,7 @@ public partial class MainWindow : Window
                 list.Add($"MOVE the TTS log (and archives) to {d.MoveLogTo} — needs Diablo IV closed; the game writes there from its next launch");
             if (d.LogMaxFileMB != _logMaxFileMB || d.LogMaxFiles != _logMaxFiles || d.LogMaxAgeDays != _logMaxAgeDays)
                 list.Add($"Log retention: rotate at {d.LogMaxFileMB} MB, keep {d.LogMaxFiles} archives, max age {d.LogMaxAgeDays} days");
-            if (d.ClearLogs)
-                list.Add("Clear logs: delete archives + empty the active TTS log");
+            // (clearing logs is no longer here — it's a cache-card row, applied by "Clear selected")
             return list;
         }
         void RefreshPending()
@@ -2353,7 +2352,15 @@ public partial class MainWindow : Window
         var retRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
         TextBox RetBox(int val, string tip)
         {
-            var tb = new TextBox { Text = val.ToString(), Width = 52, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, ToolTip = tip };
+            // explicit height + slim centered padding: the theme's default TextBox padding (10,7) plus the
+            // narrow fixed width was clipping the digits vertically in this inline numeric field
+            var tb = new TextBox
+            {
+                Text = val.ToString(), Width = 54, Height = 30, FontSize = 13,
+                Padding = new Thickness(6, 0, 6, 0), TextAlignment = TextAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                MaxLength = 4, ToolTip = tip,
+            };
             return tb;
         }
         var mbBox = RetBox(d.LogMaxFileMB, "Rotate the active log into an archive when it exceeds this size (MB, 1–256)");
@@ -2372,10 +2379,7 @@ public partial class MainWindow : Window
         retRow.Children.Add(TB(" archives   ·   max age ", Soft, 11.5, false)); retRow.Children.Add(ageBox);
         retRow.Children.Add(TB(" days   (rotation runs at app start / game exit — never mid-session)", Faint, 10.5, false));
         sp.Children.Add(retRow);
-
-        // clear logs (staged): archives + the active file + the legacy d4_tts.jsonl orphan
-        ToggleRow("Clear logs on Save", "Deletes archived logs and empties the active TTS log (plus the legacy d4_tts.jsonl). Your captured gear is NOT touched — but clearing the live gear cache afterwards would then have an empty log to rebuild from.",
-            d.ClearLogs, on => { d.ClearLogs = on; RefreshPending(); });
+        // (clearing logs moved to the CACHE card below — it's a one-shot clear, like the other caches)
 
         // session history: load a past session's loadout as a READ-ONLY preview (a viewer — parks the draft)
         var sessRow = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
@@ -2414,7 +2418,7 @@ public partial class MainWindow : Window
         Section("CACHE");
         var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
         var cacheCard = new StackPanel();
-        var cacheDesc = TB("Check what to clear, then press Clear selected — it applies right away (independent of Save). Icons re-extract from your D4 install, the build index and Maxroll data re-download on next use, and clearing live gear rebuilds every character by replaying the whole TTS log (the log itself is never deleted).", Soft, 11.5, false);
+        var cacheDesc = TB("Check what to clear, then press Clear selected — it applies right away (independent of Save). Icons re-extract from your D4 install, the build index and Maxroll data re-download on next use, clearing live gear rebuilds every character by replaying the TTS log, and clearing Logs removes the archives + empties the active log.", Soft, 11.5, false);
         cacheDesc.TextWrapping = TextWrapping.Wrap; cacheDesc.Margin = new Thickness(0, 0, 0, 12); cacheCard.Children.Add(cacheDesc);
 
         Button clearCacheBtn = null!;
@@ -2435,6 +2439,8 @@ public partial class MainWindow : Window
                 () => File.Exists(MaxrollImporter.GameDataCachePath)),
             ("Live gear cache", "Every character's captured loadout — rebuilt by replaying the entire TTS log when cleared. Items you deleted long ago may reappear until cleared again.",
                 () => File.Exists(LivePath) || _live.Gear.Count > 0 || _profiles.All().Count > 0),
+            ("Logs", "Archived logs + the active TTS log (and the legacy d4_tts.jsonl). Your captured gear is NOT touched — but clearing it together with the live gear cache leaves an empty log to rebuild from.",
+                () => File.Exists(_log) || LogStore.Archives(_log).Count > 0),
         };
         for (int i = 0; i < cacheRows.Length; i++)
         {
@@ -2458,8 +2464,10 @@ public partial class MainWindow : Window
             if (!d.CacheChecked.Any(x => x)) return;
             if (d.CacheChecked[3])
             {
-                var confirm = MessageBox.Show(
-                    "Clear the live gear cache?\n\nThis wipes every character's captured loadout and rebuilds it by replaying the whole TTS log. Items you deleted long ago may reappear.\n\nContinue?",
+                var msg = "Clear the live gear cache?\n\nThis wipes every character's captured loadout and rebuilds it by replaying the whole TTS log. Items you deleted long ago may reappear.";
+                if (d.CacheChecked[4])   // logs + gear together = replay an empty log
+                    msg += "\n\n⚠ You also checked Logs — clearing both leaves an EMPTY log to rebuild from, so your characters will show NO gear until you re-hover items in-game.";
+                var confirm = MessageBox.Show(msg + "\n\nContinue?",
                     "Clear live gear cache", MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (confirm != MessageBoxResult.Yes) return;
             }
@@ -2494,9 +2502,12 @@ public partial class MainWindow : Window
             _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
             RenderSettings();
         };
+        var closeBtn2 = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(8, 0, 0, 0) };
+        closeBtn2.Click += (_, _) => CloseSettings();
         DockPanel.SetDock(saveBtn, Dock.Right); btnRow2.Children.Add(saveBtn);
+        DockPanel.SetDock(closeBtn2, Dock.Right); btnRow2.Children.Add(closeBtn2);   // sits to the left of Save
         DockPanel.SetDock(revertBtn, Dock.Left); btnRow2.Children.Add(revertBtn);
-        btnRow2.Children.Add(TB("✕ / Esc closes without applying", Faint, 10.5, false, new Thickness(14, 0, 14, 0)));
+        btnRow2.Children.Add(TB("Close (or Esc) discards unsaved changes", Faint, 10.5, false, new Thickness(14, 0, 0, 0)));
         footer.Children.Add(btnRow2);
         RefreshPending();
 
@@ -2506,6 +2517,7 @@ public partial class MainWindow : Window
         var maxH = waS.Height * 0.84;
         var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var body = new DockPanel { LastChildFill = true, MaxHeight = maxH };
+        DockPanel.SetDock(hd, Dock.Top); body.Children.Add(hd);          // header + ✕ pinned, always visible
         DockPanel.SetDock(footer, Dock.Bottom); body.Children.Add(footer);
         body.Children.Add(scroll);
         var panel = new Border
@@ -2599,18 +2611,8 @@ public partial class MainWindow : Window
         _logMaxAgeDays = Math.Clamp(d.LogMaxAgeDays, 7, 3650);
         if (retentionChanged) try { LogStore.Prune(_log, _logMaxFiles, _logMaxAgeDays); } catch { }
 
-        // staged CLEAR LOGS: delete archives, empty the active log, drop the legacy d4_tts.jsonl orphan
-        if (d.ClearLogs)
-        {
-            try { foreach (var f in LogStore.Archives(_log)) File.Delete(f); } catch { }
-            try { if (File.Exists(_log)) File.WriteAllText(_log, ""); } catch { }
-            try { var orphan = Path.Combine(Path.GetDirectoryName(_log)!, "d4_tts.jsonl"); if (File.Exists(orphan)) File.Delete(orphan); } catch { }
-            _logSkipToPos = 0;
-            watchChanged = true;
-            AppLog("logs cleared (archives + active truncated)");
-        }
-
-        // (cache clearing is NOT applied here — it has its own immediate "Clear selected" button)
+        // (cache clearing — including clearing logs — is NOT applied here; the cache card's own
+        //  "Clear selected" button applies those immediately, separate from this deferred Save)
 
         SaveSettings();          // ONE persist (incl. cleared logSkipPos / retention / move sentinel)
         CloseSettings();
@@ -2631,7 +2633,7 @@ public partial class MainWindow : Window
         if (sel[0]) { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }
         if (sel[1]) { try { File.Delete(BuildIndex.CachePath); } catch { } try { File.Delete(IconResolver.IndexPath); } catch { } }
         if (sel[2]) { try { File.Delete(MaxrollImporter.GameDataCachePath); } catch { } BaseIconIndex.Reset(); }
-        bool rebuilt = false;
+        bool restart = false;
         if (sel[3])
         {
             try { File.Delete(LivePath); } catch { }
@@ -2639,10 +2641,19 @@ public partial class MainWindow : Window
             _logSkipToPos = 0;
             _profiles.ResetAllLive();
             _replayFromZero = true;
-            rebuilt = true;
+            restart = true;
+        }
+        if (sel[4])   // clear logs: archives + the active file + the legacy d4_tts.jsonl orphan
+        {
+            try { foreach (var f in LogStore.Archives(_log)) File.Delete(f); } catch { }
+            try { if (File.Exists(_log)) File.WriteAllText(_log, ""); } catch { }
+            try { var orphan = Path.Combine(Path.GetDirectoryName(_log)!, "d4_tts.jsonl"); if (File.Exists(orphan)) File.Delete(orphan); } catch { }
+            _logSkipToPos = 0;
+            restart = true;   // active log truncated → re-sync the watcher
+            AppLog("logs cleared (archives + active truncated)");
         }
         SaveSettings();                              // persist replayFromZero / cleared logSkipPos
-        if (rebuilt) StartWatching();                // replay the whole log from zero
+        if (restart) StartWatching();                // replay-from-zero and/or re-sync after a log truncate
         else if (sel[1]) LoadBuildIndex();           // index cleared but watchers untouched
         if (sel[2]) EnsureGameDataCached();          // re-download the item DB so icons don't stay broken
         Render();
