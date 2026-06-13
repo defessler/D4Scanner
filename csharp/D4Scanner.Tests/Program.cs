@@ -238,21 +238,31 @@ Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains
     {
         var parts = new List<string>();
         foreach (var a in Activities.Recommend(rep)) { parts.Add(a.Title); parts.Add(a.Detail); }
+        // sweep every Torment tier so the tier-gate copy (and the T12 push) is covered, not just one build state
+        for (int t = 1; t <= 12; t++)
+            foreach (var a in Activities.Recommend(rep, new GuideContext(t, "Rogue"))) { parts.Add(a.Title); parts.Add(a.Detail); }
         var (off, reason) = InfernalHordesAdvisor.RecommendOffering(rep, rep.TargetClass);
         parts.Add(off); parts.Add(reason);
         foreach (var s in BuildGuide.Steps(rep)) { parts.Add(s.Text); parts.Add(s.Detail ?? ""); parts.Add(s.Headline); }
         foreach (var sub in Substitutes.Plan(tgt, lv)) { parts.Add(sub.Wanted); parts.AddRange(sub.Ladder); }
         return string.Join(" ␟ ", parts);
     }
-    var blob = Gather(rPart, target, livePartial);
+    // Guidance output PLUS the full serialized season pack — the data is the season-volatile source, so a stale
+    // value in an activity/tier-gate/spoil that no sample build happens to surface is still caught.
+    var blob = Gather(rPart, target, livePartial) + " ␟ " + System.Text.Json.JsonSerializer.Serialize(SeasonPack.Current);
     string[] stale = {
-        "Ingolith", "summoning material", "Tormented Boss", "Sigil Powder",
+        "Ingolith", "summoning material", "summon material", "Tormented Boss", "Sigil Powder",
         "Spoils of the Realm", "Spoils of the Vault", "Spoils of Battle",
         "Spoils of Darkness", "Spoils of Creation", "Spoils of Salvation",
         "Legendary at 46", "Nightmare Dungeons to earn Glyph",
+        // the doc's full "Stale-data tripwires" list (§1) — pre-2026 mechanics that must never reappear,
+        // restricted to phrasings with no legitimate current use (bare numbers like 800/60/12 are skipped
+        // to avoid false matches on incidental values).
+        "Living Steel", "Torment IV", "Torment I-IV", "can't be tempered", "cannot be tempered",
+        "4/8/12", "2 temper slots", "fixed affix set", "six-class", "6-class roster", "925 Item Power",
     };
     foreach (var term in stale)
-        Check($"Tripwire: guidance never says '{term}'", !blob.Contains(term, StringComparison.OrdinalIgnoreCase));
+        Check($"Tripwire: guidance/data never says '{term}'", !blob.Contains(term, StringComparison.OrdinalIgnoreCase));
     // positive: the corrected vocabulary IS present somewhere across the guidance
     Check("Tripwire: guidance uses the real Lair Boss / Belial vocabulary", blob.Contains("Lair Boss") || blob.Contains("Belial"));
 }
