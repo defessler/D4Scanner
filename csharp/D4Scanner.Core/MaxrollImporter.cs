@@ -292,6 +292,20 @@ public static class MaxrollImporter
 
     // ---- build the target ----
 
+    static readonly HashSet<string> KnownClasses = new(StringComparer.OrdinalIgnoreCase)
+        { "Barbarian", "Druid", "Necromancer", "Rogue", "Sorcerer", "Spiritborn", "Paladin", "Warlock" };
+
+    /// <summary>The class string if it is one of the known D4 classes (returned in canonical casing), else
+    /// null — so a malformed or empty Maxroll skill token stores null (fail-open) instead of a garbage class
+    /// that would mislabel the build and silently disable class-aware filtering. Real planner tokens are
+    /// "ClassName_Skill" (verified against live Rogue and Barbarian builds, which resolve correctly).</summary>
+    public static string? NormalizeClass(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        foreach (var c in KnownClasses) if (c.Equals(raw, StringComparison.OrdinalIgnoreCase)) return c;
+        return null;
+    }
+
     static TargetBuild BuildTarget(JsonElement pp, JsonElement data, JsonElement prof, JsonElement dm, Maps m)
     {
         var itemsDb = data.GetProperty("items");
@@ -299,7 +313,7 @@ public static class MaxrollImporter
         var skillBar = prof.TryGetProperty("skillBar", out var sb) && sb.ValueKind == JsonValueKind.Array
             ? sb.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList()
             : new List<string>();
-        string? klass = skillBar.Count > 0 ? skillBar[0].Split('_')[0] : null;
+        string? klass = NormalizeClass(skillBar.Count > 0 ? skillBar[0].Split('_')[0] : null);
 
         var gear = new List<TargetGear>();
         var uniques = new List<TargetUnique>();

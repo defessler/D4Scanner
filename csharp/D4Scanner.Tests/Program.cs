@@ -355,6 +355,14 @@ Check("ParseTooltipLines: no name returns null",
     Check("E7: long item name parses (not dropped by the length ceiling)", li != null && li.Name.Length > 40);
 }
 
+// D2: Maxroll class detection validates the skill-token prefix against the known roster — a malformed or
+// empty token stores null (fail-open), NOT a garbage class. Real tokens are "ClassName_Skill" (verified
+// against live Rogue/Barbarian builds, which resolve to "Rogue"/"Barbarian").
+Eq("D2: valid class prefix kept", "Rogue", MaxrollImporter.NormalizeClass("Rogue") ?? "");
+Eq("D2: valid class normalized to canonical casing", "Barbarian", MaxrollImporter.NormalizeClass("barbarian") ?? "");
+Check("D2: unknown/garbage class -> null", MaxrollImporter.NormalizeClass("Generic") == null);
+Check("D2: empty token -> null", MaxrollImporter.NormalizeClass("") == null);
+
 // ReQuality: both TTS "50 +50/25 Quality" (no parens) and OCR "50 (+30/25) Quality" (parens) formats
 var qualityBlock = new[] { "MYTHIC RING", "Mythic Unique Ring", "800 Item Power", "50 +50/25 Quality", "+500 Maximum Life" };
 var qualityItem = GearParser.ParseTooltipLines(qualityBlock);
