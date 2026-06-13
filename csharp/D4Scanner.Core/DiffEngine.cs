@@ -531,7 +531,13 @@ public static class DiffEngine
                     grp.SocketStatus = it == null
                         ? $"0/{want} filled (item not detected)"
                         : !known
-                            ? "socket info not captured — hover with Advanced Tooltips on"
+                            // D4 voices socket capacity/fill only in a BAG-comparison tooltip — a
+                            // character-panel hover of an EQUIPPED item announces nothing, and a filled
+                            // GEM socket is never voiced at all. So this is a game limitation, NOT a
+                            // capture-setting the player can fix (telling them to toggle Advanced
+                            // Tooltips — which they already have on — was misleading). Runeword sockets
+                            // ARE captured; only gem/empty fill on worn gear is unknowable here.
+                            ? "sockets aren't voiced by D4 on equipped gear — can't confirm gems"
                             : (cap != null
                                 ? $"{filled}/{cap.Value} filled" + (empty > 0 ? $" ({empty} empty)" : "")
                                 : hasRune ? $"{want}/{want} filled (runeword)" : $"{filled}/{want} filled" + (empty > 0 ? $" ({empty} empty)" : ""));

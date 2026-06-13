@@ -541,6 +541,18 @@ public partial class MainWindow : Window
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
         try { await IconResolver.LoadIndexAsync(); Dispatcher.Invoke(Render); } catch { }
     }
+
+    /// <summary>Self-heal a missing Maxroll game-data DB at startup. It is the item database that resolves
+    /// gear names → icons (and that imports read); a cache clear or stray delete leaves every gear icon a
+    /// silhouette with no recovery until the next manual import. Restores it in the background if absent,
+    /// then repaints (it's a fast File.Exists no-op on a healthy install).</summary>
+    void EnsureGameDataCached()
+    {
+        _ = Task.Run(async () =>
+        {
+            try { if (await MaxrollImporter.EnsureGameDataCachedAsync()) Dispatcher.Invoke(Render); } catch { }
+        });
+    }
     void OnIconReady()
     {
         // coalesce many icon downloads into a single background re-render
@@ -759,6 +771,7 @@ public partial class MainWindow : Window
         LoadBuildIndex();
         IconResolver.Changed -= OnIconReady; IconResolver.Changed += OnIconReady;
         LoadIconIndex();
+        EnsureGameDataCached();   // restore the item DB if a cache clear left gear icons as silhouettes
         // No longer auto-upgrades the DLL silently — the user is prompted via UpgradeBanner() in Render().
         // Cache the result so we don't re-check on every Render() after the user installs this session.
         _shimNeedsUpgrade = CaptureSetup.Installed() && CaptureSetup.NeedsUpgrade();
@@ -2418,8 +2431,8 @@ public partial class MainWindow : Window
                 () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0),
             ("Build index", "Maxroll guide list (build_index.json) — re-fetched right after clearing",
                 () => File.Exists(BuildIndex.CachePath) || File.Exists(IconResolver.IndexPath)),
-            ("Maxroll data", "Planner item/affix data — re-fetched on next import",
-                () => File.Exists(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json"))),
+            ("Maxroll data", "Planner item DB (also resolves gear names → icons) — re-downloaded right after clearing",
+                () => File.Exists(MaxrollImporter.GameDataCachePath)),
             ("Live gear cache", "Every character's captured loadout — rebuilt by replaying the entire TTS log when cleared. Items you deleted long ago may reappear until cleared again.",
                 () => File.Exists(LivePath) || _live.Gear.Count > 0 || _profiles.All().Count > 0),
         };
@@ -2617,7 +2630,7 @@ public partial class MainWindow : Window
         var gameIconDir = Path.Combine(IconResolver.CacheDir, "icons", "game");
         if (sel[0]) { try { foreach (var f in Directory.GetFiles(gameIconDir, "*.png")) File.Delete(f); } catch { } }
         if (sel[1]) { try { File.Delete(BuildIndex.CachePath); } catch { } try { File.Delete(IconResolver.IndexPath); } catch { } }
-        if (sel[2]) { try { File.Delete(Path.Combine(IconResolver.CacheDir, "maxroll_data.min.json")); } catch { } BaseIconIndex.Reset(); }
+        if (sel[2]) { try { File.Delete(MaxrollImporter.GameDataCachePath); } catch { } BaseIconIndex.Reset(); }
         bool rebuilt = false;
         if (sel[3])
         {
@@ -2631,6 +2644,7 @@ public partial class MainWindow : Window
         SaveSettings();                              // persist replayFromZero / cleared logSkipPos
         if (rebuilt) StartWatching();                // replay the whole log from zero
         else if (sel[1]) LoadBuildIndex();           // index cleared but watchers untouched
+        if (sel[2]) EnsureGameDataCached();          // re-download the item DB so icons don't stay broken
         Render();
         AppLog("cache cleared: " + string.Join(", ", new[] { "icons", "build-index", "maxroll", "live-gear" }.Where((_, i) => sel[i])));
     }
