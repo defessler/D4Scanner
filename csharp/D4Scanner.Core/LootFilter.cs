@@ -14,6 +14,17 @@ public static class LootFilter
     static bool SlotEq(string? a, string? b) => DiffEngine.SlotBaseName(a ?? "") == DiffEngine.SlotBaseName(b ?? "");
     static string Cap(string? slot) { var s = DiffEngine.SlotBaseName(slot ?? ""); return s.Length == 0 ? "" : char.ToUpperInvariant(s[0]) + s[1..]; }
 
+    /// <summary>Aspects the build wants that aren't pinned to a specific gear slot — present in
+    /// <see cref="TargetBuild.Aspects"/> but on no gear piece's <see cref="TargetGear.Aspect"/>. Both exports
+    /// previously derived aspects ONLY from per-gear Aspect, silently dropping these loose aspects (e.g. a
+    /// flex/utility aspect not bound to a slot), so the exported filter listed fewer aspects than the build wants.</summary>
+    static List<string> LooseAspects(TargetBuild t)
+    {
+        var bound = new HashSet<string>(
+            t.Gear.Where(g => !string.IsNullOrEmpty(g.Aspect)).Select(g => g.Aspect!), StringComparer.OrdinalIgnoreCase);
+        return (t.Aspects ?? new()).Where(a => !string.IsNullOrEmpty(a) && !bound.Contains(a)).ToList();
+    }
+
     /// <summary>A readable per-slot loot checklist (markdown).</summary>
     public static string Markdown(TargetBuild t)
     {
@@ -44,6 +55,14 @@ public static class LootFilter
             foreach (var u in loose) sb.AppendLine($"- {u.Name}{(u.Mythic ? " (Mythic)" : "")}");
             sb.AppendLine();
         }
+
+        var looseAspects = LooseAspects(t);
+        if (looseAspects.Count > 0)
+        {
+            sb.AppendLine("## Other Aspects");
+            foreach (var a in looseAspects) sb.AppendLine($"- {a}");
+            sb.AppendLine();
+        }
         return sb.ToString();
     }
 
@@ -60,6 +79,7 @@ public static class LootFilter
                 affixes.Add(Affix(a.Name, g.Slot, a.Tempered));
 
         var aspects = t.Gear.Where(g => !string.IsNullOrEmpty(g.Aspect)).Select(g => Affix(g.Aspect!, g.Slot, false)).ToList();
+        aspects.AddRange(LooseAspects(t).Select(a => Affix(a, null, false)));   // slot-less aspects the build wants but doesn't pin to a piece
         var uniques = t.Uniques.Select(u => Affix(u.Name, u.Slot, false)).ToList();
 
         return new
