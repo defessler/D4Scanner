@@ -398,6 +398,37 @@ Item? qParsed = null;
 foreach (var ln in qLines) { var r = qSeg.Feed(ln); if (r != null) qParsed = r; }
 Check("ReQuality fix: parenthesized '50 (+30/25) Quality' parsed", qParsed?.Quality == 50);
 
+// Parser hardening: numeric fields (Quality/Masterwork/Temper/Requires-Level) parse via ToNum like the
+// rest of the parser, so an oversized digit run degrades gracefully instead of throwing OverflowException
+// and faulting the whole block. TTS format is season-volatile (CLAUDE.md), so this guards a future
+// digit-gluing format change — not a reachable case today, but the asymmetry was a latent landmine.
+Item? oversized = null;
+try
+{
+    oversized = GearParser.ParseTooltipLines(new[]
+    {
+        "GLITCHED HELM", "Legendary Helm", "800 Item Power",
+        "99999999999999 Quality", "Masterwork: 8/99999999999999",
+        "Tempers: 2/99999999999999", "Requires Level 99999999999999",
+        "+500 Maximum Life",
+    });
+}
+catch { oversized = null; }   // a regression to int.Parse re-throws here -> clean test failure, not a crashed run
+Check("Parser hardening: oversized numeric fields don't throw", oversized != null);
+Check("Parser hardening: affix still parsed past oversized fields",
+    oversized?.Affixes.Any(a => a.Text == "Maximum Life") == true);
+
+// Regression: ordinary values still parse correctly through ToNum
+var normNum = GearParser.ParseTooltipLines(new[]
+{
+    "NORMAL HELM", "Legendary Helm", "800 Item Power",
+    "Masterwork: 8/12", "Tempers: 2/5", "Requires Level 60", "+500 Maximum Life",
+});
+Eq("Parser hardening: masterwork rank still 8", 8, normNum?.MasterworkRank ?? 0);
+Eq("Parser hardening: masterwork max still 12", 12, normNum?.MasterworkMax ?? 0);
+Eq("Parser hardening: temper max still 5", 5, normNum?.TemperMax ?? 0);
+Eq("Parser hardening: requires level still 60", 60, normNum?.RequiresLevel ?? 0);
+
 // ItemSource: LogWatcher stamps Source=Tts on all parsed items
 if (File.Exists(sampleLog))
 {
