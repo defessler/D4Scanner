@@ -292,11 +292,13 @@ public sealed class LogWatcher : IDisposable
         else
         {
             _inv[key] = item; _invOrdered.Add(item);
-            // Self-heal: a fresh, correctly-classified NON-equipped sighting evicts an earlier
-            // wrongly-equipped copy of the same item (the gate used to be a one-way ratchet — once a
-            // vendor hover leaked into gear, no later sighting could ever displace it).
-            _items.Remove(key);
-            _itemsOrdered.RemoveAll(x => ((x.Slot ?? "?") + ":" + x.RawName) == key);
+            // Self-heal: a fresh, correctly-classified NON-equipped sighting evicts an earlier wrongly-equipped
+            // copy of the SAME PHYSICAL ITEM (same content fingerprint). Originally keyed on name+slot alone,
+            // which evicted the worn copy whenever the player hovered a DIFFERENT same-name roll in their bags —
+            // a genuine duplicate the player owns must never knock the equipped item off the doll.
+            var fp = GearList.Fingerprint(item);
+            if (_items.TryGetValue(key, out var eqCopy) && GearList.Fingerprint(eqCopy) == fp) _items.Remove(key);
+            _itemsOrdered.RemoveAll(x => ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
         }
     }
 
@@ -559,10 +561,13 @@ public sealed class LogWatcher : IDisposable
             ClassifyContext(item, allLines, i, allLines.Length);
             if (!item.Equipped)
             {
-                // Self-heal (mirrors Poll's Commit): a non-equipped sighting evicts an earlier
-                // wrongly-equipped copy of the same item instead of leaving it ratcheted in.
+                // Self-heal (mirrors Poll's Commit): a non-equipped sighting evicts an earlier wrongly-equipped
+                // copy of the SAME PHYSICAL ITEM (same content fingerprint) — never a genuinely different roll the
+                // player also owns under the same name. Matching name+slot alone knocked the worn item off the
+                // doll whenever a different-stat copy was hovered in the bags.
                 var key = (item.Slot ?? "?") + ":" + item.RawName;
-                ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key);
+                var fp = GearList.Fingerprint(item);
+                ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
                 if (equippedOnly) continue;
             }
             ordered.Add(item);
