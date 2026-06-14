@@ -2034,6 +2034,7 @@ public partial class MainWindow : Window
         {
             Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4),
             CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand,
+            Background = System.Windows.Media.Brushes.Transparent,   // hit-test the whole padded box (null bg = glyph-only)
         };
         xBtn.MouseLeftButtonUp += (_, _) => CloseModal();
         xBtn.MouseEnter += (_, _) => xBtn.Background = B("#2A2430");
@@ -2328,6 +2329,10 @@ public partial class MainWindow : Window
         {
             Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4),
             CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand,
+            // A Border with a null Background is transparent to hit-testing in its padding — only the small
+            // glyph itself was clickable, so the ✕ "didn't work" unless you hit it dead-center. An explicit
+            // Transparent fill makes the whole padded box receive the click.
+            Background = System.Windows.Media.Brushes.Transparent,
         };
         xb.MouseLeftButtonUp += (_, _) => Close();
         xb.MouseEnter += (_, _) => xb.Background = B("#2A2430");
@@ -2640,7 +2645,7 @@ public partial class MainWindow : Window
             _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
             RenderSettings();
         };
-        var closeBtn2 = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(8, 0, 0, 0) };
+        var closeBtn2 = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(8, 0, 12, 0) };   // right margin = gap before Save
         closeBtn2.Click += (_, _) => CloseSettings();
         DockPanel.SetDock(saveBtn, Dock.Right); btnRow2.Children.Add(saveBtn);
         DockPanel.SetDock(closeBtn2, Dock.Right); btnRow2.Children.Add(closeBtn2);   // sits to the left of Save
@@ -2882,7 +2887,7 @@ public partial class MainWindow : Window
 
         // ── header ──
         var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
-        var xb = new Border { Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand };
+        var xb = new Border { Child = TB("✕", Soft, 14, false), Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(4), Cursor = System.Windows.Input.Cursors.Hand, Background = System.Windows.Media.Brushes.Transparent };
         xb.MouseLeftButtonUp += (_, _) => Close();
         xb.MouseEnter += (_, _) => xb.Background = B("#2A2430");
         xb.MouseLeave += (_, _) => xb.Background = System.Windows.Media.Brushes.Transparent;
@@ -4491,26 +4496,42 @@ public partial class MainWindow : Window
         // forces the two panels to split it evenly and their text to wrap; small windows get a
         // proportionally narrower card instead of a cut-off one.
         double cardW = Math.Clamp(ActualWidth - 80, 480, 760);
-        // adaptive placement: slots near the right edge open their card to the LEFT so it doesn't clip off-screen
-        if (target is FrameworkElement fe)
-        {
-            try
-            {
-                var pt = fe.TransformToAncestor(this).Transform(new Point(0, 0));
-                bool nearRight = pt.X + fe.ActualWidth + cardW > ActualWidth;
-                _hoverPopup.Placement = nearRight
-                    ? System.Windows.Controls.Primitives.PlacementMode.Left
-                    : System.Windows.Controls.Primitives.PlacementMode.Right;
-            }
-            catch { /* not yet in the visual tree — keep default Right */ }
-        }
-        _hoverPopup.PlacementTarget = target;
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
         cc.Width = cardW;
         // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
         _hoverPopup.Child = new ScrollViewer
         { Content = cc, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Max(300, ActualHeight - 60) };
+        _hoverPopup.PlacementTarget = target;
+        // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the slot,
+        // flip LEFT if that would overflow, then clamp BOTH axes inside the window (a tall card near the
+        // bottom slides up instead of running off below). The width clamp above keeps cardW < window and the
+        // MaxHeight keeps it < window, so the clamp always yields a fully-visible card. A Custom placement is
+        // clamped explicitly because WPF only auto-nudges the BUILT-IN modes, and that nudge proved unreliable
+        // for this transparent popup — the manual Left/Right flip it replaces could still run off the far edge.
+        _hoverPopup.CustomPopupPlacementCallback = (popupSize, targetSize, _) => ClampPopupInWindow(target, popupSize, targetSize);
+        _hoverPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Custom;
         _hoverPopup.IsOpen = true;
+    }
+
+    /// <summary>Placement callback that keeps a Popup's child fully inside the window (hence on-screen):
+    /// open to the RIGHT of the target, flip LEFT if that overflows, then clamp both axes into the window.
+    /// Everything is in device-independent units — the same space TransformToAncestor and the callback use —
+    /// so no DPI/monitor math is needed; the window being on-screen makes within-window == on-screen.</summary>
+    System.Windows.Controls.Primitives.CustomPopupPlacement[] ClampPopupInWindow(UIElement target, Size popupSize, Size targetSize)
+    {
+        var fallback = new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
+            new Point(targetSize.Width, 0), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
+        if (target is not FrameworkElement fe) return fallback;
+        Point tw;
+        try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
+        catch { return fallback; }
+        double w = ActualWidth, h = ActualHeight;
+        double x = tw.X + targetSize.Width;                                     // open to the right…
+        if (x + popupSize.Width > w) x = tw.X - popupSize.Width;                // …flip left if it overflows
+        x = Math.Max(0, Math.Min(x, w - popupSize.Width));                      // clamp within the window width
+        double y = Math.Max(0, Math.Min(tw.Y, h - popupSize.Height));          // align top, slide up if needed
+        return new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
+            new Point(x - tw.X, y - tw.Y), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
     }
 
     // the All Items comparison card — the SAME two-panel compare card as hovering a paper-doll slot:
@@ -5267,17 +5288,19 @@ public partial class MainWindow : Window
         var g = new Grid { Margin = new Thickness(0, 5, 0, 5) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // temper badge — its OWN column so a long label can't clip it
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // need value
         var mk = TB("◆", Gold, 12.5, true); mk.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(mk, 0); g.Children.Add(mk);
-        var nmline = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        nmline.Children.Add(TB(i.Label, Ink, 13, false));
-        if (i.Tempered) nmline.Children.Add(TemperedBadge());
-        Grid.SetColumn(nmline, 1); g.Children.Add(nmline);
+        // label goes directly in the Star column so it WRAPS (never clips); the badge no longer rides at the
+        // end of a non-wrapping StackPanel where a long affix name pushed it off the card edge.
+        var nm = TB(i.Label, Ink, 13, false); nm.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(nm, 1); g.Children.Add(nm);
+        if (i.Tempered) { var tb = TemperedBadge(); Grid.SetColumn(tb, 2); g.Children.Add(tb); }
         var nd = TB(i.Need ?? "—", i.NeedIsMax || i.Need == null ? Faint : Soft, 11.5, false);
         if (i.NeedIsMax) nd.ToolTip = "max-roll target (the 100% baseline) — a goal, not a build requirement";
         nd.VerticalAlignment = VerticalAlignment.Center; nd.Margin = new Thickness(8, 0, 0, 0);
-        Grid.SetColumn(nd, 2); g.Children.Add(nd);
+        Grid.SetColumn(nd, 3); g.Children.Add(nd);
         return g;
     }
 
