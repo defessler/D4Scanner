@@ -2853,6 +2853,22 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("SelfHeal: the junked re-sighting evicts the equipped copy", 0, wD.Build.Gear.Count);
     Check("SelfHeal: the item moves to inventory instead", wD.Build.Inventory.Any(g => g.RawName == "ADROIT HELM"));
 
+    // The self-heal must NOT evict a legit equipped item when a DIFFERENT same-name roll is hovered in the
+    // bags (reported bug: hovering an unequipped copy with different stats cleared the worn one off the doll,
+    // because eviction keyed on name+slot alone, ignoring content). Now it evicts only the SAME fingerprint.
+    var wDup = new LogWatcher(Path.Combine(Path.GetTempPath(), "d4s_dup_selfheal_does_not_exist.log"));
+    wDup.FeedChunk(new[] {
+        "Ring", "EQUIPPED", "AMAZON BAND", "Legendary Ring", "900 Item Power",
+        "+100 Dexterity [80 - 120]", "Right mouse button", "Unequip" });
+    Check("SelfHeal dup: the equipped ring starts on the doll", wDup.Build.Gear.Any(g => g.RawName == "AMAZON BAND"));
+    wDup.FeedChunk(new[] {   // a DIFFERENT 'Amazon Band' (different roll) hovered in the bags
+        "AMAZON BAND", "Legendary Ring", "900 Item Power",
+        "+45 Dexterity [40 - 60]", "Right mouse button", "Mark as Junk" });
+    Check("SelfHeal dup: the worn ring STAYS on the doll (different stats are not a dupe)",
+        wDup.Build.Gear.Any(g => g.RawName == "AMAZON BAND"));
+    Check("SelfHeal dup: the different bag copy still shows in inventory",
+        wDup.Build.Inventory.Any(g => g.RawName == "AMAZON BAND"));
+
     // (k) LatestPerSlot recency: the genuine item re-hovered LATER reclaims a 1-cap slot from an
     //     alphabetically-earlier impostor at the same panel position (the 'Adventurer's vs Cowl' bug).
     var lps = new List<Item> {
