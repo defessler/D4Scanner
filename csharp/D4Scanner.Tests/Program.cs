@@ -2876,6 +2876,42 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Eq("Detect: Paragon", "Paragon", PanelOracle.Detect(new[] { "Paragon", "Available Points" }) ?? "");
         Check("Detect: a gameplay frame (no panel chrome) -> null", PanelOracle.Detect(new[] { "Legion: 8 Minutes", "World Boss" }) == null);
 
+        // Detect v0.83 robustness — each case is the OCR Lines of a REAL capture-diag frame the classifier got
+        // wrong (50/65 → ~64/65 on the session). The misses were all on gear-bearing menu/tooltip frames; every
+        // fix is veto-first so it can't fire on the 31/31-correct gameplay frames.
+        // MISS A — a "CHARACTER"-header comparison tooltip (no anatomy grid) is now Character. Real OCR glues a
+        // trailing glyph onto the header ("CHARACTER a"), so the match is StartsWith, gated by worn evidence.
+        Eq("Detect(A): CHARACTER-header comparison + worn evidence -> Character", "Character",
+            PanelOracle.Detect(new[] { "CHARACTER a", "HEIR OF PERDITION", "Ancestral Mythic Unique Helm", "900 Item Power", "EQUIPPED", "HARLEQUIN CREST", "Equip", "Hide Comparison" }) ?? "");
+        Check("Detect(A): CHARACTER header with NO worn evidence stays null (no stray-word fire)",
+            PanelOracle.Detect(new[] { "CHARACTER a", "HEOKI" }) == null);
+        // MISS B — the stats sheet whose "Equipment" tab OCR-glued to "O) Equipment" (exact Has missed it).
+        // Both the length-capped EndsWith and the ≥3 attribute-label path rescue it.
+        Eq("Detect(B): glued 'O) Equipment' tab -> Character", "Character",
+            PanelOracle.Detect(new[] { "CHARACTER a", "HEOKI", "Stats & Materials", "Strength", "Intelligence", "Willpower", "Dexterity", "O) Equipment" }) ?? "");
+        Eq("Detect(B): ≥3 core-attribute labels rescue a garbled-tab Character sub-tab", "Character",
+            PanelOracle.Detect(new[] { "HEOKI", "Strength", "Intelligence", "Willpower", "Dexterity", "Dungeon Keys" }) ?? "");
+        Check("Detect(B): only 2 attribute labels is too weak -> not Character",
+            PanelOracle.Detect(new[] { "Strength", "Intelligence", "Some Tooltip" }) == null);
+        // MISS C — the stash whose "Stash" title OCR'd "STAS"; backed by the stash-exclusive "Edit Tab" control.
+        Eq("Detect(C): garbled 'STAS' + 'Edit Tab' stash chrome -> Stash (not the sidebar's Character)", "Stash",
+            PanelOracle.Detect(new[] { "STAS", "UNIQUES", "FILTERS", "Edit Tab", "Search", "Equipment", "Strength", "Willpower" }) ?? "");
+        Eq("Detect(C): the real stats sheet is NOT swallowed by the STAS cap ('Stats' ≠ STAS-prefix)", "Character",
+            PanelOracle.Detect(new[] { "Stats & Materials", "Equipment", "Strength", "Willpower" }) ?? "");
+        // MISS D — the Blacksmith salvage modal and the Horadric Cube, anchored on station phrases that survive
+        // the heavy OCR garble of the bare "Blacksmith" title.
+        Eq("Detect(D): Blacksmith SALVAGE ALL modal -> Vendor (not the co-rendered stats sidebar)", "Vendor",
+            PanelOracle.Detect(new[] { "BLACKSITIITH", "SALVAGE", "ALL JUNK", "SALVAGE ALL", "Accept", "Cancel", "Equipment", "Strength", "Willpower" }) ?? "");
+        Eq("Detect(D): Horadric Cube -> Vendor", "Vendor",
+            PanelOracle.Detect(new[] { "HORADRIC CUBE", "TRANSMUTE", "RECIPES", "Equipment", "Strength", "Willpower" }) ?? "");
+        // Precision guards that the new branches must not break.
+        Check("Detect: a real combat frame stays null despite stray attribute words",
+            PanelOracle.Detect(new[] { "Torment IX", "Cleanse the Pit", "War Plan: 3/5", "Solarnova | 70 (246) (VII)" }) == null);
+        Eq("Detect: Purveyor gamble still vetoes to Vendor over its 'Head' category", "Vendor",
+            PanelOracle.Detect(new[] { "Purveyor of Curiosities", "Head", "Chest", "Salvage", "50 Obols" }) ?? "");
+        Check("Detect: a worn-item tooltip's inline 'Salvage' action alone does NOT read Vendor",
+            PanelOracle.Detect(new[] { "CHARACTER a", "ETNA'S LOST DAGGER", "Legendary Dagger", "EQUIPPED", "Salvage", "Unequip" }) == "Character");
+
         // The residual-hole shape: a "Ring" slot header arms FromCharPanel but is NOT a Character PanelMarker,
         // so UiPanel stays null; with no action tail the item reaches the fail-safe. [ISO]-stamped so LogTimeUtc
         // is real (else PanelAt(0) fail-closes and the test would pass for the wrong reason).
