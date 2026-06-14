@@ -464,7 +464,11 @@ public sealed class LogWatcher : IDisposable
             .GroupBy(it => SlotBaseName(it.Slot ?? ""))
             .SelectMany(g =>
             {
-                int max = overrideMax > 0 ? overrideMax : (g.Key == "ring" ? 2 : g.Key == "weapon" ? 4 : 1);
+                // A LoH talisman holds up to 6 charms (a seal "Unlocks N Charm Slots", N≤6), so charms must
+                // NOT collapse to one like a single-instance slot — a full set (e.g. the 5-piece Legacy of the
+                // Sightless) would otherwise show just one charm. Rings=2, weapons=4 (incl. dual-wield), else 1.
+                int max = overrideMax > 0 ? overrideMax
+                    : g.Key switch { "ring" => 2, "weapon" => 4, "charm" => 6, _ => 1 };
                 // Reverse (most-recently-scanned first) then deduplicate before taking N.
                 // Dedup key logic:
                 //   - Item scanned from the character panel (SlotPosition > 0): key = "Name:Position"
