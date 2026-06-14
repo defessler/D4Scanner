@@ -2310,6 +2310,25 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var capPath = UpgradePath.ForSlot(new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Maximum Life" } } }, capItem);
     Check("UpgradePath: off-build Capstone ⇒ reroll-Capstone step (Neathiron)",
         Step(capPath, "MASTERWORK")?.Text.Contains("Capstone") == true && Step(capPath, "MASTERWORK")!.Cost!.Contains("Neathiron"));
+
+    // ForBuild: aggregate every equipped slot's crafting plan into the "what can I craft" overview, using the
+    // same slot assignment as the diff. Only slots with at least one available step are included.
+    var cbTarget = new TargetBuild { Gear = {
+        new TargetGear { Slot = "Boots", Label = "Boots", Affixes = { new TargetAffix { Name = "Movement Speed" }, new TargetAffix { Name = "Maximum Life" } } },
+        new TargetGear { Slot = "Helm", Label = "Helm", Aspect = "Aspect of Y", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
+    } };
+    var cbLive = new LiveBuild { Gear = {
+        new Item { Name = "My Boots", Slot = "boots", IsAncestral = true, Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } },
+        new Item { Name = "My Helm",  Slot = "helm",  IsAncestral = true, Affixes = { new Affix { Text = "Maximum Life", Value = 1000 } } },
+    } };
+    var cb = UpgradePath.ForBuild(cbTarget, cbLive);
+    Check("UpgradePath.ForBuild: aggregates craftable equipped slots", cb.Count >= 1);
+    Check("UpgradePath.ForBuild: each plan names slot + item and has steps",
+        cb.All(p => p.SlotLabel.Length > 0 && p.ItemName.Length > 0 && p.Steps.Count > 0));
+    Check("UpgradePath.ForBuild: includes the boots plan", cb.Any(p => p.ItemName == "My Boots"));
+    Check("UpgradePath.ForBuild: helm missing the wanted aspect -> an IMPRINT step",
+        cb.Where(p => p.ItemName == "My Helm").SelectMany(p => p.Steps).Any(s => s.Verb == "IMPRINT"));
+    Check("UpgradePath.ForBuild: empty live -> no plans", UpgradePath.ForBuild(cbTarget, new LiveBuild()).Count == 0);
 }
 
 // ---- v0.32: Torment-tier gating + IP-tier rules ----

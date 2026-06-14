@@ -1654,6 +1654,10 @@ public partial class MainWindow : Window
             }
         }
 
+        // "what you can craft right now" — the crafting moves available across every equipped piece (above the
+        // affix-by-affix progress so it's reachable without scrolling the whole loadout)
+        var craft = CraftSection(); if (craft != null) Body.Children.Add(craft);
+
         // full per-requirement progress: a bar for every affix / aspect / unique / rune / skill / paragon glyph
         Body.Children.Add(BuildProgressPanel(r));
 
@@ -4809,6 +4813,46 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
             Padding = new Thickness(14, 11, 14, 12), Margin = new Thickness(0, 10, 0, 0), Child = inner,
         };
+    }
+
+    // "WHAT YOU CAN CRAFT" — every equipped slot's available crafting moves, consolidated. The per-item detail
+    // panel shows one slot at a time; this is the whole-loadout overview. Returns null when nothing is craftable.
+    UIElement? CraftSection()
+    {
+        if (_target == null) return null;
+        var plans = UpgradePath.ForBuild(_target, EffectiveLive());
+        if (plans.Count == 0) return null;
+        var sp = new StackPanel { Margin = new Thickness(0, 20, 0, 4) };
+        sp.Children.Add(TBs("WHAT YOU CAN CRAFT", Gold, 14, true, new Thickness(0, 0, 0, 3)));
+        sp.Children.Add(TB("Crafting moves available on your equipped gear right now — Blacksmith (temper/masterwork), Occultist (enchant/imprint), Jeweler (sockets).",
+            Soft, 11.5, false, new Thickness(0, 0, 0, 10)));
+        foreach (var plan in plans)
+        {
+            var card = new StackPanel();
+            var hd = new DockPanel { Margin = new Thickness(0, 0, 0, 2) };
+            var nm = TB(plan.ItemName, Soft, 11, false); nm.VerticalAlignment = VerticalAlignment.Bottom; DockPanel.SetDock(nm, Dock.Right); hd.Children.Add(nm);
+            hd.Children.Add(TBs(plan.SlotLabel, Ink, 12.5, true));
+            card.Children.Add(hd);
+            foreach (var s in plan.Steps)
+            {
+                var row = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
+                var head = new DockPanel();
+                var chip = VerbChip(s.Verb, 9.5, new Thickness(6, 1, 6, 2), 78); DockPanel.SetDock(chip, Dock.Left); chip.Margin = new Thickness(0, 0, 8, 0);
+                head.Children.Add(chip);
+                var txt = TB(s.Text, Ink, 11.5, false); txt.VerticalAlignment = VerticalAlignment.Center;
+                head.Children.Add(txt);
+                row.Children.Add(head);
+                if (s.Cost != null) row.Children.Add(TB(s.Cost, Soft, 10.5, false, new Thickness(86, 1, 0, 0)));
+                if (s.Warning != null) row.Children.Add(TB("⚠ " + s.Warning, Amber, 10, false, new Thickness(86, 1, 0, 0)));
+                card.Children.Add(row);
+            }
+            sp.Children.Add(new Border
+            {
+                Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(14, 10, 14, 11), Margin = new Thickness(0, 0, 0, 8), Child = card,
+            });
+        }
+        return sp;
     }
 
     // per-slot substitute analysis for a gear section (matched by group index in the target)

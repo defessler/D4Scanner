@@ -93,4 +93,24 @@ public static class UpgradePath
 
         return steps;
     }
+
+    /// <summary>One equipped slot's crafting plan: which item is in the slot, and the ordered steps to perfect it.</summary>
+    public sealed record SlotPlan(string SlotLabel, string ItemName, List<PathStep> Steps);
+
+    /// <summary>The whole build's "what can I craft right now" overview: every equipped slot that has at least one
+    /// available crafting step, in target-slot order. Uses the SAME slot assignment as the diff/upgrade scorer,
+    /// so the item shown for each slot is the one the rest of the app treats as equipped there.</summary>
+    public static List<SlotPlan> ForBuild(TargetBuild target, LiveBuild live)
+    {
+        var assigned = DiffEngine.AssignSlots(target, live);
+        var plans = new List<SlotPlan>();
+        for (int gi = 0; gi < target.Gear.Count; gi++)
+        {
+            if (!assigned.TryGetValue(gi, out var item) || item == null) continue;
+            var steps = ForSlot(target.Gear[gi], item);
+            if (steps.Count > 0)
+                plans.Add(new SlotPlan(target.Gear[gi].Label ?? target.Gear[gi].Slot ?? "Slot", item.Name ?? "", steps));
+        }
+        return plans;
+    }
 }
