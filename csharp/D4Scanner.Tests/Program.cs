@@ -2812,6 +2812,112 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("VendorLeak: both bare-EQUIPPED hovers parsed", 2, db.Items.Count);
     Check("VendorLeak: bare EQUIPPED alone no longer classifies as worn", db.Items.All(x => !x.Equipped));
 
+    // ---- OCR panel-oracle fusion (PanelOracle + ClassifyContext rescue) ----
+    // PanelOracle is the OCR↔TTS sensor-fusion record: the OCR engine Observes which panel it visually saw;
+    // the TTS classifier asks PanelAt() to rescue a worn item whose "Character" marker aged out of the
+    // rolling window. Hardened per design review: fail-closed (tick 0 / out-of-tolerance → null, never a
+    // most-recent fallback), tight tolerance, bounded, clearable. STRICTLY ADDITIVE (only upgrades, only for
+    // FromCharPanel-corroborated items with a real hover time).
+    {
+        long T(int s) => new DateTimeOffset(2026, 6, 12, 10, 0, 0, TimeSpan.Zero).AddSeconds(s).UtcTicks;
+        var o = new PanelOracle(25);
+        Check("PanelOracle: empty -> null", o.PanelAt(T(0)) == null);
+        o.Observe("Character", T(0));
+        Eq("PanelOracle: observation within tolerance returns it", "Character", o.PanelAt(T(10)) ?? "");
+        Check("PanelOracle: out-of-tolerance (40s) -> null", o.PanelAt(T(40)) == null);
+        Check("PanelOracle: fail-closed on tick 0 (unknown hover time) -> null", o.PanelAt(0) == null);
+        Eq("PanelOracle: future-side observation within tolerance (OCR scans after the hover)", "Character", o.PanelAt(T(-10)) ?? "");
+        o.Observe("Vendor", T(30));
+        Eq("PanelOracle: nearest-in-time wins (Vendor closer to T+28)", "Vendor", o.PanelAt(T(28)) ?? "");
+        Eq("PanelOracle: Character still wins near T+5", "Character", o.PanelAt(T(5)) ?? "");
+        var ob = new PanelOracle(25);
+        for (int k = 0; k < 200; k++) ob.Observe("Character", T(0) + k);
+        Check("PanelOracle: observation buffer is bounded (<= 32, hard count cap)", ob.Count <= 32);
+        var ot = new PanelOracle(25);
+        ot.Observe("Character", T(0));
+        ot.Observe("Inventory", T(120));   // 120s later: T(0) is older than 2*tolerance(50s) -> time-trimmed
+        Eq("PanelOracle: time-trim drops observations older than 2x tolerance", 1, ot.Count);
+        o.Clear();
+        Check("PanelOracle: Clear() resets -> null", o.PanelAt(T(5)) == null);
+
+        // PanelOracle.Detect — the OCR visual panel classifier (pure Core string logic; the safety-critical
+        // half the fusion rests on). High precision + Armory exclusion. The Purveyor case is the season-drift
+        // tripwire: if a future season relabels two gamble categories to anatomical words, the >=2 boundary
+        // weakens and this assertion catches it.
+        Check("Detect: Armory loadout excluded (renders the same chrome as the char sheet)",
+            PanelOracle.Detect(new[] { "Equipment", "Head", "Torso", "Armory Loadout" }) == null);
+        Check("Detect: a lone 'Head' is too weak -> not Character", PanelOracle.Detect(new[] { "Head", "Some Item" }) == null);
+        Eq("Detect: 'Head'+'Torso' (>=2 anatomy labels) -> Character", "Character", PanelOracle.Detect(new[] { "Head", "Torso" }) ?? "");
+        Eq("Detect: the 'Equipment' tab -> Character", "Character", PanelOracle.Detect(new[] { "Equipment", "Some Item" }) ?? "");
+        Eq("Detect: a Purveyor frame -> Vendor even with a 'Head' gamble label (veto-first; season tripwire)",
+            "Vendor", PanelOracle.Detect(new[] { "Purveyor of Curiosities", "Head", "Chest", "Ring", "50 Obols" }) ?? "");
+        Eq("Detect: Stash", "Stash", PanelOracle.Detect(new[] { "Stash", "Withdraw" }) ?? "");
+        Eq("Detect: Inventory", "Inventory", PanelOracle.Detect(new[] { "Inventory" }) ?? "");
+        Eq("Detect: Paragon", "Paragon", PanelOracle.Detect(new[] { "Paragon", "Available Points" }) ?? "");
+        Check("Detect: a gameplay frame (no panel chrome) -> null", PanelOracle.Detect(new[] { "Legion: 8 Minutes", "World Boss" }) == null);
+
+        // The residual-hole shape: a "Ring" slot header arms FromCharPanel but is NOT a Character PanelMarker,
+        // so UiPanel stays null; with no action tail the item reaches the fail-safe. [ISO]-stamped so LogTimeUtc
+        // is real (else PanelAt(0) fail-closes and the test would pass for the wrong reason).
+        const string TS = "[2026-06-12T10:00:00Z]";
+        long hover = new DateTimeOffset(2026, 6, 12, 10, 0, 0, TimeSpan.Zero).UtcTicks;
+        var ringHole = new[] {
+            TS+"Ring",
+            TS+"EQUIPPED",
+            TS+"GLYPH BAND OF MIGHT", TS+"Legendary Ring", TS+"800 Item Power", TS+"+100 Dexterity [80 - 120]",
+            TS+"Right mouse button",
+            TS+"EQUIPPED",   // next hover = block boundary: the first item's window closes with no action token
+            TS+"OTHER RING", TS+"Legendary Ring", TS+"810 Item Power", TS+"+90 Dexterity [80 - 120]",
+            TS+"Right mouse button",
+        };
+        // (a) oracle saw the Character panel at the hover time -> the FromCharPanel ring is rescued worn
+        var oc = new PanelOracle(25); oc.Observe("Character", hover);
+        var ra = LogWatcher.DiagnoseLines(ringHole, oracle: oc);
+        Check("OracleFuse(a): FromCharPanel ring rescued worn when OCR saw Character at hover", ra.Items[0].Equipped);
+        Eq("OracleFuse(a): rescued item is WornGear", "WornGear", ra.Items[0].Context);
+        // (c) no oracle -> unchanged current fail-safe behavior (demoted) — guards determinism / the replay path
+        Check("OracleFuse(c): no oracle -> stays demoted (current behavior unchanged)",
+            !LogWatcher.DiagnoseLines(ringHole).Items[0].Equipped);
+        // (b) oracle saw VENDOR at the hover (the Purveyor 'Ring' gamble) -> NOT rescued, stays demoted
+        var ov = new PanelOracle(25); ov.Observe("Vendor", hover);
+        Eq("OracleFuse(b): oracle reports Vendor at the hover (positive non-Character, not null)", "Vendor", ov.PanelAt(hover) ?? "");
+        Check("OracleFuse(b): oracle saw Vendor -> Purveyor gamble ring stays demoted (no false worn)",
+            !LogWatcher.DiagnoseLines(ringHole, oracle: ov).Items[0].Equipped);
+        // (d) oracle saw Character but 40s AFTER the hover (outside the tight window) -> NOT rescued
+        var ol = new PanelOracle(25); ol.Observe("Character", hover + TimeSpan.FromSeconds(40).Ticks);
+        Check("OracleFuse(d): stale Character 40s later -> NOT rescued (tight tolerance)",
+            !LogWatcher.DiagnoseLines(ringHole, oracle: ol).Items[0].Equipped);
+        // (e) UNSTAMPED block (LogTimeUtc null) + a fresh Character oracle -> fail-closed, NOT rescued
+        var ringNoTime = new[] {
+            "Ring", "EQUIPPED",
+            "GLYPH BAND OF MIGHT", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]",
+            "Right mouse button",
+            "EQUIPPED",
+            "OTHER RING", "Legendary Ring", "810 Item Power", "+90 Dexterity [80 - 120]",
+            "Right mouse button",
+        };
+        var onp = new PanelOracle(25); onp.Observe("Character", new DateTimeOffset(2026, 6, 12, 10, 0, 5, TimeSpan.Zero).UtcTicks);
+        Check("OracleFuse(e): an un-timestamped item (null LogTimeUtc) is excluded by the rescue's null-check",
+            !LogWatcher.DiagnoseLines(ringNoTime, oracle: onp).Items[0].Equipped);
+
+        // (instance) the LIVE path: the rescue works through FeedChunk/ResolvePending (not just static
+        // DiagnoseLines), and the gear-wipe boundaries Clear the oracle — hardening only reachable on the
+        // instance watcher. A stale "Character" window must NOT survive a shim re-attach (cross-session
+        // worn-gear resurrection).
+        const string ITS = "[2026-06-12T11:00:00Z]";
+        long ihov = new DateTimeOffset(2026, 6, 12, 11, 0, 0, TimeSpan.Zero).UtcTicks;
+        var io = new PanelOracle(25); io.Observe("Character", ihov);
+        var iw = new LogWatcher(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "d4s_oracle_does_not_exist.log"), oracle: io);
+        iw.FeedChunk(new[] {
+            ITS+"Ring", ITS+"EQUIPPED", ITS+"WORN BAND OF MIGHT", ITS+"Legendary Ring", ITS+"800 Item Power",
+            ITS+"+100 Dexterity [80 - 120]", ITS+"Right mouse button" });
+        iw.FeedChunk(System.Array.Empty<string>()); iw.FeedChunk(System.Array.Empty<string>());   // force-resolve pending
+        Check("OracleFuse(instance): the live FeedChunk path rescues the FromCharPanel ring to gear",
+            iw.Build.Gear.Any(g => g.RawName == "WORN BAND OF MIGHT"));
+        iw.FeedChunk(new[] { "=== d4scanner tts shim attached v2 ===" });
+        Eq("OracleFuse(instance): a shim re-attach Clears the oracle (no cross-session worn resurrection)", 0, io.Count);
+    }
+
     // (f) …but a genuinely worn item keeps every rescue path: the Unequip tail wins even when the
     //     panel says Inventory and a paper-doll label armed the header (the inventory-screen shape).
     var invWorn = new[] {
