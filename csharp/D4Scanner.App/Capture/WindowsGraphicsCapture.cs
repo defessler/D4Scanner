@@ -53,13 +53,17 @@ public static class WindowsGraphicsCapture
         void GetBuffer(out byte* buffer, out uint capacity);
     }
 
-    /// <summary>Grab a frame of Diablo IV. Returns null if D4 is not running or capture fails.</summary>
-    public static async Task<System.Drawing.Bitmap?> GrabAsync()
+    /// <summary>A grabbed frame plus which path produced it (the capture path matters for the diagnostic's
+    /// coordinate space: WGC frames are the full window, PrintWindow frames are the client area).</summary>
+    public readonly record struct GrabResult(System.Drawing.Bitmap? Bitmap, string Path);
+
+    /// <summary>Grab a frame of Diablo IV. Bitmap is null if D4 is not running or capture fails.</summary>
+    public static async Task<GrabResult> GrabAsync()
     {
         var proc = Process.GetProcessesByName("Diablo IV").FirstOrDefault();
-        if (proc == null || proc.MainWindowHandle == IntPtr.Zero) return null;
-        try { return await GrabViaWgcAsync(proc.MainWindowHandle).ConfigureAwait(false); }
-        catch { return GrabViaPrintWindow(proc.MainWindowHandle); }
+        if (proc == null || proc.MainWindowHandle == IntPtr.Zero) return new(null, "none");
+        try { return new(await GrabViaWgcAsync(proc.MainWindowHandle).ConfigureAwait(false), "wgc"); }
+        catch { return new(GrabViaPrintWindow(proc.MainWindowHandle), "printwindow"); }
     }
 
     static async Task<System.Drawing.Bitmap?> GrabViaWgcAsync(IntPtr hwnd)

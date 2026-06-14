@@ -2938,6 +2938,90 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Eq("OracleFuse(instance): a shim re-attach Clears the oracle (no cross-session worn resurrection)", 0, io.Count);
     }
 
+    // ---- CaptureDiag (Phase-0 OCR↔TTS fusion diagnostics — pure Core: cadence, timestamps, JSON, tail, prune) ----
+    {
+        // adaptive cadence: fast while a panel is open (catch sub-second hovers), idle otherwise
+        Eq("CaptureDiag.NextIntervalMs: panel open -> active cadence", 3000, CaptureDiag.NextIntervalMs(true, 3000, 20000));
+        Eq("CaptureDiag.NextIntervalMs: no panel -> idle cadence", 20000, CaptureDiag.NextIntervalMs(false, 3000, 20000));
+
+        // timestamp keys: IsoSecond is the whole-second join key to the TTS log; Stem is the filesystem-safe per-scan id
+        long t = new DateTimeOffset(2026, 6, 12, 10, 30, 45, TimeSpan.Zero).UtcTicks;
+        Eq("CaptureDiag.IsoSecond: whole-second UTC join key", "2026-06-12T10:30:45Z", CaptureDiag.IsoSecond(t));
+        long tms = new DateTimeOffset(2026, 6, 12, 10, 30, 45, 123, TimeSpan.Zero).UtcTicks;
+        Eq("CaptureDiag.Stem: filesystem-safe ms stem (no colons)", "2026-06-12T10-30-45-123Z", CaptureDiag.Stem(tms));
+
+        // JSON round-trip: the record (incl. word rects + TTS tail) survives serialize/deserialize intact
+        var rec = new CaptureDiag.DiagRecord(
+            CaptureDiag.SchemaVersion, t, CaptureDiag.IsoSecond(t), "Character", "wgc", 2560, 1440, false, "scan.png",
+            new List<CaptureDiag.DiagWord> { new("Head", 10, 20, 30, 40) },
+            new List<string> { "Head", "Torso" },
+            new List<string> { "[2026-06-12T10:30:45Z]EQUIPPED" });
+        var back = CaptureDiag.FromJson(CaptureDiag.ToJson(rec));
+        Check("CaptureDiag JSON round-trip: parses back non-null", back != null);
+        Eq("CaptureDiag JSON round-trip: schema version preserved", CaptureDiag.SchemaVersion, back!.SchemaVersion);
+        Eq("CaptureDiag JSON round-trip: panel preserved", "Character", back.Panel ?? "");
+        Eq("CaptureDiag JSON round-trip: capture path preserved", "wgc", back.CapturePath);
+        Eq("CaptureDiag JSON round-trip: word text preserved", "Head", back.Words[0].Text);
+        Eq("CaptureDiag JSON round-trip: word rect X preserved (the position payload)", 10, back.Words[0].X);
+        Eq("CaptureDiag JSON round-trip: TTS tail preserved", 1, back.TtsTail.Count);
+        Check("CaptureDiag.FromJson: garbage -> null (never throws)", CaptureDiag.FromJson("{not json") == null);
+
+        // TailLines: last N non-empty lines, bounded; blank lines dropped; missing/null path -> empty (no throw)
+        var tailFile = Path.Combine(Path.GetTempPath(), "d4s_diagtail_" + Guid.NewGuid().ToString("N") + ".log");
+        File.WriteAllText(tailFile, "line1\nline2\n\nline3\nline4\n");
+        var tail = CaptureDiag.TailLines(tailFile, maxLines: 2);
+        Eq("CaptureDiag.TailLines: returns at most maxLines", 2, tail.Count);
+        Eq("CaptureDiag.TailLines: last line is the file's last non-empty line", "line4", tail[^1]);
+        Eq("CaptureDiag.TailLines: blank lines dropped", "line3", tail[0]);
+        Check("CaptureDiag.TailLines: missing path -> empty, no throw", CaptureDiag.TailLines(Path.Combine(Path.GetTempPath(), "d4s_nope_" + Guid.NewGuid().ToString("N") + ".log")).Count == 0);
+        Check("CaptureDiag.TailLines: null path -> empty", CaptureDiag.TailLines(null).Count == 0);
+        try { File.Delete(tailFile); } catch { }
+
+        // TailLines window-boundary off-by-one: when len-maxBytes lands EXACTLY on a newline the window opens on
+        // a clean line, so the first whole line must be KEPT (a blind RemoveAt(0) used to eat it).
+        var boundFile = Path.Combine(Path.GetTempPath(), "d4s_diagbound_" + Guid.NewGuid().ToString("N") + ".log");
+        File.WriteAllText(boundFile, "AAAA\nBBBB\nCCCC\n");        // 15 bytes; maxBytes 10 -> from=5, byte[4]='\n' (boundary)
+        var bt = CaptureDiag.TailLines(boundFile, maxLines: 10, maxBytes: 10);
+        Eq("CaptureDiag.TailLines: newline-boundary window keeps its first whole line (count)", 2, bt.Count);
+        Eq("CaptureDiag.TailLines: newline-boundary first line not dropped", "BBBB", bt.Count > 0 ? bt[0] : "");
+        File.WriteAllText(boundFile, "AAAAAAAA\nBBBB\nCCCC\n");     // 19 bytes; maxBytes 12 -> from=7, byte[6]='A' (mid-line)
+        var mt = CaptureDiag.TailLines(boundFile, maxLines: 10, maxBytes: 12);
+        Eq("CaptureDiag.TailLines: mid-line window drops the partial head fragment (count)", 2, mt.Count);
+        Eq("CaptureDiag.TailLines: mid-line first whole line is BBBB", "BBBB", mt.Count > 0 ? mt[0] : "");
+        try { File.Delete(boundFile); } catch { }
+
+        // Prune — age sweep, MB budget (oldest-first), and stem-pairing (.json + .png never orphan)
+        var stems = new[] { "2026-06-01T00-00-00-000Z", "2026-06-02T00-00-00-000Z", "2026-06-03T00-00-00-000Z" };
+        Eq("CaptureDiag.Prune: missing dir -> 0, no throw", 0,
+            CaptureDiag.Prune(Path.Combine(Path.GetTempPath(), "d4s_diag_nope_" + Guid.NewGuid().ToString("N")), 100, 30));
+
+        var ageDir = Path.Combine(Path.GetTempPath(), "d4s_diagage_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(ageDir);
+        foreach (var st in stems) File.WriteAllText(Path.Combine(ageDir, st + ".json"), new string('x', 4096));
+        File.SetLastWriteTimeUtc(Path.Combine(ageDir, stems[0] + ".json"), new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        CaptureDiag.Prune(ageDir, maxTotalMB: 9999, maxAgeDays: 30, nowUtc: new DateTime(2026, 6, 3, 0, 0, 0, DateTimeKind.Utc));
+        Check("CaptureDiag.Prune: age sweep deletes the stale stem", !File.Exists(Path.Combine(ageDir, stems[0] + ".json")));
+        Check("CaptureDiag.Prune: age sweep keeps recent stems", File.Exists(Path.Combine(ageDir, stems[2] + ".json")));
+        try { Directory.Delete(ageDir, true); } catch { }
+
+        var budgetDir = Path.Combine(Path.GetTempPath(), "d4s_diagbudget_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(budgetDir);
+        foreach (var st in stems) File.WriteAllText(Path.Combine(budgetDir, st + ".json"), new string('x', 600 * 1024)); // ~0.6MB each, 1.8MB total
+        CaptureDiag.Prune(budgetDir, maxTotalMB: 1, maxAgeDays: 9999);   // cap 1MB -> oldest two deleted
+        Check("CaptureDiag.Prune: MB budget deletes the oldest stem first", !File.Exists(Path.Combine(budgetDir, stems[0] + ".json")));
+        Check("CaptureDiag.Prune: MB budget keeps the newest stem under cap", File.Exists(Path.Combine(budgetDir, stems[2] + ".json")));
+        try { Directory.Delete(budgetDir, true); } catch { }
+
+        var pairDir = Path.Combine(Path.GetTempPath(), "d4s_diagpair_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(pairDir);
+        File.WriteAllText(Path.Combine(pairDir, stems[0] + ".json"), new string('x', 2 * 1024 * 1024)); // 2MB > cap
+        File.WriteAllText(Path.Combine(pairDir, stems[0] + ".png"), new string('y', 1024));             // same stem, small
+        CaptureDiag.Prune(pairDir, maxTotalMB: 1, maxAgeDays: 9999);
+        Check("CaptureDiag.Prune: a stem's .png is pruned together with its .json (no orphan)",
+            !File.Exists(Path.Combine(pairDir, stems[0] + ".png")) && !File.Exists(Path.Combine(pairDir, stems[0] + ".json")));
+        try { Directory.Delete(pairDir, true); } catch { }
+    }
+
     // (f) …but a genuinely worn item keeps every rescue path: the Unequip tail wins even when the
     //     panel says Inventory and a paper-doll label armed the header (the inventory-screen shape).
     var invWorn = new[] {

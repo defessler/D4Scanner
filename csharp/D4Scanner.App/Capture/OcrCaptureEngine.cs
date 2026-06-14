@@ -17,10 +17,18 @@ public sealed class OcrCaptureEngine : IDisposable
 {
     public event Action<LiveBuild>? Updated;
 
-    readonly int _intervalMs;
+    readonly int _idleMs;
+    const int ActiveMs = 3000;   // adaptive cadence: scan fast WHILE a panel is open (catch sub-second hovers)
     readonly PanelOracle? _oracle;   // shared with the TTS LogWatcher: OCR Observes the panel it visually sees
+    readonly Func<bool>? _diagEnabled;   // captureDiag setting, live-readable (like _debugMode — no engine rebuild on toggle)
+    readonly string? _diagDir;           // %LOCALAPPDATA%\d4scanner\capture-diag
+    readonly Func<string?>? _logPath;    // live TTS-log path (reflects a mid-session Move) for the tail snapshot
     System.Threading.Timer? _timer;
+    volatile bool _disposed;             // cooperative shutdown: fast cadence widens the dispose-mid-scan window
     ulong _lastHash;
+    string? _lastPanel;                  // panel from the last OCR'd frame — re-Observed on a hash-skipped frame so a
+    bool _lastPanelOpen;                 // static character sheet keeps the oracle warm (else the worn-rescue goes stale)
+    string? _lastPngPanel; long _lastPngTicks;   // PNG throttle: only on a panel transition + wall-clock spacing
     readonly List<Item> _orderedGear = new();
     readonly List<Item> _orderedInv  = new();
 
@@ -29,22 +37,42 @@ public sealed class OcrCaptureEngine : IDisposable
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
-    public OcrCaptureEngine(PanelOracle? oracle = null, int intervalMs = 20_000)
-    { _oracle = oracle; _intervalMs = intervalMs; }
+    public OcrCaptureEngine(PanelOracle? oracle = null, int intervalMs = 20_000,
+        Func<bool>? diagEnabled = null, string? diagDir = null, Func<string?>? logPath = null)
+    { _oracle = oracle; _idleMs = intervalMs; _diagEnabled = diagEnabled; _diagDir = diagDir; _logPath = logPath; }
+
+    const int DiagMaxMB = 400, DiagMaxAgeDays = 30, PngThrottleMs = 4000, PngMaxEdge = 1400;
 
     public void Start()
     {
         _timer?.Dispose();
-        _timer = new System.Threading.Timer(_ => _ = ScanCoreAsync(), null, 2000, _intervalMs);
+        // One-shot self-rescheduling timer: the period is data-driven (adaptive cadence), re-armed ONLY from
+        // the timer callback (TickAsync) so a manual ScanNow never perturbs the cadence; the re-arm is
+        // dispose-guarded. Sweep stale diagnostics once at start, like the log prune.
+        _timer = new System.Threading.Timer(_ => _ = TickAsync(), null, 2000, System.Threading.Timeout.Infinite);
+        if (_diagEnabled?.Invoke() == true && _diagDir != null)
+            try { CaptureDiag.Prune(_diagDir, DiagMaxMB, DiagMaxAgeDays); } catch { }
     }
 
+    async Task TickAsync()
+    {
+        try { await ScanCoreAsync().ConfigureAwait(false); }
+        finally
+        {
+            if (!_disposed)
+                try { _timer?.Change(CaptureDiag.NextIntervalMs(_lastPanelOpen, ActiveMs, _idleMs), System.Threading.Timeout.Infinite); }
+                catch (ObjectDisposedException) { }
+        }
+    }
+
+    /// <summary>Manual "Scan now" — one scan, no cadence reschedule (the periodic timer keeps its own clock).</summary>
     public Task ScanNowAsync() => ScanCoreAsync();
 
     int _scanning;   // 0 = idle, 1 = a scan is running
     async Task ScanCoreAsync()
     {
-        // Skip-if-busy: a 4K WGC grab + OCR can exceed the 20 s interval, so the next timer tick must not
-        // start a second scan that races the shared _orderedGear/_orderedInv/_lastHash state (torn lists).
+        // Skip-if-busy: a 4K WGC grab + OCR can exceed the interval, so the next timer tick must not start a
+        // second scan that races the shared _orderedGear/_orderedInv/_lastHash state (torn lists).
         if (System.Threading.Interlocked.Exchange(ref _scanning, 1) == 1) return;
         try
         {
@@ -52,40 +80,46 @@ public sealed class OcrCaptureEngine : IDisposable
             if (proc == null) return;
             if (GetForegroundWindow() != proc.MainWindowHandle) return;
 
-            using var bmp = await WindowsGraphicsCapture.GrabAsync().ConfigureAwait(false);
+            var grab = await WindowsGraphicsCapture.GrabAsync().ConfigureAwait(false);
+            using var bmp = grab.Bitmap;
             if (bmp == null) return;
 
             var hash = FrameHash(bmp);
-            if (hash == _lastHash) return;
+            if (hash == _lastHash)
+            {
+                // Unchanged frame: skip OCR, but KEEP THE ORACLE WARM — re-Observe the last-known panel so a
+                // perfectly static character-sheet hover doesn't let the worn-gear rescue's 25 s window go
+                // stale (a real v0.79 hole: Observe used to fire only on a CHANGED frame).
+                _oracle?.Observe(_lastPanel, DateTime.UtcNow.Ticks);
+                return;
+            }
             _lastHash = hash;
 
-            // `using`: the SoftwareBitmap is consumed by RecognizeAsync below and not referenced
-            // afterward — dispose it deterministically rather than leaking a full-screen native
-            // bitmap to the finalizer on every changed-frame scan (same class as the WGC grab fix).
+            // `using`: the SoftwareBitmap is consumed by RecognizeAsync and not referenced afterward.
             using var sb = await BitmapToSoftwareBitmapAsync(bmp).ConfigureAwait(false);
             if (sb == null) return;
-
             var engine = OcrEngine.TryCreateFromUserProfileLanguages();
             if (engine == null) return;
-
             var result = await engine.RecognizeAsync(sb).AsTask().ConfigureAwait(false);
             if (result == null) return;
 
             var lines = result.Lines.Select(l => l.Text).ToList();
-            ProcessOcrLines(lines);
+            var panel = PanelOracle.Detect(lines);   // computed ONCE — fed to the oracle, the items, AND the diag
+            _oracle?.Observe(panel, DateTime.UtcNow.Ticks);
+            _lastPanel = panel; _lastPanelOpen = panel != null;
+
+            ProcessOcrLines(lines, panel);
+
+            if (_diagEnabled?.Invoke() == true && _diagDir != null)
+                try { WriteDiag(result, panel, bmp, grab.Path); } catch { /* diagnostics never break the scan */ }
         }
         catch { /* best-effort */ }
         finally { System.Threading.Interlocked.Exchange(ref _scanning, 0); }
     }
 
-    void ProcessOcrLines(List<string> lines)
+    // panel is computed once in ScanCoreAsync (fed to the oracle + diag too) and passed in here.
+    void ProcessOcrLines(List<string> lines, string? panel)
     {
-        // Detect which panel is open from on-screen chrome, then feed the shared oracle so the TTS classifier
-        // can use it as worn/browsed ground truth (the OCR↔TTS sensor fusion). PanelOracle.Detect lives in
-        // Core (pure string logic) so it is headlessly testable.
-        string? panel = PanelOracle.Detect(lines);
-        _oracle?.Observe(panel, DateTime.UtcNow.Ticks);
-
         var blocks = ExtractTooltipBlocks(lines);
         bool changed = false;
         foreach (var block in blocks)
@@ -106,7 +140,7 @@ public sealed class OcrCaptureEngine : IDisposable
             changed = true;
         }
 
-        if (!changed) return;
+        if (!changed || _disposed) return;   // a disposed/replaced engine must not push stale OCR gear
 
         if (_orderedGear.Count > 2000) _orderedGear.RemoveRange(0, _orderedGear.Count - 1000);
         if (_orderedInv.Count  > 2000) _orderedInv.RemoveRange(0, _orderedInv.Count - 1000);
@@ -183,5 +217,55 @@ public sealed class OcrCaptureEngine : IDisposable
         return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied).AsTask().ConfigureAwait(false);
     }
 
-    public void Dispose() => _timer?.Dispose();
+    // ---- capture diagnostics (Phase 0): one paired record per OCR scan, JSON always + PNG rarely ----
+    void WriteDiag(OcrResult result, string? panel, System.Drawing.Bitmap bmp, string capturePath)
+    {
+        long now = DateTime.UtcNow.Ticks;
+        var words = new List<CaptureDiag.DiagWord>();
+        foreach (var ln in result.Lines)
+            foreach (var w in ln.Words)
+            {
+                var r = w.BoundingRect;
+                words.Add(new CaptureDiag.DiagWord(w.Text,
+                    (int)Math.Round(r.X), (int)Math.Round(r.Y), (int)Math.Round(r.Width), (int)Math.Round(r.Height)));
+            }
+        var lines = result.Lines.Select(l => l.Text).ToList();
+        var tail = CaptureDiag.TailLines(_logPath?.Invoke());
+        var stem = CaptureDiag.Stem(now);
+
+        // PNG is the expensive artifact: only on a panel TRANSITION, wall-clock spaced, and with disk headroom
+        // — downscaled. The JSON (words + rects + TTS tail) carries the analysis; the PNG is for eyeballing.
+        string? pngFile = null;
+        bool panelChanged = !string.Equals(panel, _lastPngPanel, StringComparison.Ordinal);
+        bool spaced = now - _lastPngTicks > TimeSpan.FromMilliseconds(PngThrottleMs).Ticks;
+        if (panel != null && panelChanged && spaced && DiskHasHeadroom(_diagDir!))
+            try
+            {
+                Directory.CreateDirectory(_diagDir!);
+                SaveDownscaledPng(bmp, Path.Combine(_diagDir!, stem + ".png"), PngMaxEdge);
+                pngFile = stem + ".png"; _lastPngPanel = panel; _lastPngTicks = now;
+            }
+            catch { pngFile = null; }
+
+        var rec = new CaptureDiag.DiagRecord(CaptureDiag.SchemaVersion, now, CaptureDiag.IsoSecond(now), panel,
+            capturePath, bmp.Width, bmp.Height, false, pngFile, words, lines, tail);
+        Directory.CreateDirectory(_diagDir!);
+        File.WriteAllText(Path.Combine(_diagDir!, stem + ".json"), CaptureDiag.ToJson(rec));
+        CaptureDiag.Prune(_diagDir!, DiagMaxMB, DiagMaxAgeDays);   // self-limit even if Start's sweep was skipped
+    }
+
+    static bool DiskHasHeadroom(string dir)
+    { try { return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(dir))!).AvailableFreeSpace > 1L * 1024 * 1024 * 1024; } catch { return true; } }
+
+    static void SaveDownscaledPng(System.Drawing.Bitmap src, string destPath, int maxEdge)
+    {
+        double scale = Math.Min(1.0, (double)maxEdge / Math.Max(src.Width, src.Height));
+        int dw = Math.Max(1, (int)(src.Width * scale)), dh = Math.Max(1, (int)(src.Height * scale));
+        using var small = new System.Drawing.Bitmap(dw, dh);
+        using (var g = System.Drawing.Graphics.FromImage(small))
+        { g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic; g.DrawImage(src, 0, 0, dw, dh); }
+        small.Save(destPath, System.Drawing.Imaging.ImageFormat.Png);
+    }
+
+    public void Dispose() { _disposed = true; _timer?.Dispose(); }   // cooperative: flag first, so an in-flight scan bails
 }

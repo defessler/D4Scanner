@@ -206,6 +206,9 @@ public partial class MainWindow : Window
     bool _activitiesOpen;                  // guidance-rail Activities accordion expanded?
     bool _narrow;                          // window below the two-column breakpoint → stack doll + rail
     bool _debugMode;                       // show diagnostic info (last scan time, slot names, etc.)
+    bool _captureDiag;                     // write per-scan OCR↔TTS diagnostic records (Phase-0 fusion data).
+                                           // Live-readable like _debugMode (the engine reads it via a closure),
+                                           // so toggling it does NOT need a StartWatching() — kept out of watchChanged.
     bool _shimNeedsUpgrade;                // cached at StartWatching; cleared when user installs this session
     const double TwoColMin = 1200;         // below this width the overview reflows to a single column so the
                                            // guidance rail never starves below a comfortable width (doll ~672 + rail ~400 + chrome)
@@ -227,7 +230,7 @@ public partial class MainWindow : Window
     // ---- deferred settings (nothing applies until Save; Revert / X / Esc discard) ----
     sealed class SettingsDraft
     {
-        public bool UseTts, UseCapture, DebugMode;
+        public bool UseTts, UseCapture, DebugMode, CaptureDiag;
         public string Log = "";
         public bool[] CacheChecked = new bool[5];   // game icons · build index · maxroll data · live gear · logs
         public string? MoveLogTo;                   // staged log RELOCATION (move + env var, on Save)
@@ -504,6 +507,7 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("gameDir", out var gd) && !string.IsNullOrEmpty(gd) && File.Exists(Path.Combine(gd, "Diablo IV.exe")))
                         CaptureSetup.UserGameDir = gd;
                     if (s.TryGetValue("debug", out var dbg)) _debugMode = dbg == "1";
+                    if (s.TryGetValue("captureDiag", out var cd)) _captureDiag = cd == "1";
                     if (s.TryGetValue("useTts", out var ut)) _useTts = ut != "0";
                     if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
                     if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
@@ -546,7 +550,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             var settingsJson = JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() });
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["captureDiag"] = _captureDiag ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() });
             var stmp = SettingsPath + ".tmp";
             File.WriteAllText(stmp, settingsJson);
             File.Move(stmp, SettingsPath, overwrite: true);   // atomic — a crash mid-write must not corrupt app.json (the B1 class; settings were missed)
@@ -860,7 +864,9 @@ public partial class MainWindow : Window
         _captureEngine?.Dispose(); _captureEngine = null;
         if (_useCapture)
         {
-            _captureEngine = new OcrCaptureEngine(oracle);
+            // diagEnabled + logPath are LIVE closures (read each scan): the captureDiag toggle takes effect
+            // without a StartWatching, and the tail snapshot follows a mid-session log Move.
+            _captureEngine = new OcrCaptureEngine(oracle, diagEnabled: () => _captureDiag, diagDir: CaptureDiagDir, logPath: () => _log);
             _captureEngine.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _captureEngine.Start();
         }
@@ -1088,6 +1094,8 @@ public partial class MainWindow : Window
     // Persist the last-known gear state so the paper doll shows immediately on next launch
     // without requiring the user to re-hover all their equipped items.  Mirrors vision.json.
     string LivePath => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "live.json");
+    // Phase-0 OCR↔TTS fusion diagnostics land here (one JSON per scan + the occasional PNG), self-pruned by the engine.
+    string CaptureDiagDir => Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "capture-diag");
     void LoadLive()
     {
         // Per-character profiles are authoritative. On first run they don't exist yet, so import the
@@ -2301,7 +2309,7 @@ public partial class MainWindow : Window
     {
         if (SettingsHost.Visibility == Visibility.Visible && !_diagShowing) { CloseSettings(); return; }
         _diagShowing = false;
-        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
+        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, CaptureDiag = _captureDiag, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
         RenderSettings();
     }
 
@@ -2379,6 +2387,7 @@ public partial class MainWindow : Window
                 : "Disable TTS capture — removes the DLL shim, its certificate and PATH entry");
             if (d.UseCapture != _useCapture) list.Add(d.UseCapture ? "Enable OCR screen capture" : "Disable OCR screen capture");
             if (d.DebugMode != _debugMode) list.Add(d.DebugMode ? "Show debug info on paper-doll cells" : "Hide debug info");
+            if (d.CaptureDiag != _captureDiag) list.Add(d.CaptureDiag ? "Save OCR↔TTS capture diagnostics each scan" : "Stop saving capture diagnostics");
             if (!string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase))
                 list.Add($"Watch a different TTS log: {System.IO.Path.GetFileName(d.Log)}");
             // NB: cache clearing is NOT here — it has its own "Clear selected" button in the cache card
@@ -2429,6 +2438,11 @@ public partial class MainWindow : Window
         sp.Children.Add(ocrRow);
         ocrChk.Checked   += (_, _) => { d.UseCapture = true; RefreshPending(); };
         ocrChk.Unchecked += (_, _) => { d.UseCapture = false; RefreshPending(); };
+
+        // Capture diagnostics — writes one small JSON per OCR scan (words + on-screen rects + the concurrent
+        // TTS-log tail) so OCR reads can be matched to the TTS log offline. Needs OCR on to produce anything.
+        ToggleRow("Save capture diagnostics", "Records each OCR scan (text, on-screen positions, and a snapshot of the TTS log) to a capture-diag folder for tuning OCR↔TTS matching. Self-limited to 400 MB / 30 days. Requires screen capture above.",
+            d.CaptureDiag, on => { d.CaptureDiag = on; RefreshPending(); });
 
         // ── DISPLAY section ───────────────────────────────────────────────────
         Section("DISPLAY");
@@ -2642,7 +2656,7 @@ public partial class MainWindow : Window
         revertBtn = new Button { Content = "Revert", Padding = new Thickness(16, 7, 16, 7) };
         revertBtn.Click += (_, _) =>
         {
-            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
+            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, CaptureDiag = _captureDiag, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
             RenderSettings();
         };
         var closeBtn2 = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(8, 0, 12, 0) };   // right margin = gap before Save
@@ -2715,7 +2729,7 @@ public partial class MainWindow : Window
         bool watchChanged = d.UseTts != _useTts || d.UseCapture != _useCapture
                          || !string.Equals(d.Log, _log, StringComparison.OrdinalIgnoreCase);
 
-        _useTts = d.UseTts; _useCapture = d.UseCapture; _debugMode = d.DebugMode; _log = d.Log;
+        _useTts = d.UseTts; _useCapture = d.UseCapture; _debugMode = d.DebugMode; _captureDiag = d.CaptureDiag; _log = d.Log;
 
         // staged MOVE: physically relocate the active log + its archives, point the shim there via the
         // user-level D4TTS_LOG env var (effective at the NEXT game launch — saapi64 resolves once per
