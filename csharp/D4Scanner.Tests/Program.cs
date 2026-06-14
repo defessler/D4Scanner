@@ -1996,6 +1996,26 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Eq("WeaponGate: the sword's honest comparison is the dagger slot (its only compatible one)", 1,
         wScored.First(x => x.Item.Name == "StashSword").CompareSlotIndex);
 
+    // the DIFF upgrade-finding (badge / DO-NEXT path, SEPARATE from UpgradeScorer) must ALSO gate by weapon
+    // type: a bag sword carrying the crossbow slot's affixes must NOT surface as an UpgradeItem for it.
+    {
+        var eqX2 = new Item { Name = "Worn Xbow", Slot = "weapon", ItemType = "Crossbow", Equipped = true, Affixes = {
+            new Affix { Text = "Vulnerable Damage", Value = 20 } } };
+        var bagSword = new Item { Name = "Bag Sword", Slot = "weapon", ItemType = "Sword", Affixes = {
+            new Affix { Text = "Vulnerable Damage", Value = 25 }, new Affix { Text = "Maximum Life", Value = 700 },
+            new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Critical Strike Damage", Value = 30 } } };
+        var bagXbow = new Item { Name = "Bag Xbow", Slot = "weapon", ItemType = "Crossbow", Affixes = {
+            new Affix { Text = "Vulnerable Damage", Value = 25 }, new Affix { Text = "Maximum Life", Value = 700 },
+            new Affix { Text = "Dexterity", Value = 60 }, new Affix { Text = "Critical Strike Damage", Value = 30 } } };
+        var wGroups2 = DiffEngine.Diff(wTarget, new LiveBuild { Gear = { eqX2 }, Inventory = { bagSword, bagXbow } })
+            .Categories.First(c => c.Id == "gear").Groups;
+        var xbowG = wGroups2.First(g => g.Name == "Crossbow");
+        Check("WeaponGate(diff): a bag SWORD is NOT an UpgradeItem for the crossbow slot",
+            !xbowG.UpgradeItems.Any(u => u.Name == "Bag Sword"));
+        Check("WeaponGate(diff): a real bag CROSSBOW with more affixes IS an UpgradeItem for the crossbow",
+            xbowG.UpgradeItems.Any(u => u.Name == "Bag Xbow"));
+    }
+
     // per-slot bar: a 3/4 ring upgrades your WORSE ring even though your better ring is 4/4
     TargetAffix[] R() => new[] { new TargetAffix { Name = "Critical Strike Chance" }, new TargetAffix { Name = "Attack Speed" },
                                  new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Lucky Hit Chance" } };

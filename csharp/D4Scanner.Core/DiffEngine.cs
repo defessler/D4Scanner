@@ -554,6 +554,11 @@ public static class DiffEngine
                 foreach (var inv in live.Inventory)
                 {
                     if (SlotBase(inv.Slot) != baseSlot) continue;
+                    // weapon-type gate (same as UpgradeScorer): a melee weapon is never an upgrade for a
+                    // ranged (bow/crossbow) slot or vice-versa, and a 1-hander never for a 2-hand slot.
+                    // Without this, the two "weapon"-base target slots shared an upgrade pool and a sword
+                    // surfaced as an upgrade for the crossbow slot (and the badge/DO-NEXT showed it).
+                    if (!WeaponSlotCompatible(g, inv)) continue;
                     int met = ScoreSlot(g, inv);
                     bool better = met > eqMet
                                || (met == eqMet && met > 0 && SlotQuality(g, inv) > eqQuality + 0.5);
