@@ -770,6 +770,52 @@ Check("LoH charm: 'Set Charm' still recognized (regression)", GearParser.ParseTo
         fed != null && fed.Slot == "charm" && fed.ItemType == "Set Charm");
 }
 
+// HORADRIC CUBE PHANTOM CHARM — the cube's "Reroll Set Charm" recipe panel voices "1x Set Charm" (a material
+// requirement), "Reroll Set Charm" (recipe name) and "Transmutes a Set Charm to a different Charm…" (description).
+// These merely CONTAIN the words "Set Charm"; the unanchored TypeSlot key used to match them and manufacture a
+// phantom charm named "REQUIRED MATERIALS" that then WON the single charm slot, hiding the player's real set.
+// Charm detection is now the anchored ReCharmType only, so these crafting-panel lines never become a charm.
+// (Verbatim from the user's d4_tts.log Horadric Cube screen.)
+{
+    Check("Cube: 'REQUIRED MATERIALS' + '1x Set Charm' is NOT a charm item",
+        GearParser.ParseTooltipLines(new[] {
+            "REQUIRED MATERIALS", "1x Set Charm",
+            "Reward: Materials used in the Horadric Cube Raw Primordial Dust", "6,391. /25",
+            "Reward: Materials used in the Horadric Cube Infused Horadric Resin", "4,401. /50",
+        }) == null);
+    Check("Cube: 'Reroll Set Charm' recipe name is NOT a charm",
+        GearParser.ParseTooltipLines(new[] { "Reroll Set Charm", "Transmutes a Set Charm to a different Charm from the same Set." }) == null);
+    // …yet a genuine standalone 'Set Charm' type line is still captured (anchored match) — the fix is precise.
+    Check("Cube fix is precise: a real 'Set Charm' line still parses",
+        GearParser.ParseTooltipLines(new[] { "MLOR OF THE SIGHTLESS", "Set Charm", "+5 Dexterity [1 - 5]" })?.Slot == "charm");
+    // Full stateful Feed over the real cube block emits no charm at all.
+    var cube = new[] {
+        "[2026-06-14T00:37:33Z]Reroll Set Charm",
+        "[2026-06-14T00:37:33Z]Transmutes a Set Charm to a different Charm from the same Set.",
+        "[2026-06-14T00:37:33Z]REQUIRED MATERIALS",
+        "[2026-06-14T00:37:33Z]1x Set Charm",
+        "[2026-06-14T00:37:33Z]Reward: Materials used in the Horadric Cube Raw Primordial Dust",
+        "[2026-06-14T00:37:33Z]6,391. /25",
+        "[2026-06-14T00:37:33Z]Left mouse button", "[2026-06-14T00:37:33Z]Select", "[2026-06-14T00:37:34Z]TRANSMUTE",
+    };
+    var cseg = new GearParser(); bool anyCharm = false;
+    foreach (var l in cube) { var r = cseg.Feed(l); if (r is { Slot: "charm" }) anyCharm = true; }
+    Check("Cube: full Feed over the Reroll-Set-Charm panel emits no charm", !anyCharm);
+}
+
+// MULTI-CHARM CAPACITY — a LoH talisman holds up to 6 charms (a seal "Unlocks N Charm Slots"). LatestPerSlot
+// used to cap every non-ring/weapon slot at 1, so a full set (the user's 5-piece Legacy of the Sightless)
+// collapsed to a single charm. Charms now keep up to 6; a 7th (oldest) is dropped.
+{
+    List<Item> Charm(string n, long tick) => new() { new Item { Name = n, RawName = n.ToUpperInvariant(), Slot = "charm", ItemType = "Set Charm", LastScannedTicks = tick } };
+    var five = new[] { "Phoba", "Fer", "Mlor", "Linta", "Berú" }.SelectMany((n, i) => Charm(n + " Of The Sightless", i + 1)).ToList();
+    Eq("LatestPerSlot: a full 5-charm set all survives (was collapsed to 1)", 5, LogWatcher.LatestPerSlot(five).Count(i => i.Slot == "charm"));
+    var seven = Enumerable.Range(1, 7).SelectMany(i => Charm("Charm " + i, i)).ToList();
+    var kept = LogWatcher.LatestPerSlot(seven);
+    Eq("LatestPerSlot: charms cap at 6 slots", 6, kept.Count);
+    Check("LatestPerSlot: the OLDEST charm (lowest tick) is the one dropped", kept.All(i => i.Name != "Charm 1"));
+}
+
 // (2) COMPARISON-TOOLTIP LEAK — "638 Armor (-4.2% Toughness)" / "157 All Resist (-3.8% Toughness)" are the
 //     D4 comparison overlay's delta, NOT real affixes. They must never become affixes (and so can't
 //     false-match a target's Armor/All-Res). The real rolled "+892 Armor [780-980]" still survives.

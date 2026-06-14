@@ -24,8 +24,11 @@ public class GearParser
         ("Polearm", "weapon"), ("Scythe", "weapon"), ("Glaive", "weapon"),
         ("Quarterstaff", "weapon"), ("Spear", "weapon"),
         ("Focus", "offhand"), ("Shield", "offhand"), ("Totem", "offhand"),
-        // Season 8 (Vessel of Hatred) item types
-        ("Horadric Seal", "seal"), ("Set Charm", "charm"), ("Unique Charm", "charm"),
+        // Season 8 (Vessel of Hatred) item types. Charms are detected by the ANCHORED ReCharmType
+        // (see DetectRarityType) — NOT as unanchored TypeSlot keys — so Horadric Cube material/recipe
+        // lines that merely CONTAIN "Set Charm" ("1x Set Charm", "Reroll Set Charm", "Transmutes a Set
+        // Charm to a different Charm…") can't manufacture a phantom charm out of a crafting panel.
+        ("Horadric Seal", "seal"),
         ("Rune of Invocation", "rune"), ("Rune of Ritual", "rune"),
     };
     static readonly string[] Rarities =
@@ -99,9 +102,12 @@ public class GearParser
     // Dropped before the PowerText catch-all so item identity is content-only.
     static readonly Regex ReStatefulInfo = new(@"^(Durability:|Sell Value:|Armory Loadout$|Mousewheel scroll|Scroll (Down|Up)$)", RegexOptions.IgnoreCase);
     // LoH Talisman CHARM type line: "<Rarity> Charm" / "Charm" / "Charm (Ancestral)" / "Ancestral Set Charm".
-    // Only "Set Charm"/"Unique Charm" are literal TypeSlot keys, so Rare/Magic/Legendary charms fell through
-    // unrecognized and were silently DROPPED (verified against the user's real Talisman-screen log). Anchored so
-    // the seal's "Unlocks N Charm Slots" line and all-caps charm NAMES ("TRAPPER'S CHARM OF …") never match.
+    // This is the SOLE charm detector (the "Set Charm"/"Unique Charm" TypeSlot keys were removed): being
+    // ANCHORED (^…$) is what makes it precise. It matches a standalone charm-type designation but NOT a line
+    // that merely contains those words — so the seal's "Unlocks N Charm Slots", all-caps charm NAMES
+    // ("TRAPPER'S CHARM OF …"), and Horadric Cube material/recipe lines ("1x Set Charm", "Reroll Set Charm",
+    // "Transmutes a Set Charm to a different Charm…") never manufacture a phantom charm. Rare/Magic/Legendary
+    // charms — which have no literal TypeSlot key — are captured here too (verified on the real Talisman log).
     static readonly Regex ReCharmType = new(
         @"^(?:Ancestral\s+)?(?:Common|Magic|Rare|Legendary|Unique|Set|Mythic)?\s*Charm(?:\s*\(Ancestral\))?$", RegexOptions.IgnoreCase);
 
@@ -164,9 +170,10 @@ public class GearParser
         (string key, string slot)? hit = null;
         foreach (var ts in TypeSlot)
             if (Regex.IsMatch(ln, @"\b" + Regex.Escape(ts.key) + @"\b", RegexOptions.IgnoreCase)) { hit = ts; break; }
-        // Rarity-prefixed talisman charms ("Rare Charm", "Charm (Ancestral)", …) aren't literal TypeSlot keys —
-        // recognize the charm type designation so they're captured instead of dropped.
-        if (hit == null && ReCharmType.IsMatch(ln)) hit = ("Charm", "charm");
+        // Talisman charms are detected here (anchored) rather than as unanchored TypeSlot keys — see ReCharmType.
+        // Keep the specific designation: "Set Charm"/"Unique Charm" drive downstream set/inventory logic (and the
+        // parser tests), every other rarity collapses to plain "Charm" (as the prior fallback did).
+        if (hit == null && ReCharmType.IsMatch(ln)) hit = (CanonCharmType(ln), "charm");
         if (hit == null) return false;
         item.ItemType = hit.Value.key; item.Slot = hit.Value.slot;
         foreach (var r in Rarities)
@@ -180,6 +187,14 @@ public class GearParser
         if (Regex.IsMatch(ln, @"\bAncestral\b", RegexOptions.IgnoreCase)) item.IsAncestral = true;
         return true;
     }
+
+    // Canonical ItemType for an anchored ReCharmType line: keep "Set Charm"/"Unique Charm" (set-bonus tracking,
+    // inventory grouping and the parser tests depend on the exact designation); every other charm rarity
+    // ("Rare Charm", "Charm (Ancestral)", bare "Charm") collapses to "Charm", matching the old fallback.
+    static string CanonCharmType(string ln) =>
+        Regex.IsMatch(ln, @"\bSet Charm\b", RegexOptions.IgnoreCase) ? "Set Charm"
+        : Regex.IsMatch(ln, @"\bUnique Charm\b", RegexOptions.IgnoreCase) ? "Unique Charm"
+        : "Charm";
 
     static Affix? ParseAffix(string ln)
     {
