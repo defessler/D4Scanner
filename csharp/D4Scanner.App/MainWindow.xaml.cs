@@ -213,6 +213,7 @@ public partial class MainWindow : Window
     bool _classFilterUserSet;              // user clicked a chip — stop auto-seeding from the active character
     List<string> _recentSlugs = new();     // recently imported builds (search recents)
     bool _uiReady;                         // suppresses the search dropdown during the initial auto-focus
+    bool _headless;                        // --render export: read-only, never persist live.json/settings on close
     readonly HashSet<string> _pinned = new();   // slot keys pinned for side-by-side compare
     readonly Dictionary<string, Section> _inventorySections = new();  // synthetic sections for pinned inventory items
     readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
@@ -312,7 +313,10 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(new Action(() => _uiReady = true), System.Windows.Threading.DispatcherPriority.Background);
         };
         CheckUpdatesBtn.Click += (_, _) => ShowUpdateModal(_pendingUpdateTag);
-        Closing += (_, _) => { SaveLive(); SaveSettings(); };   // persist gear state + window size
+        // persist gear state + window size — but NEVER during a --render export. HeadlessRender builds a
+        // throwaway _live (often from a fixture log) and Shutdown() closes this window, firing Closing; without
+        // this guard the render would overwrite the user's real live.json with the fixture loadout.
+        Closing += (_, _) => { if (_headless) return; SaveLive(); SaveSettings(); };
         Closed += (_, _) => { _watcher?.Dispose(); _captureEngine?.Dispose(); _targetPoll?.Dispose(); _updateTimer?.Dispose(); };
         // responsive reflow: re-render only when crossing the two-column width breakpoint
         SizeChanged += (_, _) =>
@@ -1338,6 +1342,7 @@ public partial class MainWindow : Window
     internal void HeadlessRender(string outPng, int w = 1300, int h = 2100)
     {
         try { GameDataIcons.GameDir = CaptureSetup.GameDir(); } catch { }
+        _headless = true;   // read-only export: the Closing handler must not persist this throwaway _live
         _uiReady = true;
         _narrow = w < TwoColMin;   // headless has no ActualWidth yet, so seed the reflow from the requested width
         ReflowHeader(w);           // seed the header stack/unstack from the requested width too (no SizeChanged headless)
