@@ -819,6 +819,11 @@ public partial class MainWindow : Window
             TimeSpan.FromHours(4));    // then every 4 hours while running
         LoadLive();      // restore the active character + its bound target path first
         ReloadTarget();  // then load that build (LoadLive may have switched _targetPath to the character's)
+        // One panel-state oracle per StartWatching call, shared by THIS call's TTS + OCR watchers (lifetime
+        // tied to the watcher pair, not the app): a stale Observe from a disposed engine lands on the old,
+        // now-unreferenced oracle and can never reach the new watcher. The TTS LogWatcher reads it (worn-gear
+        // rescue) and clears it on session boundaries; the OCR engine writes it.
+        var oracle = new PanelOracle();
         _watcher?.Dispose(); _watcher = null;
         if (_useTts)
         {
@@ -830,7 +835,7 @@ public partial class MainWindow : Window
             long startPos = _replayFromZero ? 0
                           : _logSkipToPos != 0 ? _logSkipToPos
                           : _profiles.All().Count > 0 ? LogWatcher.LastSessionStartPos(_log) : 0;
-            _watcher = new LogWatcher(_log, equippedOnly: true, startPos: startPos);
+            _watcher = new LogWatcher(_log, equippedOnly: true, startPos: startPos, oracle: oracle);
             _logSkipToPos = 0;   // consume the skip once
             _watcher.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _watcher.CharacterSelectDetected += () => Dispatcher.Invoke(OnCharacterSelect);
@@ -855,7 +860,7 @@ public partial class MainWindow : Window
         _captureEngine?.Dispose(); _captureEngine = null;
         if (_useCapture)
         {
-            _captureEngine = new OcrCaptureEngine();
+            _captureEngine = new OcrCaptureEngine(oracle);
             _captureEngine.Updated += b => Dispatcher.Invoke(() => OnLiveUpdate(b));
             _captureEngine.Start();
         }

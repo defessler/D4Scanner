@@ -10,13 +10,15 @@ namespace D4Scanner.App.Capture;
 
 /// <summary>
 /// Periodically captures the Diablo IV window, OCRs it for gear tooltips, and emits a
-/// <see cref="LiveBuild"/>. Also saves a character portrait when the character panel is open.
+/// <see cref="LiveBuild"/>. Also feeds the shared <see cref="PanelOracle"/> the panel it visually
+/// detects each scan, so the TTS classifier can use it as worn/browsed ground truth.
 /// </summary>
 public sealed class OcrCaptureEngine : IDisposable
 {
     public event Action<LiveBuild>? Updated;
 
     readonly int _intervalMs;
+    readonly PanelOracle? _oracle;   // shared with the TTS LogWatcher: OCR Observes the panel it visually sees
     System.Threading.Timer? _timer;
     ulong _lastHash;
     readonly List<Item> _orderedGear = new();
@@ -27,7 +29,8 @@ public sealed class OcrCaptureEngine : IDisposable
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
-    public OcrCaptureEngine(int intervalMs = 20_000) => _intervalMs = intervalMs;
+    public OcrCaptureEngine(PanelOracle? oracle = null, int intervalMs = 20_000)
+    { _oracle = oracle; _intervalMs = intervalMs; }
 
     public void Start()
     {
@@ -77,18 +80,11 @@ public sealed class OcrCaptureEngine : IDisposable
 
     void ProcessOcrLines(List<string> lines)
     {
-        // Detect panel context from well-known navigation lines
-        string? panel = null;
-        foreach (var ln in lines)
-        {
-            var c = GearParser.Clean(ln);
-            if (c.Equals("Equipment", StringComparison.OrdinalIgnoreCase) ||
-                c.Equals("Head",      StringComparison.OrdinalIgnoreCase) ||
-                c.Equals("Torso",     StringComparison.OrdinalIgnoreCase))
-            { panel = "Character"; break; }
-            if (c.Equals("Inventory", StringComparison.OrdinalIgnoreCase)) { panel = "Inventory"; break; }
-            if (c.Equals("Stash",     StringComparison.OrdinalIgnoreCase)) { panel = "Stash";     break; }
-        }
+        // Detect which panel is open from on-screen chrome, then feed the shared oracle so the TTS classifier
+        // can use it as worn/browsed ground truth (the OCR↔TTS sensor fusion). PanelOracle.Detect lives in
+        // Core (pure string logic) so it is headlessly testable.
+        string? panel = PanelOracle.Detect(lines);
+        _oracle?.Observe(panel, DateTime.UtcNow.Ticks);
 
         var blocks = ExtractTooltipBlocks(lines);
         bool changed = false;
@@ -121,8 +117,6 @@ public sealed class OcrCaptureEngine : IDisposable
             // re-scans of the SAME item, so content-fingerprint dedup would multiply phantom copies.
             Inventory = LogWatcher.LatestPerSlot(_orderedInv, 15),
         });
-
-        if (panel == "Character") _ = TrySavePortraitAsync();
     }
 
     static List<List<string>> ExtractTooltipBlocks(List<string> lines)
@@ -187,26 +181,6 @@ public sealed class OcrCaptureEngine : IDisposable
         iras.Seek(0);
         var decoder = await BitmapDecoder.CreateAsync(iras).AsTask().ConfigureAwait(false);
         return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied).AsTask().ConfigureAwait(false);
-    }
-
-    static async Task TrySavePortraitAsync()
-    {
-        try
-        {
-            using var bmp = await WindowsGraphicsCapture.GrabAsync().ConfigureAwait(false);
-            if (bmp == null) return;
-            int w = bmp.Width, h = bmp.Height;
-            int cropW = Math.Max(200, w * 28 / 100);
-            int cropH = Math.Max(400, h * 87 / 100);
-            int cropX = Math.Max(0, w * 13 / 100);
-            int cropY = Math.Max(0, h *  5 / 100);
-            cropW = Math.Min(cropW, w - cropX); cropH = Math.Min(cropH, h - cropY);
-            using var crop = bmp.Clone(new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
-                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            var dest = Path.Combine(Path.GetDirectoryName(TargetLoader.DefaultLogPath())!, "character.png");
-            crop.Save(dest, System.Drawing.Imaging.ImageFormat.Png);
-        }
-        catch { }
     }
 
     public void Dispose() => _timer?.Dispose();

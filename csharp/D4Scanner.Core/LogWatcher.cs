@@ -11,6 +11,7 @@ public sealed class LogWatcher : IDisposable
 {
     readonly string _path;
     readonly bool _equippedOnly;
+    readonly PanelOracle? _oracle;   // OCR panel-state oracle for live sensor fusion; null in replay/CLI (deterministic)
     GearParser _seg = new();
     readonly CharacterParser _char = new();   // total attributes + paragon level from the character sheet
     readonly SkillParser _skills = new();     // selected skills/passives + ranks from the skill tree
@@ -76,8 +77,7 @@ public sealed class LogWatcher : IDisposable
     /// the thread pool, so the UI can show a "catching up…" state until this flips).</summary>
     public bool IsCaughtUp { get; private set; }
     public event Action<LiveBuild>? Updated;
-    /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).
-    /// Subscribe to auto-capture the portrait without requiring a manual button click.</summary>
+    /// <summary>Fires when the TTS panel context first transitions to "Character" (user opened the character screen).</summary>
     public event Action? CharacterPanelDetected;
     /// <summary>Fires when the character-select screen appears — i.e. the player left the game to switch
     /// characters. Subscribe to persist the current character's loadout and re-arm auto-identification.</summary>
@@ -90,9 +90,9 @@ public sealed class LogWatcher : IDisposable
     /// the initial catch-up replay of historical sessions.</summary>
     public event Action? SessionEnded;
 
-    public LogWatcher(string path, bool equippedOnly = true, long startPos = 0)
+    public LogWatcher(string path, bool equippedOnly = true, long startPos = 0, PanelOracle? oracle = null)
     {
-        _path = path; _equippedOnly = equippedOnly;
+        _path = path; _equippedOnly = equippedOnly; _oracle = oracle;
         _pos = startPos;   // non-zero to skip old log data (e.g. after a live-cache clear)
         _charSel.VisitStarted += () =>
         {
@@ -101,7 +101,7 @@ public sealed class LogWatcher : IDisposable
             // the OLD character, and any class/paragon inference run on them after a switch would pull
             // identity back to the character just left (verified live before this reset existed).
             _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
-            _seg = new GearParser(); _currentPanel = null;
+            _seg = new GearParser(); _currentPanel = null; _oracle?.Clear();   // drop prior char's panel state
             _pending.Clear(); _recent.Clear(); _recentStart = _lineNo;
             _char.Reset(); _skills.Reset();
             CharacterSelectDetected?.Invoke();
@@ -148,7 +148,7 @@ public sealed class LogWatcher : IDisposable
             if (size < _pos)   // log cleared/rotated
             {
                 _pos = 0; _buf = ""; _utf8.Reset(); _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
-                _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset();
+                _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset(); _oracle?.Clear();
                 _pending.Clear(); _recent.Clear(); _recentStart = 0; _lineNo = 0;
             }
 
@@ -213,7 +213,7 @@ public sealed class LogWatcher : IDisposable
             // New shim session appended to the same file: drop the prior session's accumulated gear so a
             // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
             if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
-            { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); }
+            { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); _oracle?.Clear(); }
             // LIVE session end (game exited) — the rotation-safe moment; replayed history never fires it.
             if (IsCaughtUp && rawLine.StartsWith("=== d4scanner tts shim detached", StringComparison.OrdinalIgnoreCase))
                 SessionEnded?.Invoke();
@@ -275,7 +275,7 @@ public sealed class LogWatcher : IDisposable
             var pend = _pending[p];
             bool force = pend.Polls++ >= 2;
             int rel = (int)(pend.EndLine - _recentStart);
-            if (!ClassifyContext(pend.Item, _recent, rel, _recent.Count, force)) { p++; continue; }
+            if (!ClassifyContext(pend.Item, _recent, rel, _recent.Count, force, _oracle)) { p++; continue; }
             Commit(pend.Item);
             changed = true;
             _pending.RemoveAt(p);
@@ -374,7 +374,7 @@ public sealed class LogWatcher : IDisposable
     /// character-panel context, no slot header, no "Unequip" — the default is now NOT-equipped: a missed
     /// genuine item self-corrects on the next character-panel hover, but a vendor item stamped as worn
     /// silently replaces real gear and persists (the bug this rewrite fixes).</summary>
-    static bool ClassifyContext(Item item, IReadOnlyList<string> lines, int i, int lineCount, bool force = true)
+    static bool ClassifyContext(Item item, IReadOnlyList<string> lines, int i, int lineCount, bool force = true, PanelOracle? oracle = null)
     {
         // Panel fast-path: if the active UI panel is known, pre-classify before any text signal.
         // Stash and Vendor items are always non-equipped; skip the lookahead scan entirely.
@@ -424,6 +424,23 @@ public sealed class LogWatcher : IDisposable
             case TailSignal.Stash:   item.Equipped = false; item.Context = UiContext.StashItem;   return true;
             case TailSignal.Vendor:  item.Equipped = false; item.Context = UiContext.VendorItem;  return true;
             case TailSignal.Paragon: item.Equipped = false; item.Context = UiContext.ParagonNode; return true;
+        }
+
+        // OCR panel-oracle rescue (live-only; oracle is null in replay/CLI so classification stays
+        // deterministic there). The residual-hole case: a char-sheet slot header preceded this block
+        // (FromCharPanel) but the "Character" PanelMarker had aged out of the rolling window
+        // (UiPanel != "Character" — almost always the Ring slot, which is deliberately NOT a PanelMarker),
+        // and no action token (Sell/Buy/Take/Unequip) contradicted it. If the OCR channel positively saw
+        // the Character panel open AT this hover's time, trust it as worn — that is what disambiguates a
+        // genuine worn ring (OCR: Character) from the Purveyor's "Ring" gamble hijack (OCR: Vendor → no
+        // match → stays demoted below). STRICTLY ADDITIVE: only ever UPGRADES, only for a slot-header-
+        // corroborated item with a real hover time; a bare vendor/bag hover (FromCharPanel == false) is
+        // never rescued, and the oracle never downgrades (that remains the fail-safe's job).
+        if (item.FromCharPanel && item.LogTimeUtc is { } lt && oracle?.PanelAt(lt.UtcTicks) == "Character")
+        {
+            item.Equipped = true;
+            item.Context = UiContext.WornGear;
+            return true;
         }
 
         // Window closed with no action token at all.
@@ -600,7 +617,7 @@ public sealed class LogWatcher : IDisposable
     }
 
     /// <summary>Pipeline-introspection core (file-free, so tests can feed raw lines directly).</summary>
-    public static TtsDiagReport DiagnoseLines(string[] allLines, int rawTailLines = 60)
+    public static TtsDiagReport DiagnoseLines(string[] allLines, int rawTailLines = 60, PanelOracle? oracle = null)
     {
         var rep = new TtsDiagReport { TotalLines = allLines.Length };
         rep.RawTail = allLines.Where(l => l.Trim().Length > 0).Reverse().Take(rawTailLines).Reverse().ToList();
@@ -626,7 +643,7 @@ public sealed class LogWatcher : IDisposable
             if (item == null) continue;
             item.Source = ItemSource.Tts;
             item.UiPanel = currentPanel;
-            ClassifyContext(item, allLines, i, allLines.Length);
+            ClassifyContext(item, allLines, i, allLines.Length, oracle: oracle);
             ordered.Add(item);
         }
 
