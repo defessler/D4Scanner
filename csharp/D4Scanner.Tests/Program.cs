@@ -2976,9 +2976,9 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
 
     // ---- CaptureDiag (Phase-0 OCR↔TTS fusion diagnostics — pure Core: cadence, timestamps, JSON, tail, prune) ----
     {
-        // adaptive cadence: fast while a panel is open (catch sub-second hovers), idle otherwise
-        Eq("CaptureDiag.NextIntervalMs: panel open -> active cadence", 3000, CaptureDiag.NextIntervalMs(true, 3000, 20000));
-        Eq("CaptureDiag.NextIntervalMs: no panel -> idle cadence", 20000, CaptureDiag.NextIntervalMs(false, 3000, 20000));
+        // adaptive cadence: fast while GEAR is visible (a panel OR a floating tooltip), idle otherwise
+        Eq("CaptureDiag.NextIntervalMs: gear visible -> active cadence", 1500, CaptureDiag.NextIntervalMs(true, 1500, 6000));
+        Eq("CaptureDiag.NextIntervalMs: no gear -> idle cadence", 6000, CaptureDiag.NextIntervalMs(false, 1500, 6000));
 
         // timestamp keys: IsoSecond is the whole-second join key to the TTS log; Stem is the filesystem-safe per-scan id
         long t = new DateTimeOffset(2026, 6, 12, 10, 30, 45, TimeSpan.Zero).UtcTicks;
