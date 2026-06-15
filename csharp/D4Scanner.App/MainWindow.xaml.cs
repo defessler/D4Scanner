@@ -226,6 +226,8 @@ public partial class MainWindow : Window
     double _hoverCardW;               // the open card's width — a STABLE input to the left/right placement
     bool? _hoverOpenLeft;             // side the card committed to this hover; kept across re-placements (hysteresis)
     string? _hoverKey;                // section the card is showing — don't rebuild/re-decide on a re-enter
+    FrameworkElement? _dollElement;   // the paper-doll icon grid; the hover card sits BESIDE it, never over the icons
+    double _dollLeft = -1, _dollRight = -1;   // its window-space X bounds, measured at hover time (-1 = unknown)
 
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
     bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
@@ -4254,6 +4256,7 @@ public partial class MainWindow : Window
         dollOuter.Children.Add(dollStack);
         Grid.SetRow(dollOuter, 1);
         wrap.Children.Add(dollOuter);
+        _dollElement = grid;   // centered icon grid — the hover card measures it to sit beside, not over, the icons
         return wrap;
     }
 
@@ -4532,7 +4535,21 @@ public partial class MainWindow : Window
         // the card past the window edge and the right panel rendered clipped mid-word. A fixed width
         // forces the two panels to split it evenly and their text to wrap; small windows get a
         // proportionally narrower card instead of a cut-off one.
-        double cardW = Math.Clamp(ActualWidth - 80, 480, 760);
+        // Measure the paper-doll icon grid so the card sits in the CLEAR space beside it (the rail/margin),
+        // never over the icons. cardW is budgeted to that gap; falls back to the old full-width budget when the
+        // doll isn't measured (e.g. a non-doll hover) or the window is too narrow for a readable card beside it.
+        const double dollGap = 12, scrollPad = 18;
+        _dollLeft = _dollRight = -1;
+        // Only measure when this hover's target is genuinely inside the CURRENT doll grid (guards a stale ref
+        // from a previous render / a non-doll hover, which would otherwise place the card at a phantom doll).
+        if (_dollElement is { } de && de.RenderSize.Width > 1
+            && de is Visual dv && target is Visual tv && dv.IsAncestorOf(tv))
+            try { double dl = de.TransformToAncestor(this).Transform(new Point(0, 0)).X; _dollLeft = dl; _dollRight = dl + de.RenderSize.Width; }
+            catch { }
+        double beside = _dollRight >= 0
+            ? Math.Max(ActualWidth - _dollRight - dollGap - scrollPad, _dollLeft - dollGap - scrollPad)
+            : ActualWidth - 80;
+        double cardW = Math.Clamp(Math.Min(ActualWidth - 80, beside), 420, 760);
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
         cc.Width = cardW;
         // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
@@ -4559,13 +4576,15 @@ public partial class MainWindow : Window
         _hoverPopup.IsOpen = true;
     }
 
-    /// <summary>Placement callback that keeps a Popup's child fully inside the window (hence on-screen):
-    /// open to the RIGHT of the target, flip LEFT if that overflows, then clamp both axes into the window.
-    /// Two anti-oscillation measures keep the card from blinking side-to-side: (1) a STABLE width (the card's
-    /// own width + scrollbar allowance) instead of the live popup size, whose ~17px jump when the auto vertical
-    /// scrollbar appears/disappears was flipping the side; (2) HYSTERESIS — once a side is chosen it's held
-    /// across re-placements and only flips when it genuinely stops fitting. DIP units throughout, so the window
-    /// being on-screen makes within-window == on-screen — no DPI/monitor math needed.</summary>
+    /// <summary>Placement callback that keeps a Popup's child fully inside the window AND clear of the doll icons:
+    /// it sits just to the RIGHT of the whole paper-doll (so it never overlaps the icon grid), flips to the LEFT
+    /// of the doll if the right overflows, then clamps both axes into the window; vertically it tracks the hovered
+    /// cell. (When the doll wasn't measured — a non-doll hover — it falls back to beside the target cell.) Two
+    /// anti-oscillation measures keep it from blinking side-to-side: (1) a STABLE width (the card's own width +
+    /// scrollbar allowance) instead of the live popup size, whose ~17px jump when the auto vertical scrollbar
+    /// appears/disappears was flipping the side; (2) HYSTERESIS — once a side is chosen it's held across
+    /// re-placements and only flips when it genuinely stops fitting. DIP units throughout, so the window being
+    /// on-screen makes within-window == on-screen — no DPI/monitor math needed.</summary>
     System.Windows.Controls.Primitives.CustomPopupPlacement[] ClampPopupInWindow(UIElement target, Size popupSize, Size targetSize)
     {
         var fallback = new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
@@ -4575,9 +4594,12 @@ public partial class MainWindow : Window
         try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
         catch { return fallback; }
         double w = ActualWidth, h = ActualHeight;
-        double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + 20;     // stable width (+scrollbar allowance)
-        double rightX = tw.X + targetSize.Width;                               // card left edge if opened right
-        double leftX  = tw.X - pw;                                              // card left edge if opened left
+        const double dollGap = 12, scrollPad = 18;
+        double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + scrollPad;   // stable width (+scrollbar allowance)
+        // Sit BESIDE the whole doll (clears every icon), not beside the hovered cell; fall back to the cell when
+        // the doll wasn't measured. Vertically the card still tracks the hovered icon's row.
+        double rightX = (_dollRight >= 0 ? _dollRight : tw.X + targetSize.Width) + dollGap;   // just past the doll's right edge
+        double leftX  = (_dollLeft  >= 0 ? _dollLeft  : tw.X) - pw - dollGap;                 // just left of the doll
         bool rightFits = rightX + pw <= w, leftFits = leftX >= 0;
         bool openLeft = _hoverOpenLeft switch
         {
