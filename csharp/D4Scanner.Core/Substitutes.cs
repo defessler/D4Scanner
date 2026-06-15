@@ -42,7 +42,7 @@ public static class Substitutes
         g.Affixes.Count(a => IsCore(a, core) && DiffEngine.AffixMet(a, item));
 
     /// <summary>Best item the player owns (equipped or in bags) for the slot, scored core-affixes-first.</summary>
-    public static (Item item, int coreMet, int totalMet)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core)
+    public static (Item item, int coreMet)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core)
     {
         var bs = DiffEngine.SlotBaseName(g.Slot);
         var pool = live.Gear.Concat(live.Inventory).Where(it => DiffEngine.SlotBaseName(it.Slot) == bs).ToList();
@@ -52,7 +52,7 @@ public static class Substitutes
             int c = CoreMet(g, it, core), m = DiffEngine.ScoreSlot(g, it);
             if (best == null || c > best.Value.c || (c == best.Value.c && m > best.Value.m)) best = (it, c, m);
         }
-        return best == null ? null : (best.Value.it, best.Value.c, best.Value.m);
+        return best == null ? null : (best.Value.it, best.Value.c);   // m is the internal tiebreak only — not returned
     }
 
     /// <summary>The whole-build substitute plan, one entry per target gear slot.</summary>

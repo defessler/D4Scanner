@@ -72,13 +72,11 @@ public static class IconResolver
 
     public static void ReloadSources() { LoadSources(); Changed?.Invoke(); }
 
-    public static string? Get(string? name, string? klass = null) => Get(name, null, null, klass);
-
     /// <summary>
     /// Source chain: (1) game-data PNG keyed by Maxroll image handle, (2) user-configured template
     /// sources. Returns a cached local path immediately or null while background extraction runs.
     /// </summary>
-    public static string? Get(string? name, string? id, long? image, string? klass)
+    public static string? Get(string? name, string? id, long? image)
     {
         // Source 1 (highest priority): real icon extracted from the user's local D4 install.
         // Keyed by Maxroll's hImageHandle. Returns cached PNG path or null while extracting.

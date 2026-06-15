@@ -78,11 +78,15 @@ public sealed class OcrCaptureEngine : IDisposable
         if (System.Threading.Interlocked.Exchange(ref _scanning, 1) == 1) return;
         try
         {
-            var proc = Process.GetProcessesByName("Diablo IV").FirstOrDefault();
-            if (proc == null) return;
-            if (GetForegroundWindow() != proc.MainWindowHandle) return;
+            // Resolve the D4 window ONCE (and dispose the Process[]); reuse the handle for the grab so a single
+            // scan doesn't enumerate every process twice.
+            IntPtr hwnd;
+            var procs = Process.GetProcessesByName("Diablo IV");
+            try { hwnd = procs.FirstOrDefault()?.MainWindowHandle ?? IntPtr.Zero; }
+            finally { foreach (var p in procs) p.Dispose(); }
+            if (hwnd == IntPtr.Zero || GetForegroundWindow() != hwnd) return;
 
-            var grab = await WindowsGraphicsCapture.GrabAsync().ConfigureAwait(false);
+            var grab = await WindowsGraphicsCapture.GrabAsync(hwnd).ConfigureAwait(false);
             using var bmp = grab.Bitmap;
             if (bmp == null) return;
 

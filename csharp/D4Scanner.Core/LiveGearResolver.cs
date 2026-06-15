@@ -134,6 +134,8 @@ public static class LiveGearResolver
             return cls?.ToLowerInvariant() switch
             {
                 "rogue"     => t.Contains("bow") ? "ranged" : "melee",
+                // Barbarian arsenal is melee-only, so "twohand" deliberately omits bow/quarterstaff (unlike the
+                // wider DiffEngine.IsTwoHandedType) — the three is-two-handed predicates are intentionally scoped.
                 "barbarian" => t.Contains("two-hand") || t.Contains("two hand") || t.Contains("polearm") ? "twohand" : "onehand",
                 _ => null,
             };

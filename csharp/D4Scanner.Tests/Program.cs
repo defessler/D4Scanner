@@ -3361,12 +3361,12 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var ownedPool = new[] {
         new Item { Name = "A", Slot = "ring", Affixes = { new Affix { Text = "Dexterity", Value = 80, Min = 50, Max = 120 } } },
         new Item { Name = "B", Slot = "helm", Affixes = { new Affix { Text = "Maximum Life", Value = 900 } } } };
-    Eq("AffixCeilings: range max wins", 120d, AffixCeilings.For("Dexterity", ownedPool));
-    Eq("AffixCeilings: bare value when no range", 900d, AffixCeilings.For("Maximum Life", ownedPool));
-    Eq("AffixCeilings: unknown affix -> 0", 0d, AffixCeilings.For("Armor", ownedPool));
+    Eq("AffixCeilings: range max wins", 120d, AffixCeilings.Harvest(new[] { "Dexterity" }, ownedPool)["Dexterity"]);
+    Eq("AffixCeilings: bare value when no range", 900d, AffixCeilings.Harvest(new[] { "Maximum Life" }, ownedPool)["Maximum Life"]);
+    Eq("AffixCeilings: unknown affix -> 0", 0d, AffixCeilings.Harvest(new[] { "Armor" }, ownedPool)["Armor"]);
     Check("AffixCeilings: umbrella copies count toward the specific affix",
-        AffixCeilings.For("Dexterity", new[] { new Item { Name = "C", Slot = "ring",
-            Affixes = { new Affix { Text = "All Stats", Value = 40, Min = 30, Max = 60 } } } }) == 60d);
+        AffixCeilings.Harvest(new[] { "Dexterity" }, new[] { new Item { Name = "C", Slot = "ring",
+            Affixes = { new Affix { Text = "All Stats", Value = 40, Min = 30, Max = 60 } } } })["Dexterity"] == 60d);
 
     // (e) BuildGuide: a max-roll display target is a GOAL — GET steps never word it as a requirement
     var bgT = new TargetBuild { Gear = { new TargetGear { Slot = "Helm", Affixes = { new TargetAffix { Name = "Dexterity" } } } } };

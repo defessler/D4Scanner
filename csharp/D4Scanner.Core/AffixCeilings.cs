@@ -9,18 +9,6 @@ namespace D4Scanner.Core;
 /// </summary>
 public static class AffixCeilings
 {
-    /// <summary>Best-known ceiling for <paramref name="affixName"/> across <paramref name="owned"/>
-    /// (umbrella-aware via <see cref="DiffEngine.AffixSatisfies"/>). 0 = no copy seen anywhere.</summary>
-    public static double For(string affixName, IEnumerable<Item> owned)
-    {
-        double best = 0;
-        foreach (var it in owned)
-            foreach (var a in it.Affixes ?? new())
-                if (DiffEngine.AffixSatisfies(affixName, a))
-                    best = Math.Max(best, a.Max ?? a.Value ?? 0);
-        return best;
-    }
-
     /// <summary>Ceilings for many affixes at once (case-insensitive by label) — one pass over the pool,
     /// for annotating a whole row set.</summary>
     public static Dictionary<string, double> Harvest(IEnumerable<string> affixNames, IEnumerable<Item> owned)

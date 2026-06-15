@@ -77,7 +77,7 @@ public static class LogStore
             var cutoff = (nowUtc ?? DateTime.UtcNow).AddDays(-Math.Max(1, maxAgeDays));
             var byAge = archives.Where(f => { try { return File.GetLastWriteTimeUtc(f) < cutoff; } catch { return false; } }).ToList();
             foreach (var f in byAge) { try { File.Delete(f); deleted++; } catch { } }
-            var remaining = Archives(activeLog);
+            var remaining = archives.Except(byAge).ToList();   // intended-keep set, oldest→newest (no 2nd disk scan)
             int excess = remaining.Count - Math.Max(1, maxFiles);
             for (int i = 0; i < excess; i++) { try { File.Delete(remaining[i]); deleted++; } catch { } }   // oldest first
         }

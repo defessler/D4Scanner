@@ -354,7 +354,10 @@ public static class DiffEngine
     /// <summary>True for ranged weapons (bow / crossbow). Used to keep melee weapons out of ranged slots.</summary>
     static bool IsRangedWeapon(string? s) => !string.IsNullOrEmpty(s) && s.ToLowerInvariant() is var t && (t.Contains("crossbow") || t.Contains("bow"));
 
-    /// <summary>True for inherently two-handed voiced types ("Two-Handed Sword", polearms, staves…).</summary>
+    /// <summary>True for inherently two-handed voiced types ("Two-Handed Sword", polearms, staves, quarterstaff,
+    /// bows/crossbows) — the WIDEST 2H set. Two siblings deliberately differ and must NOT be naively unified:
+    /// UpgradePath.IsTwoHand mirrors this for crafting cost; LiveGearResolver's per-class weapon bucket narrows
+    /// it (Barbarian = melee 2H only, no bow/quarterstaff).</summary>
     static bool IsTwoHandedType(string? t)
     {
         if (string.IsNullOrEmpty(t)) return false;

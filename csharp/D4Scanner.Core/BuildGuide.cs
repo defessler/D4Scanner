@@ -104,7 +104,7 @@ public static class BuildGuide
                 if (g.Count() == 1) return g.AsEnumerable();
                 var merged = g.First();
                 var slots = string.Join(" / ", g.Select(s => s.Text.Split(" — ")[0]).Distinct());
-                return new[] { merged with { Text = $"{slots} — {AfxLabel(merged.Text)}", Detail = merged.Detail } };
+                return new[] { merged with { Text = $"{slots} — {AfxLabel(merged.Text)}" } };
             })
             .OrderBy(a => a.Tier)
             .ToList();

@@ -522,9 +522,9 @@ public sealed class LogWatcher : IDisposable
             .ToList();
     }
 
-    static string SlotBaseName(string slot) => System.Text.RegularExpressions.Regex.Replace(
-        System.Text.RegularExpressions.Regex.Replace((slot).ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim(),
-        @"\s*\d+$", "").Trim();
+    // The canonical normalizer (this was a verbatim copy of DiffEngine.SlotBase's two regexes — its extra
+    // "\s+"→" " pass is a no-op after "[^a-z0-9]+"→" " already collapses runs, so the output is identical).
+    static string SlotBaseName(string slot) => DiffEngine.SlotBaseName(slot);
 
     // The player's OWN characters, as seen on the character-select screen (detail blocks carry the class).
     static List<RosterEntry> OwnRoster(CharSelectParser cs) =>
