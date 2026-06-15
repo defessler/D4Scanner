@@ -83,7 +83,35 @@ var rPart = DiffEngine.Diff(target, livePartial);
 Eq("Diff partial: total 3", 3, rPart.Total);
 Eq("Diff partial: matched 1 (ML present)", 1, rPart.Matched);
 Eq("Diff partial: under 1 (ML below min)", 1, rPart.Under);
-Eq("Diff partial: pct 33", 33, rPart.Pct);
+// GAP 12 — headline % is §5-weighted: the missing build-defining unique weighs 3x, so 1 met (ML, 1.0) /
+// (1.0 + 1.0 + 3.0) = 20% (was a flat 1/3 = 33% before weighting). Integer Matched/Total/Under unchanged.
+Eq("Diff partial: pct 20 (missing unique weighed 3x)", 20, rPart.Pct);
+
+// GAP 12 — ReqWeight classifier pinned directly (independent of the aggregate Pct).
+{
+    var wTarget = new TargetBuild {
+        Gear = { new TargetGear { Slot = "Helm", Affixes = {
+            new TargetAffix { Name = "Maximum Life" },                       // plain stat -> 1.0
+            new TargetAffix { Name = "Critical Strike Damage Multiplier" },  // x-multiplier -> 2.0 empty / 1.5 present
+            new TargetAffix { Name = "Vulnerable Damage" } } } },            // additive +%damage -> 0.75
+        Uniques = { new TargetUnique { Name = "Andariel's Visage", Slot = "Helm" } },   // build-defining -> 3.0
+    };
+    // (A) multiplier MISSING: live helm carries only Maximum Life
+    var wRepMiss = DiffEngine.Diff(wTarget, new LiveBuild { Gear = { new Item { Name = "Plain Helm", Slot = "Helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1000 } } } } });
+    var gMiss = wRepMiss.Categories.First(c => c.Id == "gear").Groups[0].Items;
+    Eq("GAP12 weight: plain stat (Maximum Life) = 1.0", 1.0, gMiss.First(i => i.Label == "Maximum Life").Weight);
+    Eq("GAP12 weight: empty x-multiplier = 2.0", 2.0, gMiss.First(i => i.Label == "Critical Strike Damage Multiplier").Weight);
+    Eq("GAP12 weight: additive +%damage = 0.75", 0.75, gMiss.First(i => i.Label == "Vulnerable Damage").Weight);
+    var uMiss = wRepMiss.Categories.First(c => c.Id == "uniques").Groups[0].Items;
+    Eq("GAP12 weight: build-defining unique = 3.0", 3.0, uMiss.First(i => i.Label.Contains("Andariel")).Weight);
+    // (B) multiplier PRESENT: an occupied multiplier weighs less than an empty one (§5 item 3)
+    var wRepHas = DiffEngine.Diff(wTarget, new LiveBuild { Gear = { new Item { Name = "Crit Helm", Slot = "Helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1000 },
+        new Affix { Text = "Critical Strike Damage Multiplier", Value = 20 } } } } });
+    var gHas = wRepHas.Categories.First(c => c.Id == "gear").Groups[0].Items;
+    Eq("GAP12 weight: present x-multiplier = 1.5", 1.5, gHas.First(i => i.Label == "Critical Strike Damage Multiplier").Weight);
+}
 
 // ---- A6: owned-unique secondary-roll advisory (RollNote) — presence still counts; a badly-rolled copy is flagged ----
 {
@@ -338,6 +366,41 @@ var rTemper = DiffEngine.Diff(retemperTarget, liveLowRoll);
 var temSteps = BuildGuide.Steps(rTemper);
 Check("BuildGuide RE-TEMPER verb for under-rolled tempered affix",
     temSteps.Any(s => s.Verb == "RE-TEMPER"));
+
+// ---- GAP 11: per-step Torment caveats (verb-based, gate-derived) ----
+{
+    var capT = new TargetBuild { Gear = { new TargetGear { Slot = "helm", Affixes = {
+        new TargetAffix { Name = "Cooldown Reduction", Tempered = true } } } } };
+    var capLive = new LiveBuild { Gear = { new Item { Name = "Bare Helm", Slot = "helm" } } };  // affix absent -> missing+tempered -> TEMPER
+    var capRep = DiffEngine.Diff(capT, capLive);
+
+    // (a) below the temper-manual gate (tier 2): TEMPER step gets the 'learn the manual first' caveat
+    var lowT = BuildGuide.Steps(capRep, capLive, 1).First(s => s.Verb == "TEMPER");
+    Check("GAP11: TEMPER below temper gate notes the manual gate",
+        lowT.Detail != null && lowT.Detail.Contains("learn the manual first") && lowT.Detail.Contains("Torment 2"));
+    Check("GAP11: TEMPER caveat keeps the Blacksmith base detail", lowT.Detail!.Contains("at the Blacksmith"));
+
+    // (b) at/above the gate: detail is the plain Blacksmith string (no caveat)
+    var hiT = BuildGuide.Steps(capRep, capLive, 5).First(s => s.Verb == "TEMPER");
+    Eq("GAP11: TEMPER at/above temper gate stays plain", "at the Blacksmith", hiT.Detail);
+
+    // (c) no Torment supplied: unchanged back-compat (plain detail)
+    var noT = BuildGuide.Steps(capRep, capLive).First(s => s.Verb == "TEMPER");
+    Eq("GAP11: TEMPER with unknown Torment stays plain", "at the Blacksmith", noT.Detail);
+
+    // (e) under-rolled (non-tempered) IMPROVE step gets the T8 Greater-Affix caveat below the gate
+    var gaT = new TargetBuild { Gear = { new TargetGear { Slot = "helm", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 2000 } } } } };
+    var gaLive = new LiveBuild { Gear = { new Item { Name = "LowLife Helm", Slot = "helm", Affixes = {
+        new Affix { Text = "Maximum Life", Value = 1000, Min = 800, Max = 3000 } } } } };  // present but under the 2000 build Min -> under
+    var gaRep = DiffEngine.Diff(gaT, gaLive);
+    var gaImp = BuildGuide.Steps(gaRep, gaLive, 3).First(s => s.Verb == "IMPROVE");
+    Check("GAP11: IMPROVE below GA gate (T8) notes Greater-Affix odds",
+        gaImp.Detail != null && gaImp.Detail.Contains("Greater-Affix odds jump at Torment 8"));
+    var gaImpHi = BuildGuide.Steps(gaRep, gaLive, 9).First(s => s.Verb == "IMPROVE");
+    Check("GAP11: IMPROVE at/above GA gate has no GA note",
+        gaImpHi.Detail != null && !gaImpHi.Detail.Contains("Greater-Affix odds jump"));
+}
 
 // ---- GearParser.ParseTooltipLines: OCR path (no EQUIPPED / end-marker machinery) ----
 var ocrBlock = new[]
@@ -1068,6 +1131,24 @@ var cleanAff = GearParser.ParseTooltipLines(new[] {
     "GUARD ITEM", "Legendary Ring", "800 Item Power", "+100 Critical Strike Chance [80 - 120]" });
 Check("Trailing strip: a normal affix keeps its exact text (no over-strip)",
     cleanAff != null && cleanAff.Affixes.Any(a => a.Text == "Critical Strike Chance"));
+
+// ---- GAP 17: Transfigured / Unmodifiable terminal-state line (CONFIRMED live phrasing 2026-06-15) ----
+var transfig = GearParser.ParseTooltipLines(new[] {
+    "DEATH MACE OF CHANNELING", "Ancestral Legendary Mace (Bludgeoning)", "900 Item Power",
+    "25 ( +25) Quality", "Transfigured",
+    "+189 Strength +[150 - 180]", "x11% All Damage Multiplier [6 - 10]%",
+    "Requires Level 70. Binds to Account on Pickup. Lord of Hatred Item", "Unmodifiable",
+    "Sell Value: 55,492 Gold" });
+Check("Transfigured: flag set from the standalone state line", transfig?.Transfigured == true);
+Check("Transfigured: state lines do NOT pollute PowerText", transfig != null && !transfig.PowerText.Any(p => p.Equals("Transfigured", StringComparison.OrdinalIgnoreCase) || p.Equals("Unmodifiable", StringComparison.OrdinalIgnoreCase)));
+Check("Transfigured: Quality still parsed (25) alongside the state line", transfig?.Quality == 25);
+// false-positive guard: Horadric-Cube material/recipe lines that merely CONTAIN the words must NOT set the flag
+var cubeMat = GearParser.ParseTooltipLines(new[] {
+    "PRIMORDIAL ASHES", "Unique Consumable",
+    "A special material used in the Horadric Cube to Transfigure Items.",
+    "Has a 100% chance of making an item Unmodifiable.",
+    "+5 Dexterity [1 - 5]" });
+Check("Transfigured: a Cube material line that merely CONTAINS the words does NOT set the flag", cubeMat == null || cubeMat.Transfigured == false);
 
 // ---- SOCKET capture: "Socket (N)" = total capacity, "Empty Socket" = one unfilled ----
 var sockItem = GearParser.ParseTooltipLines(new[] {
@@ -2283,6 +2364,10 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("Verdict FIXABLE: action is an enchant", vFix.Action!.Contains("Enchant"));
     var vFixGA = Verdicts.For(SC("FixGA", s => { s.IsUpgrade = true; s.RawUpgrade = false; s.Fixable = true; s.FixDestroysGA = true; }), emptyCtx);
     Check("Verdict FIXABLE: warns when the enchant would hit a Greater Affix", vFixGA.Action!.Contains("Greater Affix"));
+    // GAP 17 — a transfigured fixable item is still Fixable, but the advice can't prescribe an enchant.
+    var vFixLocked = Verdicts.For(SC("FixLocked", s => { s.IsUpgrade = true; s.RawUpgrade = false; s.Fixable = true; s.Item.Transfigured = true; }), emptyCtx);
+    Eq("Verdict FIXABLE(locked): still classified Fixable", Verdict.Fixable, vFixLocked.V);
+    Check("Verdict FIXABLE(locked): action says it can't be fixed (Transfigured)", vFixLocked.Action!.Contains("Transfigured") && !vFixLocked.Action!.Contains("Enchant"));
 
     // 3. KEEP-SALVAGE — aspect upgrades the Codex (not a gear upgrade)
     var vSalv = Verdicts.For(SC("Salv", s => { s.SalvageAspect = "Edgemaster's Aspect"; }), emptyCtx);
@@ -2371,6 +2456,22 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Affixes = { new Affix { Text = "Movement Speed", Value = 16 }, new Affix { Text = "Maximum Life", Value = 900 } } };
     Eq("UpgradePath: a finished item needs no steps", 0, UpgradePath.ForSlot(doneTarget, doneItem).Count);
 
+    // GAP 17 — a Transfigured item is permanently unmodifiable: exactly ONE locked step, NONE of the craft verbs
+    // (transItem is built to trigger TEMPER/SOCKET/IMPRINT under the normal path — the early-return suppresses all).
+    var transTarget = new TargetGear { Slot = "Helm", Aspect = "Aspect of Z", Affixes = {
+        new TargetAffix { Name = "Maximum Life", Min = 1000 }, new TargetAffix { Name = "Dexterity", Tempered = true } } };
+    var transItem = new Item { Name = "Locked Helm", Slot = "helm", IsAncestral = true, Transfigured = true,
+        Quality = 25, EmptySockets = 1, TemperUsed = 0, TemperMax = 3,
+        Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
+    var transPath = UpgradePath.ForSlot(transTarget, transItem);
+    Eq("UpgradePath: a Transfigured item yields exactly one (locked) step", 1, transPath.Count);
+    Check("UpgradePath: the step is the LOCKED note", Step(transPath, "LOCKED") != null);
+    Check("UpgradePath: no TEMPER on a Transfigured item", Step(transPath, "TEMPER") == null);
+    Check("UpgradePath: no ENCHANT on a Transfigured item", Step(transPath, "ENCHANT") == null);
+    Check("UpgradePath: no MASTERWORK on a Transfigured item", Step(transPath, "MASTERWORK") == null);
+    Check("UpgradePath: no SOCKET on a Transfigured item", Step(transPath, "SOCKET") == null);
+    Check("UpgradePath: no IMPRINT on a Transfigured item", Step(transPath, "IMPRINT") == null);
+
     // GA caution on enchant; 2+ wrong affixes ⇒ replace/Focused-Reroll guidance
     var gaItem = new Item { Name = "GA Helm", Slot = "helm", IsAncestral = true, GreaterAffixCount = 1, Quality = 25,
         Affixes = { new Affix { Text = "Maximum Life", Value = 1500, Min = 1000, Max = 1600 } } };
@@ -2456,6 +2557,37 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         !UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 })[0].IsUpgrade);
     Check("IP-tier: IN Torment the 900 Ancestral beats the equal-affix 850 equipped",
         UpgradeScorer.Score(ipTarget, ipLive, new[] { cand900 }, 8)[0].RawUpgrade);
+
+    // GAP 9 — weapon DPS step: a 900 Ancestral weapon beats a sub-900 equipped weapon EVEN with fewer
+    // matching affixes (base DPS scales with IP). Weapon-only + Torment-gated.
+    var wpnTarget = new TargetBuild { Gear = { new TargetGear { Slot = "Weapon", ItemId = "2HSword_Legendary_S13", Affixes = {
+        new TargetAffix { Name = "Strength" }, new TargetAffix { Name = "Critical Strike Damage" } } } } };
+    var eqWpn850 = new Item { Name = "Old Blade", Slot = "weapon", ItemType = "Two-Handed Sword", ItemPower = 850, Equipped = true, Affixes = {
+        new Affix { Text = "Strength", Value = 200 }, new Affix { Text = "Critical Strike Damage", Value = 80 } } };   // 2/2 equipped
+    var candWpn900 = new Item { Name = "New Blade", Slot = "weapon", ItemType = "Two-Handed Sword", ItemPower = 900, IsAncestral = true, Affixes = {
+        new Affix { Text = "Strength", Value = 150 } } };   // only 1/2 — FEWER affixes than equipped
+    var wpnLive = new LiveBuild { Gear = { eqWpn850 } };
+    Check("GAP9 weapon-DPS: WITHOUT Torment a fewer-affix 900 weapon is NOT an upgrade",
+        !UpgradeScorer.Score(wpnTarget, wpnLive, new[] { candWpn900 })[0].IsUpgrade);
+    var wpnScored = UpgradeScorer.Score(wpnTarget, wpnLive, new[] { candWpn900 }, 8)[0];
+    Check("GAP9 weapon-DPS: IN Torment a 900 weapon beats a sub-900 weapon despite fewer affixes", wpnScored.IsUpgrade);
+    Check("GAP9 weapon-DPS: it's an EQUIP-now (RawUpgrade), no enchant needed", wpnScored.RawUpgrade);
+
+    // Guard 1 — NON-weapon slots keep the strict affix-margin rule (a fewer-affix 900 ring is NOT an upgrade).
+    var ring9Target = new TargetBuild { Gear = { new TargetGear { Slot = "Ring", Affixes = {
+        new TargetAffix { Name = "Critical Strike Chance" }, new TargetAffix { Name = "Maximum Life" } } } } };
+    var eqRing850 = new Item { Name = "Old Ring", Slot = "ring", ItemPower = 850, Equipped = true, Affixes = {
+        new Affix { Text = "Critical Strike Chance", Value = 5 }, new Affix { Text = "Maximum Life", Value = 1000 } } };
+    var candRing900 = new Item { Name = "New Ring", Slot = "ring", ItemPower = 900, IsAncestral = true, Affixes = {
+        new Affix { Text = "Critical Strike Chance", Value = 5 } } };   // 1/2 — fewer affixes
+    Check("GAP9 weapon-DPS: a fewer-affix 900 RING in Torment is NOT an upgrade (rule is weapon-only)",
+        !UpgradeScorer.Score(ring9Target, new LiveBuild { Gear = { eqRing850 } }, new[] { candRing900 }, 8)[0].IsUpgrade);
+
+    // Guard 2 — equipped weapon ALREADY at the floor ⇒ no DPS step (a fewer-affix 900 weapon is NOT an upgrade).
+    var eqWpn900 = new Item { Name = "Capped Blade", Slot = "weapon", ItemType = "Two-Handed Sword", ItemPower = 900, IsAncestral = true, Equipped = true, Affixes = {
+        new Affix { Text = "Strength", Value = 200 }, new Affix { Text = "Critical Strike Damage", Value = 80 } } };
+    Check("GAP9 weapon-DPS: no step when the equipped weapon is already at the 900 floor",
+        !UpgradeScorer.Score(wpnTarget, new LiveBuild { Gear = { eqWpn900 } }, new[] { candWpn900 }, 8)[0].IsUpgrade);
 
     // Verdict: in Torment a sub-900 non-Ancestral off-build item reads as junk "below the floor"
     var lowItem = new Item { Name = "Low Boots", Slot = "boots", ItemPower = 800, IsAncestral = false };

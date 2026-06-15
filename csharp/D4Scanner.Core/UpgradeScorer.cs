@@ -160,18 +160,30 @@ public static class UpgradeScorer
             // gear is strictly temporary at endgame — its same affixes roll higher at 900)
             int floorIp = SeasonPack.Current.AncestralFloorIP;
             bool ipBreaks = torment.HasValue && (it.ItemPower ?? 0) >= floorIp && bar.ip > 0 && bar.ip < floorIp;
+            // GAP 9 — weapon DPS step: at endgame a 900 Ancestral weapon is a FLAT upgrade over a sub-floor
+            // equipped weapon. Base weapon damage scales with Item Power (docs §2: "matters most on weapons —
+            // base DPS scales with IP"; §7: in Torment a sub-900 piece is replace-by-default), so the IP-tier
+            // jump beats the equipped weapon regardless of affix margin — NOT just at an affix tie (that's what
+            // ipBreaks already covers for armor/jewellery). Weapon-only + Torment-gated (ipBreaks already
+            // requires bar.ip > 0 && bar.ip < floorIp, so it can't fire on an empty slot).
+            bool weaponDpsBeats = ipBreaks
+                && DiffEngine.SlotBaseName(bestSlot?.Slot) == "weapon"
+                && DiffEngine.SlotBaseName(it.Slot) == "weapon";
             // beats the piece it would displace when it's more complete (with the enchant credit), or equally
-            // complete but with more REAL presence, more useful Greater Affixes, or — at endgame — a higher IP tier
+            // complete but with more REAL presence, more useful Greater Affixes, or — at endgame — a higher IP tier;
+            // OR (weapons only) the flat DPS step from a sub-floor equipped weapon to a 900 candidate
             bool beats = pick >= 0 && (effective > bar.eff
                 || (effective == bar.eff && pickPresent > bar.present)
                 || (effective == bar.eff && pickPresent == bar.present && pickGaw > bar.gaw)
-                || (effective == bar.eff && pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks));
+                || (effective == bar.eff && pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks)
+                || weaponDpsBeats);
             bool upgrade = beats && !(aspectBlocked && bar.nonUnique);
             // raw beat: better as-is, WITHOUT spending an enchant — more real presence (or, at a tie, more
-            // useful GAs, or the IP-tier jump). EQUIP-now items pass; one-enchant-credit-only items don't.
+            // useful GAs, or the IP-tier jump, or the weapon DPS step). EQUIP-now items pass; one-enchant-credit-only items don't.
             bool rawBeats = pick >= 0 && (pickPresent > bar.present
                 || (pickPresent == bar.present && pickGaw > bar.gaw)
-                || (pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks));
+                || (pickPresent == bar.present && pickGaw == bar.gaw && ipBreaks)
+                || weaponDpsBeats);
             bool rawUpgrade = rawBeats && !(aspectBlocked && bar.nonUnique);
 
             // SALVAGE upgrade: a legendary carrying an imprinted aspect the build wants is worth keeping

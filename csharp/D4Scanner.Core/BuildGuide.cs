@@ -23,12 +23,32 @@ public static class BuildGuide
     /// <summary>The full plan, ordered by impact (free equips → acquire → craft → polish). When
     /// <paramref name="live"/> is supplied, steps note when a wanted aspect or rune already exists on a
     /// different owned piece ("you have it on X").</summary>
-    public static List<GuideStep> Steps(DiffReport r, LiveBuild? live = null)
+    public static List<GuideStep> Steps(DiffReport r, LiveBuild? live = null, int? torment = null)
     {
         var acts = new List<GuideStep>();
         var gear = r.Categories.FirstOrDefault(c => c.Id == "gear");
         var owned = live != null ? (live.Gear ?? new()).Concat(live.Inventory ?? new()).ToList() : new List<Item>();
         static string CleanSock(string s) => s.Replace("Rune: ", "").Replace("Gem: ", "").Trim();
+
+        // Verb-based Torment caveats (GAP 11): when we know the player's tier, a step whose action is gated
+        // behind a higher Torment tier gets a one-line note. Per-TARGET tier gating (which boss is which tier)
+        // is intentionally out of scope (D8-blocked) — these are generic, gate-derived caveats only.
+        string? temperCaveat = null, gaCaveat = null;
+        if (torment is int tnow)
+        {
+            var gates = SeasonPack.Current.TormentGates;
+            // (g.Unlocks ?? "") — a corrupt user-override pack with an explicit "unlocks": null deserializes the
+            // string to null (System.Text.Json overrides the "" initializer), and a bare .Contains() would NRE
+            // out of the guidance render. Null-tolerant, mirroring the null-safe gate handling in Activities.
+            var temperGate = gates.FirstOrDefault(g => (g.Unlocks ?? "").Contains("Temper", StringComparison.Ordinal));
+            if (temperGate != null && tnow < temperGate.Tier)
+                temperCaveat = $"Torment {temperGate.Tier} unlocks {temperGate.Unlocks} — you're on Torment {tnow}; learn the manual first.";
+            var gaGate = gates.FirstOrDefault(g => (g.Unlocks ?? "").Contains("Greater Affix", StringComparison.Ordinal));
+            if (gaGate != null && tnow < gaGate.Tier)
+                gaCaveat = $"Greater-Affix odds jump at Torment {gaGate.Tier} — you're on Torment {tnow}.";
+        }
+        static string? AppendNote(string? detail, string? note) =>
+            note == null ? detail : string.IsNullOrEmpty(detail) ? note : detail + "  ·  " + note;
 
         if (gear != null)
             for (int gi = 0; gi < gear.Groups.Count; gi++)
@@ -51,7 +71,7 @@ public static class BuildGuide
                     if (i.Status == "missing")       // tier 2 — craft/temper the missing affix
                         // a "max X" display target is a GOAL, not a requirement — never word it as one
                         acts.Add(new GuideStep(2, i.Tempered ? "TEMPER" : "GET", $"{g.Name} — {i.Label}",
-                            i.Tempered ? "at the Blacksmith" : i.NeedIsMax ? $"rolls up to {i.Need?.Replace("max ", "")}" : i.Need,
+                            i.Tempered ? AppendNote("at the Blacksmith", temperCaveat) : i.NeedIsMax ? $"rolls up to {i.Need?.Replace("max ", "")}" : i.Need,
                             i.Tempered ? $"Temper {i.Label} onto your {g.Name}"
                                        : $"Get {i.Label} on your {g.Name}" + (i.Need != null && !i.NeedIsMax ? $" ({i.Need})" : ""), key));
                     else if (i.Status == "under")    // tier 3 — polish an under-rolled affix
@@ -59,7 +79,7 @@ public static class BuildGuide
                         // Tempered affixes that rolled low need a re-temper at the Blacksmith, not an enchant
                         string uVerb = i.Tempered ? "RE-TEMPER" : "IMPROVE";
                         string uStation = i.Tempered ? "at the Blacksmith" : (i.Val != null ? i.Val + " → " : "") + i.Need;
-                        acts.Add(new GuideStep(3, uVerb, $"{g.Name} — {i.Label}", uStation,
+                        acts.Add(new GuideStep(3, uVerb, $"{g.Name} — {i.Label}", i.Tempered ? uStation : AppendNote(uStation, gaCaveat),
                             $"Improve {i.Label} on your {g.Name} — at {i.Val} ({i.Need})", key));
                     }
                 }

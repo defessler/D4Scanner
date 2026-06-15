@@ -1452,7 +1452,10 @@ public partial class MainWindow : Window
         // They're hidden everywhere; the % reflects trackable gear/affix/aspect/unique progress.
         var tCats = r.Categories.Where(c => !IsUntrackableCat(c.Id)).ToList();
         int tMatched = tCats.Sum(c => c.Matched), tTotal = tCats.Sum(c => c.Total), tUnder = tCats.Sum(c => c.Under);
-        int tPct = tTotal > 0 ? (int)Math.Round(100.0 * tMatched / tTotal) : 0;
+        // Headline % is §5-weighted (GAP 12): a build-defining missing unique drags it down more than a plain
+        // affix. The X/Y-met subtitle below stays the integer row count.
+        double tWm = tCats.Sum(c => c.WeightedMatched), tWt = tCats.Sum(c => c.WeightedTotal);
+        int tPct = tWt > 0 ? (int)Math.Round(100.0 * tWm / tWt) : 0;
         OverallPct.Text = tPct + "%";
         OverallCount.Text = $"{tMatched} / {tTotal} met  ·  {_live.Gear.Count} equipped items"
             + (tUnder > 0 ? $"  ·  ⚠ {tUnder} below build min" : "");
@@ -3830,7 +3833,8 @@ public partial class MainWindow : Window
 
     UIElement? GuidancePanel(DiffReport r)
     {
-        var acts = BuildGuide.Steps(r, EffectiveLive());
+        var acts = BuildGuide.Steps(r, EffectiveLive(),
+            _activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null);
         if (acts.Count == 0)
         {
             // closed the loop — guide all the way to the finish line
@@ -4016,7 +4020,8 @@ public partial class MainWindow : Window
     // the full Next-Steps screen: searchable, filterable by effort tier, paged 10-at-a-time
     UIElement NextStepsView(DiffReport r)
     {
-        var all = BuildGuide.Steps(r, EffectiveLive());
+        var all = BuildGuide.Steps(r, EffectiveLive(),
+            _activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null);
         var root = new StackPanel();
 
         var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };

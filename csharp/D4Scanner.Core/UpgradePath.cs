@@ -23,6 +23,15 @@ public static class UpgradePath
 
     public static List<PathStep> ForSlot(TargetGear g, Item it)
     {
+        // TERMINAL STATE: a Transfigured item is permanently unmodifiable (doc §3) — temper/enchant/
+        // masterwork/socket/imprint are ALL impossible. Return a single locked note instead of crafting
+        // steps the player can never perform. (One step, not zero: an empty list reads as "already perfect"
+        // — see the `a finished item needs no steps` test — which would be a lie for a junk-but-locked item.)
+        if (it.Transfigured)
+            return new List<PathStep> { new PathStep("LOCKED",
+                "Transfigured — permanently unmodifiable; no temper, enchant, masterwork, socket, or imprint is possible",
+                null, "the Horadric Cube Transfiguration is the irreversible last step") };
+
         var pack = SeasonPack.Current;
         var steps = new List<PathStep>();
         var rows = DiffEngine.EvalSlot(g, it, out _);
