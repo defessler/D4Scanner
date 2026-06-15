@@ -41,8 +41,10 @@ public static class Substitutes
     static int CoreMet(TargetGear g, Item item, HashSet<string> core) =>
         g.Affixes.Count(a => IsCore(a, core) && DiffEngine.AffixMet(a, item));
 
-    /// <summary>Best item the player owns (equipped or in bags) for the slot, scored core-affixes-first.</summary>
-    public static (Item item, int coreMet)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core)
+    /// <summary>Best item the player owns (equipped or in bags) for the slot, scored core-affixes-first. Also
+    /// returns the chosen item's PRESENCE count — the same metric DiffEngine.UpgradeItems ranks by — so the
+    /// upgrade flag can fall back to it when core-affix counts tie (a strictly-better item must still read as one).</summary>
+    public static (Item item, int coreMet, int presence)? BestOwned(TargetGear g, LiveBuild live, HashSet<string> core)
     {
         var bs = DiffEngine.SlotBaseName(g.Slot);
         var pool = live.Gear.Concat(live.Inventory).Where(it => DiffEngine.SlotBaseName(it.Slot) == bs).ToList();
@@ -52,7 +54,7 @@ public static class Substitutes
             int c = CoreMet(g, it, core), m = DiffEngine.ScoreSlot(g, it);
             if (best == null || c > best.Value.c || (c == best.Value.c && m > best.Value.m)) best = (it, c, m);
         }
-        return best == null ? null : (best.Value.it, best.Value.c);   // m is the internal tiebreak only — not returned
+        return best == null ? null : (best.Value.it, best.Value.c, DiffEngine.PresenceCount(g, best.Value.it));
     }
 
     /// <summary>The whole-build substitute plan, one entry per target gear slot.</summary>
@@ -77,13 +79,25 @@ public static class Substitutes
             int eqCoreMet = affs.Count(x => x.Core && x.Met);
 
             var best = BestOwned(g, live, core);
-            bool isUpgrade = best != null && !ReferenceEquals(best.Value.item, equipped) && best.Value.coreMet > eqCoreMet;
+            // upgrade when it meets more CORE affixes, or — on a core tie (incl. coreTotal==0 / an empty slot) —
+            // more present affixes. Presence parity with DiffEngine.UpgradeItems, so the panel can't disagree with
+            // the diff's own upgrade list (which a core-count-only test did when counts tied).
+            int eqPresence = equipped != null ? DiffEngine.PresenceCount(g, equipped) : 0;
+            bool isUpgrade = best != null && !ReferenceEquals(best.Value.item, equipped)
+                && (best.Value.coreMet > eqCoreMet
+                    || (best.Value.coreMet == eqCoreMet && best.Value.presence > eqPresence));
+
+            // "Better:" copy: aspect-only slots want no affixes; a slot with no CORE affixes still wants its flexible
+            // ones — never render the nonsensical "with the 0 core affixes".
+            string betterText = affs.Count == 0
+                ? "any Rare/Legendary for the slot"
+                : $"a Rare/Legendary with the {(coreTotal > 0 ? coreTotal : affs.Count)} {(coreTotal > 0 ? "core" : "wanted")} affix{((coreTotal > 0 ? coreTotal : affs.Count) == 1 ? "" : "es")} — temper one on if it's short";
+            betterText += string.IsNullOrEmpty(g.Aspect) ? "" : $", then imprint {g.Aspect}";
 
             var ladder = new List<string>
             {
                 "Now: "    + (best?.item.Name ?? equipped?.Name ?? "anything in the slot — even a placeholder"),
-                "Better: " + $"a Rare/Legendary with the {coreTotal} core affix{(coreTotal == 1 ? "" : "es")} — temper one on if it's short"
-                           + (string.IsNullOrEmpty(g.Aspect) ? "" : $", then imprint {g.Aspect}"),
+                "Better: " + betterText,
                 "Best: "   + (uni != null ? $"{uni.Name} (its secondaries roll randomly — chase a well-rolled copy)" : $"a perfect-roll {label}"),
             };
 
