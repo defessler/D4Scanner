@@ -317,7 +317,12 @@ public class GearParser
                 if (mc.Success) item.ClassLock = char.ToUpper(mc.Groups[1].Value[0]) + mc.Groups[1].Value[1..].ToLowerInvariant();
                 continue;
             }
-            if (item.Rarity == null && DetectRarityType(ln, item)) continue;
+            // Gate on Slot (not Rarity): real gear co-voices rarity+type on ONE line, so the first type line still
+            // captures both. But charms/seals/runes voice NO rarity word, leaving Rarity null for the whole block —
+            // a Rarity-null gate then re-runs DetectRarityType on every body line, and a slot-word inside a flavor /
+            // set-bonus line ("…focus upon a single spot", "(2) Set:") flips the slot charm→offhand, so LooksLikeItem
+            // rejects the item and it's silently dropped. Slot-null stops re-entry once the type is known.
+            if (item.Slot == null && DetectRarityType(ln, item)) continue;
             var mi = ReImprinted.Match(ln);
             if (mi.Success) { item.Aspect = mi.Groups[1].Value.Trim(); item.PowerText.Add(ln); continue; }
             // Runeword notation in PowerText: "NeoVex (200/100) - Graceful Heart of the Oak"

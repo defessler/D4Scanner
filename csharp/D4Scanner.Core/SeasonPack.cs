@@ -72,7 +72,23 @@ public sealed class SeasonPack
         return Fallback();
     }
 
-    static SeasonPack Parse(string json) => JsonSerializer.Deserialize<SeasonPack>(json, Opts) ?? Fallback();
+    static SeasonPack Parse(string json)
+    {
+        var p = JsonSerializer.Deserialize<SeasonPack>(json, Opts) ?? Fallback();
+        // A user-override pack with an explicit "key": null deserializes that property to null — System.Text.Json
+        // overrides the `= new()` field initializer — which would then NRE / ArgumentNullException out of an
+        // accessor (Activity/Spoil/PitForTorment/SocketsFor) and crash the guidance/activities render. Coalesce
+        // every reference-typed field back to a non-null default so the documented "Current never throws" holds.
+        p.Activities ??= new(StringComparer.OrdinalIgnoreCase);
+        p.HordesSpoils ??= new();
+        p.TormentGates ??= new();
+        p.PitToTorment ??= new();
+        p.SocketCapacity ??= new(StringComparer.OrdinalIgnoreCase);
+        p.BossLadder ??= new();
+        p.Masterwork ??= new();
+        p.Glyph ??= new();
+        return p;
+    }
 
     /// <summary>For tests: parse a pack from a string without touching disk or the embedded copy.</summary>
     public static SeasonPack FromJson(string json) => Parse(json);
