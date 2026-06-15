@@ -237,9 +237,49 @@ Eq("Substitutes: helm wanted label", "Any Helm", helmSub.Wanted);
 Eq("Substitutes: ladder is Now/Better/Best", 3, helmSub.Ladder.Count);
 Check("Substitutes: ladder leads with Now", helmSub.Ladder[0].StartsWith("Now:"));
 Check("Substitutes: best-owned is the equipped helm", helmSub.BestOwned == "A Helm");
+// On a core-affix tie, a strictly-better owned item (more present affixes) must still flag as an upgrade —
+// matching DiffEngine.UpgradeItems, which the Substitutes panel renders alongside (a core-count-only test diverged).
+{
+    var upT = new TargetBuild { Gear = {
+        new TargetGear { Slot = "Gloves", Label = "Gloves", Affixes = {
+            new TargetAffix { Name = "Maximum Life" }, new TargetAffix { Name = "Critical Strike Chance" }, new TargetAffix { Name = "Attack Speed" } } },
+        new TargetGear { Slot = "Ring", Affixes = { new TargetAffix { Name = "Maximum Life" } } } } };   // Max Life on 2 slots -> core
+    var upLive = new LiveBuild {
+        Gear = { new Item { Name = "Worn", Slot = "gloves", Affixes = {
+            new Affix { Text = "Maximum Life", Value = 800 }, new Affix { Text = "Attack Speed", Value = 7 } } } },          // core 1, present 2
+        Inventory = { new Item { Name = "Bag", Slot = "gloves", Affixes = {
+            new Affix { Text = "Maximum Life", Value = 900 }, new Affix { Text = "Critical Strike Chance", Value = 6 }, new Affix { Text = "Attack Speed", Value = 8 } } } } };   // core 1, present 3
+    var upSub = Substitutes.Plan(upT, upLive).First(s => s.Slot == "Gloves");
+    Check("Substitutes: a strictly-better owned item flags as an upgrade on a core tie", upSub.BestIsUpgrade);
+    var upGrp = DiffEngine.Diff(upT, upLive).Categories.First(c => c.Id == "gear").Groups.First(x => x.Name == "Gloves");
+    Check("Substitutes: agrees with DiffEngine.UpgradeItems on the gloves upgrade", upSub.BestIsUpgrade == (upGrp.UpgradeItems.Count > 0));
+}
+// aspect-only / zero-core slots must not render the nonsensical "with the 0 core affixes" copy.
+{
+    var aoSub = Substitutes.Plan(new TargetBuild { Gear = { new TargetGear { Slot = "Boots", Label = "Boots", Aspect = "Aspect of the Slime" } } }, new LiveBuild())
+        .First(s => s.Slot == "Boots");
+    Check("Substitutes: aspect-only Better rung is not '0 core affixes' nonsense", !aoSub.Ladder[1].Contains("0 core affix"));
+    Check("Substitutes: aspect-only Better rung still names the aspect to imprint", aoSub.Ladder[1].Contains("Aspect of the Slime"));
+}
 
 // ---- Activities: build-tailored recommendations from the gaps ----
 Eq("Activities: none when complete", 0, Activities.Recommend(rMet).Count);
+// A 100%-complete build whose wanted sockets are already filled (runeword) must NOT get a "Socket gems & runes"
+// rec — the flag gates on the unfilled gap, not the bare want (mirrors BuildGuide's SOCKET step).
+{
+    var tFilled = new TargetBuild { Gear = { new TargetGear { Slot = "Helm",
+        Affixes = { new TargetAffix { Name = "Maximum Life" } },
+        Sockets = { "Ritual Rune", "Invocation Rune" } } } };
+    var liveFilled = new LiveBuild { Gear = { new Item { Name = "H", Slot = "helm",
+        RunewordName = "Graceful Heart of the Oak", SocketedRunes = { "Neo", "Vex" },
+        Affixes = { new Affix { Text = "Maximum Life", Value = 900 } } } } };
+    var repFilled = DiffEngine.Diff(tFilled, liveFilled);
+    Eq("Activities(socket): build is 100%", 100, repFilled.Pct);
+    Check("Activities(socket): wanted sockets confirmed filled (runeword)",
+        repFilled.Categories.First(c => c.Id == "gear").Groups[0].SocketsDone);
+    Check("Activities(socket): no socket rec when wanted sockets already filled",
+        !Activities.Recommend(repFilled).Any(a => a.Title.Contains("Socket")));
+}
 var acts2 = Activities.Recommend(rPart);
 Check("Activities: chase the missing affixes", acts2.Any(a => a.Title.Contains("missing affixes")));
 Check("Activities: hunt the missing uniques", acts2.Any(a => a.Title.Contains("missing uniques")));
@@ -2422,6 +2462,13 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     var vDupeM = Verdicts.For(new ScoredItem { Item = mythicItem, SlotLabel = "Chest" }, dupeCtx);
     Eq("Verdict DUPE: duplicate Mythic ⇒ KeepDupe", Verdict.KeepDupe, vDupeM.V);
     Check("Verdict DUPE: Mythic action mentions a Spark", vDupeM.Action!.Contains("Spark"));
+    // a WORN Mythic + a single spare must still read KeepDupe — Owned is the equipped-excluded pool, so the worn
+    // copy is counted via VerdictContext.Worn (else it falls through to Junk and loses the Spark advice).
+    var wornMythic = new Item { Name = "Shroud of False Death", Slot = "chest", IsMythic = true, Rarity = "Mythic Unique", Equipped = true };
+    var spareMythic = new Item { Name = "Shroud of False Death", Slot = "chest", IsMythic = true, Rarity = "Mythic Unique" };
+    var wornDupeCtx = new VerdictContext(new TargetBuild(), "Rogue", new List<Item> { spareMythic }, null, new List<Item> { wornMythic });
+    var vWornDupe = Verdicts.For(new ScoredItem { Item = spareMythic, SlotLabel = "Chest" }, wornDupeCtx);
+    Eq("Verdict DUPE: worn Mythic + 1 spare ⇒ KeepDupe (worn copy counted)", Verdict.KeepDupe, vWornDupe.V);
 
     // 4b. KEEP-DUPE — a build-relevant duplicate Unique → cube-recycle
     var uniTarget = new TargetBuild { Uniques = { new TargetUnique { Name = "Etna's Lost Dagger" } } };

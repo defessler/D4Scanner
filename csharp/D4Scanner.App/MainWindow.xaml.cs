@@ -3109,7 +3109,7 @@ public partial class MainWindow : Window
         {
             var torment = _activeSlug != null ? _profiles.Get(_activeSlug)?.Torment : null;
             var ranked = UpgradeScorer.Score(_target!, live, items, torment);
-            var vctx = new VerdictContext(_target, activeClass, items, torment);
+            var vctx = new VerdictContext(_target, activeClass, items, torment, live.Gear);
             for (int i = 0; i < ranked.Count; i++)
             {
                 var fp = GearList.Fingerprint(ranked[i].Item);

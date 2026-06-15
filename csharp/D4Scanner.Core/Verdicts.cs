@@ -15,8 +15,11 @@ public enum Verdict
 public sealed record ItemVerdict(Verdict V, string Reason, string? Action);
 
 /// <summary>Cross-item context a verdict needs beyond the single scored item: the build, the active class,
-/// the owned pool (for duplicate counting), and — once known — the player's Torment tier.</summary>
-public sealed record VerdictContext(TargetBuild? Target, string? ActiveClass, IReadOnlyList<Item> Owned, int? Torment = null);
+/// the owned pool (for duplicate counting), the player's Torment tier (once known), and the currently-WORN
+/// pieces. <paramref name="Worn"/> matters for duplicate counting: <paramref name="Owned"/> is the
+/// equipped-EXCLUDED candidate pool (SharedCandidates drops the worn copy by fingerprint), so a worn-plus-spare
+/// duplicate would otherwise count as one and mis-verdict as Junk instead of KeepDupe.</summary>
+public sealed record VerdictContext(TargetBuild? Target, string? ActiveClass, IReadOnlyList<Item> Owned, int? Torment = null, IReadOnlyList<Item>? Worn = null);
 
 /// <summary>
 /// Classifies each owned, non-equipped item into a single actionable <see cref="Verdict"/> — the direct answer
@@ -60,7 +63,10 @@ public static class Verdicts
                 $"its aspect upgrades your Codex: {s.SalvageAspect}", "Salvage at the Blacksmith");
 
         // 4. KEEP-DUPE — duplicate Mythic → Spark; build-relevant duplicate Unique → cube-recycle.
-        int copies = ctx.Owned.Count(o => DiffEngine.Normalize(o.Name) == DiffEngine.Normalize(it.Name));
+        // Count the worn copy too: Owned is the equipped-excluded candidate pool, so a worn-plus-spare duplicate
+        // would otherwise read as a single copy and fall through to Junk (losing the Spark / cube-recycle advice).
+        var dupePool = ctx.Worn == null ? ctx.Owned : ctx.Owned.Concat(ctx.Worn);
+        int copies = dupePool.Count(o => DiffEngine.Normalize(o.Name) == DiffEngine.Normalize(it.Name));
         bool mythic = it.IsMythic || GearList.RarityRank(it.Rarity) == 5;
         if (mythic && copies >= 2)
             return new ItemVerdict(Verdict.KeepDupe, "a duplicate Mythic", "Salvage one for a Resplendent Spark");

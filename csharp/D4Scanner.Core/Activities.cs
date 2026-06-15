@@ -27,7 +27,7 @@ public static class Activities
         bool missAffix = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && !i.Tempered)) ?? false;
         bool needTemper = gear?.Groups.Any(g => g.Items.Any(i => i.Status == "missing" && i.Tempered)) ?? false;
         bool under      = gear?.Groups.Any(g => g.Under > 0) ?? false;
-        bool wantSockets = gear?.Groups.Any(g => g.WantSockets.Count > 0) ?? false;
+        bool wantSockets = gear?.Groups.Any(g => g.WantSockets.Count > 0 && !g.SocketsDone) ?? false;  // GAP, not bare want — mirrors BuildGuide.cs SOCKET step (don't nag once they're filled)
         bool missGlyph = r.Categories.FirstOrDefault(c => c.Id == "paragon")?.Groups
             .Any(g => g.Name == "Glyphs" && g.Items.Any(i => !i.Done)) ?? false;
 
