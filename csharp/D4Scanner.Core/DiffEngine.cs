@@ -98,21 +98,45 @@ public static class DiffEngine
         return pre + num + (af.IsPercent ? "%" : "");
     }
 
-    static Group MakeGroup(string name, List<ReqItem> items)
+    /// <summary>§5 IMPACT weight for the weighted completion % (GAP 12). Classifies a requirement row purely
+    /// from its label text (TargetAffix has no IsMultiplier flag) + the category id for whole-item rows. ORDER
+    /// MATTERS: the ends-with-' damage' (0.75) test is AFTER the multiplier test so an 'X Damage Multiplier'
+    /// never falls to 0.75, and the rank branch excludes ends-with-' damage' so 'Core Skill Damage' /
+    /// 'Skill Damage' stay additive. <paramref name="present"/> (= the row's Done flag) splits the multiplier
+    /// rule: filling an EMPTY multiplier category (§5 item 3) is worth more than stacking an occupied one.</summary>
+    static double ReqWeight(string label, string? catId, bool present)
     {
-        foreach (var i in items) if (i.Done && i.Status == "missing") i.Status = "met";  // non-gear items
+        var n = Normalize(label);
+        if (catId == "uniques" || catId == "aspects") return 3.0;                          // build-defining whole items
+        if ((n.Contains("rank") || n.EndsWith(" skill") || n.EndsWith(" skills")) && !n.EndsWith(" damage")) return 2.5;  // +Ranks
+        if (n.EndsWith(" multiplier") || n.Contains("damage multiplier")) return present ? 1.5 : 2.0;  // x-multiplier (empty beats occupied)
+        if (n == "damage" || n.EndsWith(" damage")) return 0.75;                            // plain additive +%damage
+        return 1.0;                                                                         // plain stat / life / resist / crit / speed / sockets
+    }
+
+    static Group MakeGroup(string name, List<ReqItem> items, string? catId = null)
+    {
+        foreach (var i in items)
+        {
+            if (i.Done && i.Status == "missing") i.Status = "met";  // non-gear items
+            i.Weight ??= ReqWeight(i.Label, catId, i.Done);
+        }
         return new Group
         {
             Name = name, Items = items, Total = items.Count,
             Matched = items.Count(i => i.Done),
             Under = items.Count(i => i.Status == "under"),
+            WeightedTotal = items.Sum(i => i.Weight ?? 1.0),
+            WeightedMatched = items.Where(i => i.Done).Sum(i => i.Weight ?? 1.0),
         };
     }
 
     static Category MakeCategory(string id, string name, List<Group> groups)
     {
         int m = groups.Sum(g => g.Matched), t = groups.Sum(g => g.Total), u = groups.Sum(g => g.Under);
-        return new Category { Id = id, Name = name, Groups = groups, Matched = m, Total = t, Under = u, Pct = t > 0 ? (int)Math.Round(100.0 * m / t) : 0 };
+        double wm = groups.Sum(g => g.WeightedMatched), wt = groups.Sum(g => g.WeightedTotal);
+        return new Category { Id = id, Name = name, Groups = groups, Matched = m, Total = t, Under = u,
+            WeightedMatched = wm, WeightedTotal = wt, Pct = wt > 0 ? (int)Math.Round(100.0 * wm / wt) : 0 };
     }
 
     /// <summary>Roll quality of a matched affix within its own [min..max] range, 0-100 (null if no range).</summary>
@@ -476,7 +500,7 @@ public static class DiffEngine
                 var g = target.Gear[gi];
                 var it = assigned.TryGetValue(gi, out var ai) ? ai : null;
                 var items = EvalSlot(g, it, out var extras);
-                var grp = MakeGroup(g.Label ?? g.Slot, items);
+                var grp = MakeGroup(g.Label ?? g.Slot, items, "gear");
                 grp.Kind = "gear";
                 grp.LiveItems = it != null
                     ? new() { new GearLiveItem { Name = it.Name, Rarity = it.Rarity, ItemPower = it.ItemPower, IsUnique = it.IsUnique, IsAncestral = it.IsAncestral, Aspect = it.Aspect, PowerText = it.PowerText } }
@@ -578,7 +602,7 @@ public static class DiffEngine
                 }
                 return req;
             }).ToList();
-            cats.Add(MakeCategory("uniques", "Uniques & Mythics", new() { MakeGroup("Equipped", uitems) }));
+            cats.Add(MakeCategory("uniques", "Uniques & Mythics", new() { MakeGroup("Equipped", uitems, "uniques") }));
         }
 
         // ---- Aspects ----
@@ -590,7 +614,7 @@ public static class DiffEngine
                          || live.Gear.Any(it => ItemCarriesAspect(asp, it));
                 return new ReqItem { Label = asp, Done = done, Source = done ? "vision" : null };
             }).ToList();
-            cats.Add(MakeCategory("aspects", "Aspects", new() { MakeGroup("Aspects", aitems) }));
+            cats.Add(MakeCategory("aspects", "Aspects", new() { MakeGroup("Aspects", aitems, "aspects") }));
         }
 
         // ---- Skills & key passives ----
@@ -676,10 +700,12 @@ public static class DiffEngine
         }
 
         int m = cats.Sum(c => c.Matched), t2 = cats.Sum(c => c.Total), u = cats.Sum(c => c.Under);
+        double wm = cats.Sum(c => c.WeightedMatched), wt = cats.Sum(c => c.WeightedTotal);
         return new DiffReport
         {
             TargetName = target.Name, TargetClass = target.Class,
-            Matched = m, Total = t2, Under = u, Pct = t2 > 0 ? (int)Math.Round(100.0 * m / t2) : 0,
+            Matched = m, Total = t2, Under = u, Pct = wt > 0 ? (int)Math.Round(100.0 * wm / wt) : 0,
+            WeightedMatched = wm, WeightedTotal = wt,
             Categories = cats,
         };
     }

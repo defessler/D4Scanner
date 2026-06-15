@@ -98,6 +98,15 @@ public class GearParser
     // (durability drops in combat, sell value tracks gold, scroll hints depend on tooltip height).
     // Dropped before the PowerText catch-all so item identity is content-only.
     static readonly Regex ReStatefulInfo = new(@"^(Durability:|Sell Value:|Armory Loadout$|Mousewheel scroll|Scroll (Down|Up)$)", RegexOptions.IgnoreCase);
+    // Transfigured / Unmodifiable item STATE — the terminal Horadric-Cube Transfiguration lock (doc §3).
+    // CONFIRMED from live capture-diag (2026-06-15): the tooltip voices a STANDALONE word — "Transfigured"
+    // (right after the Quality line) and/or "Unmodifiable" (right before Sell Value). After Clean strips the
+    // [ISO] prefix and Trim()s, the leading space on " Transfigured" is gone, so a fully-anchored ^…$ match is
+    // exact. ANCHORED on purpose: the Horadric-Cube MATERIAL/recipe lines that merely CONTAIN these words —
+    // "A special material used in the Horadric Cube to Transfigure Items.", "Has a 100% chance of making an
+    // item Unmodifiable.", "Transfigure Item" — are long phrases and never match ^(Transfigured|Unmodifiable)$,
+    // so a crafting panel can't manufacture a phantom locked item. Same defence pattern as ReCharmType.
+    static readonly Regex ReTransfigured = new(@"^(?:Transfigured|Unmodifiable)$", RegexOptions.IgnoreCase);
     // LoH Talisman CHARM type line: "<Rarity> Charm" / "Charm" / "Charm (Ancestral)" / "Ancestral Set Charm".
     // This is the SOLE charm detector (the "Set Charm"/"Unique Charm" TypeSlot keys were removed): being
     // ANCHORED (^…$) is what makes it precise. It matches a standalone charm-type designation but NOT a line
@@ -338,6 +347,10 @@ public class GearParser
             }
             var af = ParseAffix(ln);
             if (af != null) { item.Affixes.Add(af); continue; }
+            // Terminal Transfiguration lock (doc §3) — a standalone "Transfigured"/"Unmodifiable" state line.
+            // Set the flag and drop it before the PowerText catch-all (both words are lowercase-bearing and
+            // length 12 > 8, so they'd otherwise pollute item identity). Anchored regex excludes Cube recipes.
+            if (ReTransfigured.IsMatch(ln)) { item.Transfigured = true; continue; }
             // Stateful tooltip lines (wear/economy state, menu hints) are NOT item identity — keep them
             // out of PowerText so two captures of the same item differ only when the ITEM differs.
             // ("Durability: N/100. Tempers: a/b" never reaches here — ReTemper consumed it above.)

@@ -43,9 +43,16 @@ public static class Verdicts
 
         // 2. FIXABLE — one enchant tips it past the equipped piece (it only wins via the credit, not as-is).
         if (s.IsUpgrade && !s.RawUpgrade)
+        {
+            // A transfigured item is permanently unmodifiable — the enchant it would need can never happen.
+            if (it.Transfigured)
+                return new ItemVerdict(Verdict.Fixable,
+                    $"one enchant short of beating your equipped {slot} — but it's Transfigured (unmodifiable)",
+                    "Can't be fixed — Transfigured items are permanently unmodifiable");
             return new ItemVerdict(Verdict.Fixable,
                 $"one enchant from beating your equipped {slot}",
                 "Enchant 1 affix at the Occultist" + (s.FixDestroysGA ? " — careful, it carries a Greater Affix" : ""));
+        }
 
         // 3. KEEP-SALVAGE — its aspect upgrades the Codex (permanent, account-wide), even if the gear isn't.
         if (s.SalvageAspect != null)

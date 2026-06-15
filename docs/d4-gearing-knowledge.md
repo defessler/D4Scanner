@@ -199,9 +199,9 @@ Ancestral, codex-upgrade, GA count, required/optional affixes, specific unique, 
 
 ## 8. Gap analysis — what the app currently gets wrong (audit vs research)
 
-> **Status — reconciled against the code on 2026-06-15 (v0.90).** Most of this table is now HISTORICAL: §9's
-> plan largely shipped. Verified against the current source, a multi-agent pass found **13 of 17 gaps FIXED**
-> and **4 still open**:
+> **Status — reconciled against the code on 2026-06-15 (v0.90 → v0.91).** This table is now HISTORICAL: §9's
+> plan shipped and the final four gaps closed in v0.91. Verified against the current source, **all 17 gaps are
+> FIXED** (one explicitly-scoped exclusion noted on #11):
 >
 > - **Fixed (1–8, 10, 13–16):** real SeasonPack-driven Infernal Hordes spoils (Aether-priced Greater
 >   Equipment / Materials / Gold / Bartuc) and S13 activity copy; Lair-boss + Lair-Key framing; the Quality
@@ -209,20 +209,25 @@ Ancestral, codex-upgrade, GA count, required/optional affixes, specific unique, 
 >   uniques-temperable tempering model; the end-to-end Greater-Affix model (`Affix.IsGreater`, ×1.5 scoring,
 >   enchant-destroys-GA); roll-based unique evaluation; cube-softened fixability; native loot-filter export;
 >   talisman/seal/charm tracking; the 8-class roster (conservative bypass); accurate imprint-cost copy.
-> - **#12 — OPEN (med):** completion % is still a flat met/total row count (`DiffEngine.MakeCategory`/report
->   `Pct`); no §5 priority weighting (skill ranks / empty multiplier categories / diminishing additives all
->   weigh 1). `UpgradeScorer.GoalWeights` weights *candidate ranking* but not the headline %. Changing this
->   alters a user-facing number, so it's a product decision, not a silent cleanup.
-> - **#11 — PARTIAL (med):** `Activities.Recommend` emits tier guidance ("Push to Torment N"), but
->   `BuildGuide.Steps` takes no Torment, so individual FIND/GET/TEMPER targets aren't tier-annotated.
->   Per-target tier data is ⚑D8 (user-input-blocked); generic step caveats from `SeasonPack.TormentGates`
->   are implementable.
-> - **#9 — MOSTLY FIXED (low):** the 900 Ancestral floor is now a hard signal (`Verdicts` Junk + `UpgradeScorer`
->   ipBreaks), not just a tiebreak. Only the "900-weapon DPS step" rule remains UI-note-only
->   (`MainWindow` weapon cell), not in Core scoring.
-> - **#17 — PARTIAL (low):** the Quality>25 transfigure case is handled in GA inference (`GearParser`
->   `FinalizeGreaterAffixes`), but the permanently-unmodifiable item STATE isn't parsed/modeled — blocked on
->   capturing the real "unmodifiable" TTS line phrasing.
+> - **#12 — FIXED (v0.91, med):** completion % is now §5-weighted. `DiffEngine.ReqWeight` assigns each
+>   requirement row an IMPACT weight (build-defining unique/aspect 3.0; +Ranks 2.5; empty x-multiplier 2.0;
+>   occupied x-multiplier 1.5; plain stat 1.0; additive +%damage 0.75); `MakeGroup`/`MakeCategory`/`DiffReport`
+>   compute `Pct` from `WeightedMatched/WeightedTotal` while keeping integer `Matched/Total` for X/Y-met
+>   displays. A build missing a unique now reads lower than one missing a plain affix.
+> - **#11 — FIXED (v0.91, med):** `BuildGuide.Steps` now takes an `int? torment` and appends verb-based,
+>   gate-derived caveats — a "learn the manual first" note on TEMPER steps below the tier-2 temper-manual gate,
+>   and a Greater-Affix-odds note on IMPROVE steps below the tier-8 GA gate (from `SeasonPack.TormentGates`).
+>   Per-TARGET tier gating (which boss drops which unique at which tier) remains ⚑D8 (user-input-blocked) and
+>   is deliberately OUT OF SCOPE — FIND/GET-unique steps stay un-annotated.
+> - **#9 — FIXED (v0.91, low):** the "900-weapon DPS step" is now in Core scoring. `UpgradeScorer` adds a
+>   weapon-only, Torment-gated `weaponDpsBeats` term (reusing `ipBreaks`) that forces IsUpgrade/RawUpgrade when
+>   a ≥900 Ancestral weapon would displace a sub-floor equipped weapon — regardless of affix margin (base DPS
+>   scales with IP). The 900 floor was already a hard `Verdicts` Junk signal.
+> - **#17 — FIXED (v0.91, low):** the permanently-unmodifiable item STATE is now parsed. CONFIRMED TTS phrasing
+>   (live capture-diag 2026-06-15): a standalone `Transfigured` line (after Quality) and/or `Unmodifiable` line
+>   (before Sell Value). `GearParser` sets `Item.Transfigured` (anchored regex excludes Cube recipe/material
+>   sentences); `UpgradePath.ForSlot` returns a single LOCKED note instead of impossible craft steps; `Verdicts`
+>   downgrades the FIXABLE enchant advice. (The Quality>25 transfigure case was already handled in GA inference.)
 >
 > The original table below is preserved for history.
 

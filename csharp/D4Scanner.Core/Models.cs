@@ -76,6 +76,14 @@ public class Item
     /// no timestamp prefix (older shim / un-prefixed fixtures); callers fall back to the system clock.</summary>
     public DateTimeOffset? LogTimeUtc { get; set; }
     public ItemSource Source { get; set; }   // Tts (default/zero) or Ocr
+    /// <summary>The item has been run through the Horadric Cube's Transfiguration step and is now
+    /// PERMANENTLY UNMODIFIABLE — no temper / enchant / masterwork / socket / imprint is possible
+    /// (doc §3 "Transfiguration … permanently unmodifiable — strictly the last step"). Set by
+    /// GearParser when the tooltip voices the standalone state line "Transfigured" or "Unmodifiable".
+    /// CONFIRMED phrasing — captured live (capture-diag 2026-06-15): an equipped/owned item's tooltip
+    /// emits a bare "Transfigured" line right after the Quality line and a bare "Unmodifiable" line
+    /// right before "Sell Value". Default false = a normal, still-craftable item.</summary>
+    public bool Transfigured { get; set; }
 }
 
 /// <summary>The D4 UI surface an item was captured from. Derived from TTS context signals.</summary>
@@ -304,6 +312,7 @@ public class ReqItem
     public bool NeedIsMax { get; set; }       // Need describes the MAX-roll target ("max 1,600"), not a build requirement
     public double? ThresholdPct { get; set; } // explicit build minimum as a % of the roll range (the bar's tick); null = no minimum
     public string? RollNote { get; set; }     // advisory note for an OWNED unique: how many build secondaries its copy actually rolled (A6)
+    public double? Weight { get; set; }        // §5 IMPACT weight for the weighted completion % (GAP 12); null ⇒ default 1.0. The integer Matched/Total row counts ignore it.
 }
 
 public class GearLiveItem
@@ -337,6 +346,8 @@ public class Group
     public int SocketsWanted { get; set; }                   // sockets the build wants here (drives the bar's denominator)
     public int SocketsFilled { get; set; }                   // sockets actually filled (clamped 0..wanted); 0 when unknown
     public bool SocketsKnown { get; set; }                   // socket fill was actually captured (false ⇒ bar/text honest that D4 doesn't voice equipped-gear sockets)
+    public double WeightedMatched { get; set; }              // §5-weighted sum of Done rows (GAP 12); parallels the integer Matched
+    public double WeightedTotal { get; set; }                // §5-weighted sum of all rows (GAP 12); parallels the integer Total
 }
 
 /// <summary>A non-equipped item that beats the equipped piece for a slot — carried as a structured
@@ -360,6 +371,8 @@ public class Category
     public int Total { get; set; }
     public int Under { get; set; }
     public int Pct { get; set; }
+    public double WeightedMatched { get; set; }   // §5-weighted Done rows (GAP 12)
+    public double WeightedTotal { get; set; }     // §5-weighted all rows (GAP 12)
 }
 
 public class DiffReport
@@ -370,6 +383,8 @@ public class DiffReport
     public int Total { get; set; }
     public int Under { get; set; }
     public int Pct { get; set; }
+    public double WeightedMatched { get; set; }   // §5-weighted Done rows summed across categories (GAP 12)
+    public double WeightedTotal { get; set; }     // §5-weighted all rows summed across categories (GAP 12)
     public List<Category> Categories { get; set; } = new();
 }
 
