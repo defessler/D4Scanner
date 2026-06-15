@@ -438,13 +438,29 @@ public class GearParser
         { "Head", "Torso", "Hands", "Legs", "Feet", "Ring", "Neck",
           "Main Hand", "Off-Hand", "Ranged", "Ranged Weapon" };
 
-    // Position counters: D4 repeats the same slot header for each position (e.g. "Ring" twice).
-    // Tracking counts let us distinguish Ring #1 from Ring #2, etc.
-    readonly Dictionary<string, int> _slotPositionCounts = new(StringComparer.OrdinalIgnoreCase);
+    // Stable per-slot positions keyed by item NAME (header → name → 1-based position). D4 re-voices the same
+    // slot header ("Ring") on every hover, so a raw per-header COUNTER renumbered a ring each time it was
+    // re-hovered — inspecting ring1→ring2→ring1 made ring1 "the 3rd Ring" (position 3), and the two rings then
+    // swapped slots on the paper doll. Keying on the NAME instead: the FIRST distinct ring gets position 1, the
+    // second 2, and re-hovering a name REUSES its position, so the assignment is stable. First-seen order is the
+    // panel's slot-order voicing on open, so it also tracks the physical slots; ResetSlotPositions re-anchors
+    // on each fresh panel open.
+    readonly Dictionary<string, Dictionary<string, int>> _slotPosByName = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Reset slot-position counters so re-opening the character panel starts fresh.
-    /// Without this, the same weapon can accumulate position 1, 2, 3 … across panel opens.</summary>
-    public void ResetSlotPositions() => _slotPositionCounts.Clear();
+    /// <summary>Re-anchor slot positions so re-opening the character panel re-reads the slot order fresh.</summary>
+    public void ResetSlotPositions() => _slotPosByName.Clear();
+
+    /// <summary>The stable 1-based position for an item NAME under a multi-slot header: reuse the name's
+    /// existing position (a re-hover must NOT renumber it — that was the ring-swap bug), else assign the next
+    /// free slot in first-seen order.</summary>
+    int SlotPositionFor(string header, string name)
+    {
+        if (!_slotPosByName.TryGetValue(header, out var byName))
+            _slotPosByName[header] = byName = new(StringComparer.OrdinalIgnoreCase);
+        if (byName.TryGetValue(name, out var pos)) return pos;
+        byName[name] = pos = byName.Count + 1;
+        return pos;
+    }
 
     /// <summary>True when a cleaned line starts a NEW tooltip block or context (EQUIPPED marker, slot
     /// header, ALL-CAPS item name, session marker). The watcher's post-end-marker lookahead stops here:
@@ -460,9 +476,7 @@ public class GearParser
         _name = nc; _body = new();
         _blockEquip = _equip;
         _blockFromCharPanel = _seenSlotHeader;
-        _blockSlotPosition = _currentSlotHeader != null
-            ? _slotPositionCounts.GetValueOrDefault(_currentSlotHeader, 0)
-            : 0;
+        _blockSlotPosition = _currentSlotHeader != null ? SlotPositionFor(_currentSlotHeader, nc) : 0;
         _equip = false; _seenSlotHeader = false;
         // Don't clear _currentSlotHeader or position counts — they persist across items in the same panel view
     }
@@ -476,15 +490,8 @@ public class GearParser
         // Slot headers confirm character panel; track position for multi-slot categories (Ring, weapon)
         if (SlotHeaders.Contains(ln))
         {
-            // Reset position counter if this is a different slot type (e.g. moved from Ring to Feet)
-            if (!string.Equals(ln, _currentSlotHeader, StringComparison.OrdinalIgnoreCase))
-            {
-                // Only reset the counter for the NEW slot; leave other slots intact
-                // (user can open char panel showing different slots in sequence)
-            }
-            _currentSlotHeader = ln;
-            _slotPositionCounts[ln] = _slotPositionCounts.GetValueOrDefault(ln, 0) + 1;
-            _seenSlotHeader = true;
+            _currentSlotHeader = ln;   // the block's position is assigned BY NAME in Start() (stable on re-hover);
+            _seenSlotHeader = true;    // the header just marks which multi-slot category the next item belongs to.
             _slotHeaderAge = 0;
             return null;
         }
@@ -494,7 +501,7 @@ public class GearParser
         {
             _name = null; _body = new(); _equip = false; _blockEquip = false;
             _seenSlotHeader = false; _blockFromCharPanel = false; _currentSlotHeader = null;
-            _blockSlotPosition = 0; _slotPositionCounts.Clear();
+            _blockSlotPosition = 0; _slotPosByName.Clear();
             _lastLogTime = null;   // a new session starts fresh — don't inherit the prior session's stamp
             return null;
         }
