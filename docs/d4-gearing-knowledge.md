@@ -199,6 +199,33 @@ Ancestral, codex-upgrade, GA count, required/optional affixes, specific unique, 
 
 ## 8. Gap analysis — what the app currently gets wrong (audit vs research)
 
+> **Status — reconciled against the code on 2026-06-15 (v0.90).** Most of this table is now HISTORICAL: §9's
+> plan largely shipped. Verified against the current source, a multi-agent pass found **13 of 17 gaps FIXED**
+> and **4 still open**:
+>
+> - **Fixed (1–8, 10, 13–16):** real SeasonPack-driven Infernal Hordes spoils (Aether-priced Greater
+>   Equipment / Materials / Gold / Bartuc) and S13 activity copy; Lair-boss + Lair-Key framing; the Quality
+>   0–25 masterwork model (the `x/25 Quality` parse); the 1-slot / pick-affix / scroll-un-brick /
+>   uniques-temperable tempering model; the end-to-end Greater-Affix model (`Affix.IsGreater`, ×1.5 scoring,
+>   enchant-destroys-GA); roll-based unique evaluation; cube-softened fixability; native loot-filter export;
+>   talisman/seal/charm tracking; the 8-class roster (conservative bypass); accurate imprint-cost copy.
+> - **#12 — OPEN (med):** completion % is still a flat met/total row count (`DiffEngine.MakeCategory`/report
+>   `Pct`); no §5 priority weighting (skill ranks / empty multiplier categories / diminishing additives all
+>   weigh 1). `UpgradeScorer.GoalWeights` weights *candidate ranking* but not the headline %. Changing this
+>   alters a user-facing number, so it's a product decision, not a silent cleanup.
+> - **#11 — PARTIAL (med):** `Activities.Recommend` emits tier guidance ("Push to Torment N"), but
+>   `BuildGuide.Steps` takes no Torment, so individual FIND/GET/TEMPER targets aren't tier-annotated.
+>   Per-target tier data is ⚑D8 (user-input-blocked); generic step caveats from `SeasonPack.TormentGates`
+>   are implementable.
+> - **#9 — MOSTLY FIXED (low):** the 900 Ancestral floor is now a hard signal (`Verdicts` Junk + `UpgradeScorer`
+>   ipBreaks), not just a tiebreak. Only the "900-weapon DPS step" rule remains UI-note-only
+>   (`MainWindow` weapon cell), not in Core scoring.
+> - **#17 — PARTIAL (low):** the Quality>25 transfigure case is handled in GA inference (`GearParser`
+>   `FinalizeGreaterAffixes`), but the permanently-unmodifiable item STATE isn't parsed/modeled — blocked on
+>   capturing the real "unmodifiable" TTS line phrasing.
+>
+> The original table below is preserved for history.
+
 | # | App today | Reality (S13) | Sev |
 |---|---|---|---|
 | 1 | `InfernalHordesAdvisor` offers six "Season 8" chests (Realm/Vault/Battle/Darkness/Creation/Salvation) | None exist. Real: Material / Gold / Greater Equipment / Bartuc, priced in Aether | **high** |
