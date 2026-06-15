@@ -221,7 +221,7 @@ public static class GameDataIcons
 
     // ---- d4data texture definition (UV rects + format + dims), fetched + cached per atlas ----
     sealed class Def { public uint Fmt; public int W, H; public Dictionary<uint, (float u0, float v0, float u1, float v1)> Uv = new(); }
-    static readonly Dictionary<string, Def?> _defs = new();
+    static readonly Dictionary<string, Def> _defs = new();   // only SUCCESS is cached (line below guards null)
     static readonly object _defGate = new();
 
     static Def? GetDef(string atlas)

@@ -383,7 +383,7 @@ public static class MaxrollImporter
                     // skip an unmapped legendary-aspect key that humanized to a raw id ("BSK Barbarian 001 2")
                     // — same fall-through the uniques path already guards: a garbage name would pollute the
                     // Aspects list and the "IMPRINT …" guidance with something the player can't act on.
-                    if (an != null && !LooksLikeItemId(an)) { if (!aspects.Contains(an)) aspects.Add(an); aspectName ??= an; }
+                    if (an != null && !LooksLikeItemId(an)) { aspects.Add(an); aspectName ??= an; }   // Aspects is .Distinct()'d at the end
                 }
 
                 var affixes = ParseItemAffixes(item);

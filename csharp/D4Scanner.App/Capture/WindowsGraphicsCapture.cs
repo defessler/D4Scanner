@@ -60,10 +60,18 @@ public static class WindowsGraphicsCapture
     /// <summary>Grab a frame of Diablo IV. Bitmap is null if D4 is not running or capture fails.</summary>
     public static async Task<GrabResult> GrabAsync()
     {
-        var proc = Process.GetProcessesByName("Diablo IV").FirstOrDefault();
-        if (proc == null || proc.MainWindowHandle == IntPtr.Zero) return new(null, "none");
-        try { return new(await GrabViaWgcAsync(proc.MainWindowHandle).ConfigureAwait(false), "wgc"); }
-        catch { return new(GrabViaPrintWindow(proc.MainWindowHandle), "printwindow"); }
+        var procs = Process.GetProcessesByName("Diablo IV");
+        try { return await GrabAsync(procs.FirstOrDefault()?.MainWindowHandle ?? IntPtr.Zero).ConfigureAwait(false); }
+        finally { foreach (var p in procs) p.Dispose(); }
+    }
+
+    /// <summary>Grab from an already-resolved D4 window handle — lets a caller that already enumerated the
+    /// process (e.g. for a foreground check) avoid a second Process.GetProcessesByName per frame.</summary>
+    public static async Task<GrabResult> GrabAsync(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return new(null, "none");
+        try { return new(await GrabViaWgcAsync(hwnd).ConfigureAwait(false), "wgc"); }
+        catch { return new(GrabViaPrintWindow(hwnd), "printwindow"); }
     }
 
     static async Task<System.Drawing.Bitmap?> GrabViaWgcAsync(IntPtr hwnd)

@@ -147,7 +147,7 @@ public partial class MainWindow : Window
     // real D4 item art (runtime-fetched, cached) for a named item; null until it's downloaded
     FrameworkElement? RealIcon(string? name, double w, double h, string? id = null, long? image = null)
     {
-        var path = IconResolver.Get(name, id, image, _target?.Class);
+        var path = IconResolver.Get(name, id, image);
         if (path == null) return null;
         try
         {
@@ -228,6 +228,7 @@ public partial class MainWindow : Window
     string? _hoverKey;                // section the card is showing — don't rebuild/re-decide on a re-enter
     FrameworkElement? _dollElement;   // the paper-doll icon grid; the hover card sits BESIDE it, never over the icons
     double _dollLeft = -1, _dollRight = -1;   // its window-space X bounds, measured at hover time (-1 = unknown)
+    const double dollGap = 12, scrollPad = 18;   // hover-card placement: gap from the doll + scrollbar allowance (shared by ShowHover + ClampPopupInWindow)
 
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
     bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
@@ -518,9 +519,9 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
                     if (s.TryGetValue("logSkipPos", out var lsp) && long.TryParse(lsp, out var lspv) && lspv > 0) _logSkipToPos = lspv;
                     if (s.TryGetValue("replayFromZero", out var rfz)) _replayFromZero = rfz == "1";
-                    if (s.TryGetValue("logMaxFileMB", out var lmf) && int.TryParse(lmf, out var lmfv)) _logMaxFileMB = Math.Clamp(lmfv, 1, 256);
-                    if (s.TryGetValue("logMaxFiles", out var lmn) && int.TryParse(lmn, out var lmnv)) _logMaxFiles = Math.Clamp(lmnv, 1, 100);
-                    if (s.TryGetValue("logMaxAgeDays", out var lma) && int.TryParse(lma, out var lmav)) _logMaxAgeDays = Math.Clamp(lmav, 7, 3650);
+                    if (s.TryGetValue("logMaxFileMB", out var lmf) && int.TryParse(lmf, out var lmfv)) _logMaxFileMB = ClampLogMaxMB(lmfv);
+                    if (s.TryGetValue("logMaxFiles", out var lmn) && int.TryParse(lmn, out var lmnv)) _logMaxFiles = ClampLogMaxFiles(lmnv);
+                    if (s.TryGetValue("logMaxAgeDays", out var lma) && int.TryParse(lma, out var lmav)) _logMaxAgeDays = ClampLogMaxAgeDays(lmav);
                     if (s.TryGetValue("logOldPath", out var lop) && !string.IsNullOrEmpty(lop)) _logOldPath = lop;
                     if (s.TryGetValue("logMovedUtcTicks", out var lmt) && long.TryParse(lmt, out var lmtv)) _logMovedUtcTicks = lmtv;
                     // remembered window size (position is not restored, to avoid landing off-screen)
@@ -1698,9 +1699,7 @@ public partial class MainWindow : Window
         if (latestTick > 0)
         {
             var since = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - latestTick);
-            ago = since.TotalSeconds < 120 ? $" · last scan {(int)since.TotalSeconds}s ago"
-                : since.TotalMinutes < 60  ? $" · last scan {(int)since.TotalMinutes}m ago"
-                : $" · last scan {since.TotalHours:0.0}h ago";
+            ago = $" · last scan {RelAge(since)}";
         }
         string src = _useTts && _useCapture ? "TTS+OCR" : _useTts ? "TTS" : _useCapture ? "OCR" : "offline";
         Status.Text = _watcher is { IsCaughtUp: false }
@@ -2541,9 +2540,9 @@ public partial class MainWindow : Window
         var ageBox = RetBox(d.LogMaxAgeDays, "Archives older than this are pruned (days, 7–3650)");
         void RetChanged()
         {
-            if (int.TryParse(mbBox.Text, out var mb)) d.LogMaxFileMB = Math.Clamp(mb, 1, 256);
-            if (int.TryParse(nBox.Text, out var n)) d.LogMaxFiles = Math.Clamp(n, 1, 100);
-            if (int.TryParse(ageBox.Text, out var a)) d.LogMaxAgeDays = Math.Clamp(a, 7, 3650);
+            if (int.TryParse(mbBox.Text, out var mb)) d.LogMaxFileMB = ClampLogMaxMB(mb);
+            if (int.TryParse(nBox.Text, out var n)) d.LogMaxFiles = ClampLogMaxFiles(n);
+            if (int.TryParse(ageBox.Text, out var a)) d.LogMaxAgeDays = ClampLogMaxAgeDays(a);
             RefreshPending();
         }
         mbBox.TextChanged += (_, _) => RetChanged(); nBox.TextChanged += (_, _) => RetChanged(); ageBox.TextChanged += (_, _) => RetChanged();
@@ -2605,8 +2604,8 @@ public partial class MainWindow : Window
 
         var cacheRows = new (string label, string detail, Func<bool> exists)[]
         {
-            ("Game item icons", $"{CountFiles(gameIconDir, "*.png")} files — extracted from your D4 install; re-extract lazily",
-                () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0),
+            ("Game item icons", $"{(Directory.Exists(gameIconDir) ? Directory.GetFiles(gameIconDir, "*.png").Length : 0)} files — extracted from your D4 install; re-extract lazily",
+                () => Directory.Exists(gameIconDir) && Directory.GetFiles(gameIconDir, "*.png").Length > 0),   // top-level, matching the clear below
             ("Build index", "Maxroll guide list (build_index.json) — re-fetched right after clearing",
                 () => File.Exists(BuildIndex.CachePath) || File.Exists(IconResolver.IndexPath)),
             ("Maxroll data", "Planner item DB (also resolves gear names → icons) — re-downloaded right after clearing",
@@ -2780,9 +2779,9 @@ public partial class MainWindow : Window
 
         // staged retention config (applies to the next rotation/prune; prune archives right away)
         bool retentionChanged = d.LogMaxFileMB != _logMaxFileMB || d.LogMaxFiles != _logMaxFiles || d.LogMaxAgeDays != _logMaxAgeDays;
-        _logMaxFileMB = Math.Clamp(d.LogMaxFileMB, 1, 256);
-        _logMaxFiles = Math.Clamp(d.LogMaxFiles, 1, 100);
-        _logMaxAgeDays = Math.Clamp(d.LogMaxAgeDays, 7, 3650);
+        _logMaxFileMB = ClampLogMaxMB(d.LogMaxFileMB);
+        _logMaxFiles = ClampLogMaxFiles(d.LogMaxFiles);
+        _logMaxAgeDays = ClampLogMaxAgeDays(d.LogMaxAgeDays);
         if (retentionChanged) try { LogStore.Prune(_log, _logMaxFiles, _logMaxAgeDays); } catch { }
 
         // (cache clearing — including clearing logs — is NOT applied here; the cache card's own
@@ -2834,7 +2833,17 @@ public partial class MainWindow : Window
         AppLog("cache cleared: " + string.Join(", ", new[] { "icons", "build-index", "maxroll", "live-gear" }.Where((_, i) => sel[i])));
     }
 
-    static int CountFiles(string dir, string pat = "*") { try { return Directory.Exists(dir) ? Directory.GetFiles(dir, pat, SearchOption.AllDirectories).Length : 0; } catch { return 0; } }
+    // "Ns/Nm/N.Nh ago" — the shared recency formatter (call sites prepend their own " · "/"last scan " prefix).
+    // The separate 4-tier formatter with a "…d ago" day tier is deliberately NOT folded in here.
+    static string RelAge(TimeSpan ts) =>
+        ts.TotalSeconds < 120 ? $"{(int)ts.TotalSeconds}s ago"
+        : ts.TotalMinutes < 60 ? $"{(int)ts.TotalMinutes}m ago"
+        : $"{ts.TotalHours:0.0}h ago";
+
+    // Log-retention clamp ranges — the single source of truth for the bounds, shared by load / draft / apply.
+    static int ClampLogMaxMB(int v) => Math.Clamp(v, 1, 256);
+    static int ClampLogMaxFiles(int v) => Math.Clamp(v, 1, 100);
+    static int ClampLogMaxAgeDays(int v) => Math.Clamp(v, 7, 3650);
 
     // ---- TTS capture diagnostics ----
     // Re-runs the full parse → classify → dedup pipeline over the live log and shows every stage,
@@ -3338,12 +3347,7 @@ public partial class MainWindow : Window
 
             // age string
             string age = item.LastScannedTicks > 0
-                ? TimeSpan.FromTicks(now - item.LastScannedTicks) is var ts
-                  ? ts.TotalSeconds < 120 ? $"{(int)ts.TotalSeconds}s ago"
-                  : ts.TotalMinutes < 60  ? $"{(int)ts.TotalMinutes}m ago"
-                  : $"{ts.TotalHours:0.0}h ago"
-                  : "?"
-                : "?";
+                ? RelAge(TimeSpan.FromTicks(now - item.LastScannedTicks)) : "?";
 
             // portrait icon with rarity overlay (same as paper doll)
             var iconGrid = new Grid { Width = 54, Height = 76, Margin = new Thickness(0, 0, 10, 0) };
@@ -4546,7 +4550,6 @@ public partial class MainWindow : Window
         // Measure the paper-doll icon grid so the card sits in the CLEAR space beside it (the rail/margin),
         // never over the icons. cardW is budgeted to that gap; falls back to the old full-width budget when the
         // doll isn't measured (e.g. a non-doll hover) or the window is too narrow for a readable card beside it.
-        const double dollGap = 12, scrollPad = 18;
         _dollLeft = _dollRight = -1;
         // Only measure when this hover's target is genuinely inside the CURRENT doll grid (guards a stale ref
         // from a previous render / a non-doll hover, which would otherwise place the card at a phantom doll).
@@ -4602,7 +4605,6 @@ public partial class MainWindow : Window
         try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
         catch { return fallback; }
         double w = ActualWidth, h = ActualHeight;
-        const double dollGap = 12, scrollPad = 18;
         double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + scrollPad;   // stable width (+scrollbar allowance)
         // Sit BESIDE the whole doll (clears every icon), not beside the hovered cell; fall back to the cell when
         // the doll wasn't measured. Vertically the card still tracks the hovered icon's row.
@@ -4740,9 +4742,7 @@ public partial class MainWindow : Window
             if (rawItem?.LastScannedTicks > 0)
             {
                 var ago = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - rawItem.LastScannedTicks);
-                age = ago.TotalSeconds < 120 ? $" · {(int)ago.TotalSeconds}s ago"
-                    : ago.TotalMinutes < 60  ? $" · {(int)ago.TotalMinutes}m ago"
-                    : $" · {ago.TotalHours:0.0}h ago";
+                age = $" · {RelAge(ago)}";
             }
             string dbgTxt = it != null
                 ? $"{it.Rarity ?? "?"} · IP {it.ItemPower}{age} · {s.Key}"
@@ -4891,9 +4891,7 @@ public partial class MainWindow : Window
             foreach (var i in g.Items) sp.Children.Add(AffixRow(i));
             AddNotInBuildRows(sp, g.ExtraAffixes, it?.Rarity);
             // a unique's power (or a legendary's aspect) so its substance shows in the list view too
-            if (it?.PowerText is { Count: > 0 } && it.IsUnique)
-                sp.Children.Add(AspectBox(it.PowerText, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
-            else if (!string.IsNullOrEmpty(it?.Aspect)) sp.Children.Add(AspectBox(it!.Aspect!));
+            if (PowerBoxFor(it) is UIElement pb) sp.Children.Add(pb);
         }
         else
         {
@@ -5183,6 +5181,16 @@ public partial class MainWindow : Window
         return null;
     }
 
+    // Same power/aspect box for the live-item view model (the compare card's HAVE side works off GearLiveItem).
+    UIElement? PowerBoxFor(GearLiveItem? it)
+    {
+        if (it == null) return null;
+        if (it.PowerText is { Count: > 0 } pt && it.IsUnique)
+            return AspectBox(pt, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique);
+        if (!string.IsNullOrEmpty(it.Aspect)) return AspectBox(it.Aspect!);
+        return null;
+    }
+
     static string Sub(GearLiveItem it) =>
         string.Join("   ·   ", new[] { it.IsAncestral ? "Ancestral" : "", it.Rarity ?? "", it.ItemPower != null ? "Item Power " + it.ItemPower : "" }.Where(x => x.Length > 0));
 
@@ -5213,9 +5221,7 @@ public partial class MainWindow : Window
         // the equipped item's OFF-BUILD affixes, rendered like the build rows but flagged NOT IN BUILD
         AddNotInBuildRows(eq, g.ExtraAffixes, it?.Rarity);
         // the item's unique power (or legendary aspect) — so a unique's substance is always visible
-        if (it?.PowerText is { Count: > 0 } && it.IsUnique)
-            eq.Children.Add(AspectBox(it.PowerText, "UNIQUE POWER", GearList.RarityRank(it.Rarity) == 5 ? RMythic : RUnique));
-        else if (!string.IsNullOrEmpty(it?.Aspect)) eq.Children.Add(AspectBox(it!.Aspect!));
+        if (PowerBoxFor(it) is UIElement pb) eq.Children.Add(pb);
         // EQUIPPED panel art: resolve the player's actual item by NAME (real game art, not the build template)
         var liveIt = it != null ? EffectiveLive().Gear.FirstOrDefault(x => DiffEngine.PhraseMatch(x.Name, it.Name)) : null;
         long? eqIconImg = it != null ? BaseIconIndex.HandleFor(it.Name, liveIt?.ItemType, liveIt?.Slot) : null;

@@ -71,8 +71,11 @@ public sealed class TombstoneStore
     {
         int n = 0;
         foreach (var it in items)
-            if (_stones.TryGetValue(KeyFor(it), out var tick) && GearList.AcquiredTicks(it) > tick)
-            { _stones.Remove(KeyFor(it)); _dirty = true; n++; }
+        {
+            var key = KeyFor(it);
+            if (_stones.TryGetValue(key, out var tick) && GearList.AcquiredTicks(it) > tick)
+            { _stones.Remove(key); _dirty = true; n++; }
+        }
         return n;
     }
 
