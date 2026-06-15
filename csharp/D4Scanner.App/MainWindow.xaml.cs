@@ -3078,6 +3078,11 @@ public partial class MainWindow : Window
     /// expanded and scrolled into view — the upgrade badge / "better in your bags" jump target.</param>
     void ShowInventoryModal(string? expandFp = null)
     {
+        // Tear down any root-layer modal already up (a prior All-Items overlay, or the Update prompt) before
+        // building a new one — otherwise a second Alt+I (or a re-open click while open) STACKS a second overlay
+        // and overwrites _rootModalClose, so the first Esc closes only the top copy and strands the one beneath.
+        // No-op when nothing is open; the Close()+re-open call sites already null _rootModalClose first.
+        _rootModalClose?.Invoke();
         var overlay = new Grid { IsHitTestVisible = true };
         var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(0xBB, 0, 0, 0)) };
         void Close() { RootLayer.Children.Remove(overlay); _hoverPopup.IsOpen = false; _rootModalClose = null; }
