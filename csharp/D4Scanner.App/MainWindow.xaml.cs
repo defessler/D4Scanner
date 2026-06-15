@@ -223,6 +223,9 @@ public partial class MainWindow : Window
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
     FrameworkElement? _hoverTarget;   // the slot currently driving _hoverPopup, for the leave-both hit-test
     System.Windows.Threading.DispatcherTimer? _hoverCloseTimer;   // deferred close so the card doesn't flicker
+    double _hoverCardW;               // the open card's width — a STABLE input to the left/right placement
+    bool? _hoverOpenLeft;             // side the card committed to this hover; kept across re-placements (hysteresis)
+    string? _hoverKey;                // section the card is showing — don't rebuild/re-decide on a re-enter
 
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
     bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
@@ -4541,6 +4544,9 @@ public partial class MainWindow : Window
         sv.MouseLeave += (_, _) => ScheduleHoverClose();
         _hoverPopup.Child = sv;
         _hoverTarget = target as FrameworkElement;
+        _hoverCardW = cardW;        // a fixed width for the placement decision (independent of the live popup size)
+        _hoverKey = s.Key;
+        _hoverOpenLeft = null;      // fresh card → re-decide the side once, then hold it (hysteresis below)
         _hoverPopup.PlacementTarget = target;
         // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the slot,
         // flip LEFT if that would overflow, then clamp BOTH axes inside the window (a tall card near the
@@ -4555,8 +4561,11 @@ public partial class MainWindow : Window
 
     /// <summary>Placement callback that keeps a Popup's child fully inside the window (hence on-screen):
     /// open to the RIGHT of the target, flip LEFT if that overflows, then clamp both axes into the window.
-    /// Everything is in device-independent units — the same space TransformToAncestor and the callback use —
-    /// so no DPI/monitor math is needed; the window being on-screen makes within-window == on-screen.</summary>
+    /// Two anti-oscillation measures keep the card from blinking side-to-side: (1) a STABLE width (the card's
+    /// own width + scrollbar allowance) instead of the live popup size, whose ~17px jump when the auto vertical
+    /// scrollbar appears/disappears was flipping the side; (2) HYSTERESIS — once a side is chosen it's held
+    /// across re-placements and only flips when it genuinely stops fitting. DIP units throughout, so the window
+    /// being on-screen makes within-window == on-screen — no DPI/monitor math needed.</summary>
     System.Windows.Controls.Primitives.CustomPopupPlacement[] ClampPopupInWindow(UIElement target, Size popupSize, Size targetSize)
     {
         var fallback = new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
@@ -4566,9 +4575,18 @@ public partial class MainWindow : Window
         try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
         catch { return fallback; }
         double w = ActualWidth, h = ActualHeight;
-        double x = tw.X + targetSize.Width;                                     // open to the right…
-        if (x + popupSize.Width > w) x = tw.X - popupSize.Width;                // …flip left if it overflows
-        x = Math.Max(0, Math.Min(x, w - popupSize.Width));                      // clamp within the window width
+        double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + 20;     // stable width (+scrollbar allowance)
+        double rightX = tw.X + targetSize.Width;                               // card left edge if opened right
+        double leftX  = tw.X - pw;                                              // card left edge if opened left
+        bool rightFits = rightX + pw <= w, leftFits = leftX >= 0;
+        bool openLeft = _hoverOpenLeft switch
+        {
+            true  => !(!leftFits && rightFits),    // was left → hold unless left now fails AND right fits
+            false => !rightFits && leftFits,       // was right → flip only if right fails AND left fits
+            null  => !rightFits && leftFits,       // first decision → prefer right; left only if right overflows
+        };
+        _hoverOpenLeft = openLeft;
+        double x = Math.Max(0, Math.Min(openLeft ? leftX : rightX, w - pw));   // clamp within the window width
         double y = Math.Max(0, Math.Min(tw.Y, h - popupSize.Height));          // align top, slide up if needed
         return new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
             new Point(x - tw.X, y - tw.Y), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
@@ -4717,7 +4735,14 @@ public partial class MainWindow : Window
             Cursor = System.Windows.Input.Cursors.Hand,
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
-        b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; CancelHoverClose(); ShowHover(s, b); };
+        // Re-enter guard: if the card is already showing THIS slot, just keep it open — don't rebuild and
+        // re-run placement (which is what let the side oscillate). Only (re)build for a new slot or a closed card.
+        b.MouseEnter += (_, _) =>
+        {
+            if (!pinned) b.Background = Card;
+            CancelHoverClose();
+            if (_hoverKey != s.Key || !_hoverPopup.IsOpen) ShowHover(s, b);
+        };
         b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; ScheduleHoverClose(); };
         b.MouseLeftButtonUp += (_, _) =>
         {
