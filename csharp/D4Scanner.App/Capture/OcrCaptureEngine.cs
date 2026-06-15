@@ -18,7 +18,8 @@ public sealed class OcrCaptureEngine : IDisposable
     public event Action<LiveBuild>? Updated;
 
     readonly int _idleMs;
-    const int ActiveMs = 3000;   // adaptive cadence: scan fast WHILE a panel is open (catch sub-second hovers)
+    const int ActiveMs = 1500;   // adaptive cadence: scan fast while GEAR is on screen (a panel OR a floating item
+                                 // tooltip) so a hover sequence (ring1→ring2→ring1) is caught, not lost between scans
     readonly PanelOracle? _oracle;   // shared with the TTS LogWatcher: OCR Observes the panel it visually sees
     readonly Func<bool>? _diagEnabled;   // captureDiag setting, live-readable (like _debugMode — no engine rebuild on toggle)
     readonly string? _diagDir;           // %LOCALAPPDATA%\d4scanner\capture-diag
@@ -27,7 +28,8 @@ public sealed class OcrCaptureEngine : IDisposable
     volatile bool _disposed;             // cooperative shutdown: fast cadence widens the dispose-mid-scan window
     ulong _lastHash;
     string? _lastPanel;                  // panel from the last OCR'd frame — re-Observed on a hash-skipped frame so a
-    bool _lastPanelOpen;                 // static character sheet keeps the oracle warm (else the worn-rescue goes stale)
+    bool _lastGearVisible;               // gear on screen last scan (a panel OR an item tooltip) → drives the fast
+                                         // cadence; a static character sheet also keeps the oracle warm (rescue freshness)
     string? _lastPngPanel; long _lastPngTicks;   // PNG throttle: only on a panel transition + wall-clock spacing
     readonly List<Item> _orderedGear = new();
     readonly List<Item> _orderedInv  = new();
@@ -37,7 +39,7 @@ public sealed class OcrCaptureEngine : IDisposable
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
-    public OcrCaptureEngine(PanelOracle? oracle = null, int intervalMs = 20_000,
+    public OcrCaptureEngine(PanelOracle? oracle = null, int intervalMs = 6_000,
         Func<bool>? diagEnabled = null, string? diagDir = null, Func<string?>? logPath = null)
     { _oracle = oracle; _idleMs = intervalMs; _diagEnabled = diagEnabled; _diagDir = diagDir; _logPath = logPath; }
 
@@ -60,7 +62,7 @@ public sealed class OcrCaptureEngine : IDisposable
         finally
         {
             if (!_disposed)
-                try { _timer?.Change(CaptureDiag.NextIntervalMs(_lastPanelOpen, ActiveMs, _idleMs), System.Threading.Timeout.Infinite); }
+                try { _timer?.Change(CaptureDiag.NextIntervalMs(_lastGearVisible, ActiveMs, _idleMs), System.Threading.Timeout.Infinite); }
                 catch (ObjectDisposedException) { }
         }
     }
@@ -106,7 +108,12 @@ public sealed class OcrCaptureEngine : IDisposable
             var lines = result.Lines.Select(l => l.Text).ToList();
             var panel = PanelOracle.Detect(lines);   // computed ONCE — fed to the oracle, the items, AND the diag
             _oracle?.Observe(panel, DateTime.UtcNow.Ticks);
-            _lastPanel = panel; _lastPanelOpen = panel != null;
+            // Gear-visible drives the fast cadence. A floating item tooltip often has NO panel chrome (Detect
+            // returns null while the tooltip occludes the sheet), so key off the tooltip's "Item Power" line too —
+            // else a ring hover sits on the idle cadence and falls between scans (the measured reason ring captures
+            // were sparse: tooltips kept landing 20 s apart because their frame had panel==null).
+            bool hasTooltip = lines.Any(l => ReItemPower.IsMatch(l));
+            _lastPanel = panel; _lastGearVisible = panel != null || hasTooltip;
 
             ProcessOcrLines(lines, panel);
 

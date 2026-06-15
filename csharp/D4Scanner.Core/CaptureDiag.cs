@@ -43,10 +43,12 @@ public static class CaptureDiag
     public static DiagRecord? FromJson(string json)
     { try { return JsonSerializer.Deserialize<DiagRecord>(json, JsonOpts); } catch { return null; } }
 
-    /// <summary>Adaptive cadence: scan fast while a panel is open (to catch sub-second hovers for the
-    /// fusion), idle during gameplay. Keyed on the LAST SUCCESSFUL scan's panel — never a frame-hash-skipped
-    /// or not-foreground tick (those carry no fresh panel signal and must not flip the cadence to idle).</summary>
-    public static int NextIntervalMs(bool panelOpen, int activeMs, int idleMs) => panelOpen ? activeMs : idleMs;
+    /// <summary>Adaptive cadence: scan fast while GEAR is on screen (a panel OR a floating item tooltip) to
+    /// catch a hover sequence for the fusion, idle during gameplay. Keyed on the LAST SUCCESSFUL scan's gear
+    /// visibility — never a frame-hash-skipped or not-foreground tick (those carry no fresh signal and must not
+    /// flip the cadence to idle). NB: a tooltip frame often has no panel chrome, so the caller must OR in an
+    /// "Item Power" tooltip signal, not just a detected panel — else ring/weapon hovers fall between idle scans.</summary>
+    public static int NextIntervalMs(bool gearVisible, int activeMs, int idleMs) => gearVisible ? activeMs : idleMs;
 
     /// <summary>The whole-second UTC string the shim writes (<c>YYYY-MM-DDTHH:MM:SSZ</c>) — the literal
     /// key for joining an OCR record to TTS log lines.</summary>
