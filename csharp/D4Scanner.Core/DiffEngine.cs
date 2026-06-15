@@ -335,12 +335,15 @@ public static class DiffEngine
     /// <see cref="ScoreSlot"/> isn't needed.) No build minimum ⇒ presence is met.</summary>
     public static bool AffixMet(TargetAffix aff, Item item)
     {
+        // Evaluate ALL matching affixes (don't return on the first): an umbrella like "All Stats" satisfies a
+        // specific "Dexterity" want, so a low umbrella ordered before a min-meeting specific must not mask it.
+        // Mirrors MatchIndex's evaluate-all semantics. Only fail after no matching affix clears the minimum.
         foreach (var x in item.Affixes)
             if (AffixSatisfies(aff.Name, x))
             {
-                if (aff.Min != null) return (x.Value ?? 0) >= aff.Min.Value;
-                if (aff.MinPercent != null) { var pct = RollPct(x); return pct != null && pct.Value >= aff.MinPercent.Value; }
-                return true;
+                if (aff.Min != null) { if ((x.Value ?? 0) >= aff.Min.Value) return true; }
+                else if (aff.MinPercent != null) { var pct = RollPct(x); if (pct != null && pct.Value >= aff.MinPercent.Value) return true; }
+                else return true;   // no build minimum ⇒ presence is met
             }
         return false;
     }

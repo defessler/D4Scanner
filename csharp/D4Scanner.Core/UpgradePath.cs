@@ -85,8 +85,11 @@ public static class UpgradePath
                 "Neathiron + gold", null));
         }
 
-        // 5. SOCKET — empty sockets, or fewer sockets than the slot can hold.
-        int capSockets = pack.SocketsFor(sb);
+        // 5. SOCKET — empty sockets, or fewer sockets than the slot can hold. TypeSlot maps every weapon (1H and
+        // 2H) to "weapon", so route 2H weapons to the weapon2h capacity (2) — else a 2H with one socket never gets
+        // the "add the 2nd socket" step (the weapon2h pack entry was otherwise dead). Handedness via IsTwoHand,
+        // matching the masterwork/imprint branches that already split on it.
+        int capSockets = pack.SocketsFor(sb == "weapon" && IsTwoHand(it) ? "weapon2h" : sb);
         if (it.EmptySockets > 0)
             steps.Add(new PathStep("SOCKET", $"Fill {it.EmptySockets} empty socket{(it.EmptySockets == 1 ? "" : "s")} at the Jeweler",
                 "a gem or rune each", null));

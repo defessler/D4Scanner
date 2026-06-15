@@ -53,6 +53,11 @@ Check("AffixMet absent affix is false",
     !DiffEngine.AffixMet(new TargetAffix { Name = "Armor" }, item));
 Check("AffixMet presence with no minimum is met",
     DiffEngine.AffixMet(new TargetAffix { Name = "Dexterity" }, item));
+// AffixMet must evaluate ALL matching affixes, not return on the first: an umbrella ("All Stats" 80) satisfies a
+// specific "Dexterity" want via UmbrellaCovers, but a later specific Dexterity 150 meets the >=100 minimum.
+Check("AffixMet: a specific Dexterity 150 meets >=100 despite an earlier failing All Stats 80 umbrella",
+    DiffEngine.AffixMet(new TargetAffix { Name = "Dexterity", Min = 100 },
+        new Item { Slot = "ring", Affixes = { new Affix { Text = "All Stats", Value = 80 }, new Affix { Text = "Dexterity", Value = 150 } } }));
 
 // ---- Diff: a fully-met build ----
 var target = new TargetBuild
@@ -258,6 +263,16 @@ Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains
     // a malformed/partial override parses without throwing and overrides what it specifies
     var ov = SeasonPack.FromJson("{ \"season\": 99, \"seasonName\": \"Test\" }");
     Eq("SeasonPack: override JSON parses", 99, ov.Season);
+    // A user override with an EXPLICIT "key": null deserializes the property to null (System.Text.Json overrides
+    // the `= new()` initializer), unlike an ABSENT key. Parse() coalesces every collection so accessors and the
+    // guidance/activities render can't NRE on a corrupt override (the documented "Current never throws" invariant).
+    var spNull = SeasonPack.FromJson("{ \"season\": 99, \"hordesSpoils\": null, \"activities\": null, \"pitToTorment\": null, \"socketCapacity\": null, \"tormentGates\": null }");
+    Check("SeasonPack: explicit-null hordesSpoils tolerated", spNull.Spoil("gear").Name.Length > 0);
+    Check("SeasonPack: explicit-null activities tolerated", spNull.Activity("uniques").Title.Length > 0);
+    Eq("SeasonPack: explicit-null pitToTorment tolerated", -1, spNull.PitForTorment(1) ?? -1);
+    Eq("SeasonPack: explicit-null socketCapacity tolerated", 0, spNull.SocketsFor("helm"));
+    Check("SeasonPack: explicit-null tormentGates tolerated (coalesced to empty list)",
+        spNull.TormentGates != null && spNull.TormentGates.FirstOrDefault(g => g.Tier > 5) == null);
 }
 
 // ---- Stale-term tripwire: guidance output must never reintroduce pre-2026 mechanics ----
@@ -855,6 +870,33 @@ Check("LoH charm: 'Set Charm' still recognized (regression)", GearParser.ParseTo
     foreach (var l in raw) { var r = fseg.Feed(l); if (r != null) fed = r; }
     Check("ParseAffix #1: real PHOBA block survives Feed (was dropped by the Rarity gate)",
         fed != null && fed.Slot == "charm" && fed.ItemType == "Set Charm");
+}
+
+// A Set Charm voices NO rarity word, so the type-detect gate must stop re-running once the Slot is known — else a
+// slot-word inside a flavor / set-bonus line flips the slot charm→offhand and LooksLikeItem silently drops it.
+{
+    var nilfur = GearParser.ParseTooltipLines(new[] {
+        "MLOR OF THE NARROW EYE", "Set Charm",
+        "+504 Cold Resistance [416 - 523]", "+16% Movement Speed [13 - 16]%",
+        "Nilfur's Narrow Eye (0/5). (2) Set:. Marksman Skills deal 200%[x] increased damage.",
+        "\"Peer out to the horizon and focus upon a single spot.\" -Nilfur",   // 'focus' = a TypeSlot key
+        "Requires Level 70Rogue. Only. Unique Equipped. Lord of Hatred Item" });
+    Check("Charm with a slot-word ('focus') in flavor text stays a charm (not flipped to offhand)",
+        nilfur != null && nilfur.Slot == "charm" && nilfur.ItemType == "Set Charm");
+    Check("...and its affix survives the type-detect gate",
+        nilfur != null && nilfur.Affixes.Any(a => a.Text == "Cold Resistance" && a.Value == 504));
+}
+
+// Charms/seals must surface on the LIVE FeedChunk path, not only via replay/BuildFromLines — the Commit router
+// used to drop them into an empty branch, leaving the Talisman card always empty in live play.
+{
+    var w = new LogWatcher(Path.GetTempFileName());
+    w.FeedChunk(new[] {
+        "[2026-06-13T10:00:00Z]=== d4scanner tts shim attached v2 ===",
+        "[2026-06-13T10:00:01Z]Talisman", "[2026-06-13T10:00:01Z]Charm", "[2026-06-13T10:00:01Z]EQUIPPED",
+        "[2026-06-13T10:00:01Z]PHOBA OF THE SIGHTLESS", "[2026-06-13T10:00:01Z]Set Charm",
+        "[2026-06-13T10:00:01Z]+50 Dexterity [1 - 5]", "[2026-06-13T10:00:01Z]Right mouse button" });
+    Eq("Live FeedChunk surfaces a charm to TalismanView (was dropped by Commit's empty branch)", 1, TalismanView.From(w.Build).Charms.Count);
 }
 
 // HORADRIC CUBE PHANTOM CHARM — the cube's "Reroll Set Charm" recipe panel voices "1x Set Charm" (a material
@@ -2494,6 +2536,17 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
             Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
     Check("UpgradePath: SOCKET suggests adding one when below the slot's capacity",
         Step(addSock, "SOCKET")!.Text.Contains("Add a socket") && Step(addSock, "SOCKET")!.Cost!.Contains("Scattered Prism"));
+
+    // 2H weapons hold 2 sockets (weapon2h), but TypeSlot maps every weapon to "weapon" (cap 1) — so a 2H with one
+    // socket must STILL get the "add the 2nd socket" step (handedness-aware capacity); a 1H at its cap must not.
+    var twoHSock = UpgradePath.ForSlot(new TargetGear { Slot = "Weapon", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
+        new Item { Name = "2H Blade", Slot = "weapon", ItemType = "Two-Handed Sword", IsAncestral = true, Quality = 25, SocketCount = 1, EmptySockets = 0,
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
+    Check("UpgradePath: a 2H weapon below its 2-socket cap is told to add the 2nd socket", twoHSock.Any(s => s.Verb == "SOCKET"));
+    var oneHSock = UpgradePath.ForSlot(new TargetGear { Slot = "Weapon", Affixes = { new TargetAffix { Name = "Maximum Life" } } },
+        new Item { Name = "1H Blade", Slot = "weapon", ItemType = "Sword", IsAncestral = true, Quality = 25, SocketCount = 1, EmptySockets = 0,
+            Affixes = { new Affix { Text = "Maximum Life", Value = 1500 } } });
+    Check("UpgradePath: a 1H weapon at its 1-socket cap gets NO add-socket step (fix is weapon2h-only)", !oneHSock.Any(s => s.Verb == "SOCKET"));
 
     // capstone reroll when masterworked to cap but the +50% landed off-build
     var capItem = new Item { Name = "Cap Helm", Slot = "helm", IsAncestral = true, Quality = 25, CapstoneAffix = "Thorns",

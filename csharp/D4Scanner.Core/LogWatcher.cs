@@ -286,8 +286,11 @@ public sealed class LogWatcher : IDisposable
     void Commit(Item item)
     {
         var key = (item.Slot ?? "?") + ":" + item.RawName;
-        if (item.Slot is "charm" or "seal" or "rune") { /* Season 8 items routed to dedicated collections in Build */ }
-        else if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
+        // charms/seals/runes flow through the normal accumulator like any other piece — ClassifyContext stamps
+        // worn charms/seals Equipped=true, LatestPerSlot caps charms at 6, and TalismanView reads them back from
+        // Gear+Inventory. (They used to hit an empty branch here that routed them nowhere, so the live Talisman
+        // card was always empty — only the replay/BuildFromLines path surfaced them.)
+        if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
         else
         {
             _invOrdered.Add(item);
