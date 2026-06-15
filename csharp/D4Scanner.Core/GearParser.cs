@@ -56,9 +56,6 @@ public class GearParser
     static readonly Regex ReImprinted = new(@"^Imprinted:\s*(.+)", RegexOptions.IgnoreCase);
     // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
     // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
-    static readonly Regex ReInBags = new(@"^In bags:\s*(\d+)", RegexOptions.IgnoreCase);
-    // Runeword notation from sockets: "NeoVex (200/100) - Graceful Heart of the Oak"
-    // Group 1 = rune-pair code (e.g. "NeoVex"), group 2 = runeword name after the dash
     static readonly Regex ReRuneword = new(@"^([A-Z][a-zA-Z]{1,8})\s*\(\d+/\d+\)\s*-\s*(.+)", RegexOptions.None);
     // Weapon implicit stats (base damage / attack speed) — voiced like affixes but never rollable or
     // wanted. Dropped so a target "Damage" can't false-match a weapon's "Weapon Damage" implicit.
@@ -155,7 +152,9 @@ public class GearParser
     }
 
     static string DisplayName(string raw) =>
-        Regex.Replace(CultureInfo.CurrentCulture.TextInfo.ToTitleCase(raw.ToLowerInvariant()),
+        // InvariantCulture, not CurrentCulture: title-casing under a Turkish/Azeri locale maps an initial 'i'
+        // differently, which would fork dedup/display keys by machine locale — Core must stay deterministic.
+        Regex.Replace(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(raw.ToLowerInvariant()),
             @"'(\w)", m => "'" + m.Groups[1].Value.ToLowerInvariant());
 
     static double? ToNum(string? x)

@@ -259,7 +259,6 @@ public partial class MainWindow : Window
     // auto-updater state
     System.Threading.Timer? _updateTimer;
     string? _pendingUpdateTag;          // tag of a downloaded update ready to apply
-    string? _skipUpdateVersion;         // user-chosen "remind me later" version (persisted)
     bool _updateModalOpen;
     Action? _rootModalClose;   // Esc closes whichever RootLayer modal is open (inventory / update); set on open, cleared on close
 
@@ -517,7 +516,6 @@ public partial class MainWindow : Window
                     if (s.TryGetValue("captureDiag", out var cd)) _captureDiag = cd == "1";
                     if (s.TryGetValue("useTts", out var ut)) _useTts = ut != "0";
                     if (s.TryGetValue("useCapture", out var uc)) _useCapture = uc == "1";
-                    if (s.TryGetValue("skipUpdateVersion", out var suv) && !string.IsNullOrEmpty(suv)) _skipUpdateVersion = suv;
                     if (s.TryGetValue("logSkipPos", out var lsp) && long.TryParse(lsp, out var lspv) && lspv > 0) _logSkipToPos = lspv;
                     if (s.TryGetValue("replayFromZero", out var rfz)) _replayFromZero = rfz == "1";
                     if (s.TryGetValue("logMaxFileMB", out var lmf) && int.TryParse(lmf, out var lmfv)) _logMaxFileMB = Math.Clamp(lmfv, 1, 256);
@@ -557,7 +555,7 @@ public partial class MainWindow : Window
             double sw = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Width : (ActualWidth > 0 ? ActualWidth : Width);
             double sh = mx && !RestoreBounds.IsEmpty ? RestoreBounds.Height : (ActualHeight > 0 ? ActualHeight : Height);
             var settingsJson = JsonSerializer.Serialize(
-                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["captureDiag"] = _captureDiag ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["skipUpdateVersion"] = _skipUpdateVersion, ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() });
+                new Dictionary<string, string?> { ["target"] = _targetPath, ["log"] = _log, ["url"] = _lastUrl, ["detailView"] = _detailView, ["src"] = _lastImportInput, ["recent"] = string.Join("|", _recentSlugs), ["zoom"] = _uiScale.ToString(inv), ["winW"] = sw.ToString(inv), ["winH"] = sh.ToString(inv), ["winMax"] = mx ? "1" : "0", ["gameDir"] = CaptureSetup.UserGameDir, ["debug"] = _debugMode ? "1" : "0", ["captureDiag"] = _captureDiag ? "1" : "0", ["useTts"] = _useTts ? "1" : "0", ["useCapture"] = _useCapture ? "1" : "0", ["logSkipPos"] = _logSkipToPos > 0 ? _logSkipToPos.ToString() : null, ["replayFromZero"] = _replayFromZero ? "1" : null, ["logMaxFileMB"] = _logMaxFileMB.ToString(inv), ["logMaxFiles"] = _logMaxFiles.ToString(inv), ["logMaxAgeDays"] = _logMaxAgeDays.ToString(inv), ["logOldPath"] = _logOldPath, ["logMovedUtcTicks"] = _logMovedUtcTicks > 0 ? _logMovedUtcTicks.ToString(inv) : null, ["invSort"] = _invSort?.ToString() });
             var stmp = SettingsPath + ".tmp";
             File.WriteAllText(stmp, settingsJson);
             File.Move(stmp, SettingsPath, overwrite: true);   // atomic — a crash mid-write must not corrupt app.json (the B1 class; settings were missed)
@@ -1426,6 +1424,10 @@ public partial class MainWindow : Window
 
     void Render()
     {
+        // Render() rebuilds the whole doll from scratch, so any open hover card is now pinned to a detached
+        // cell — close it FIRST (ahead of every early-return) so a background TTS/OCR update mid-hover can't
+        // strand it; the cell's MouseEnter reopens it cleanly against the fresh tree.
+        _hoverPopup.IsOpen = false;
         InstallCaptureBtn.Visibility = Visibility.Collapsed;   // setup via Settings only
         OpenSrcBtn.Visibility = SourceUrl() != null ? Visibility.Visible : Visibility.Collapsed;
         ApplyCharacterUi();   // keep the active-character picker in sync
@@ -1972,7 +1974,6 @@ public partial class MainWindow : Window
             var latest = await Updater.GetLatestTagAsync();
             if (latest == null) return;
             if (!Updater.IsNewer(latest, Updater.RunningVersion())) return;   // already current
-            if (latest == _skipUpdateVersion) return;                         // user skipped this version
 
             // Already staged from a prior check?
             if (Updater.FindStagedUpdate().HasValue) { ShowUpdateReady(latest); return; }
@@ -2309,6 +2310,15 @@ public partial class MainWindow : Window
         HelpHost.Visibility = Visibility.Visible;
     }
 
+    /// <summary>A fresh settings draft seeded from the current live state. SINGLE source of truth for the open
+    /// (ShowSettings) and the Revert seeds so they can't drift — add a draftable field here once, not in two
+    /// places (a missed site silently made Revert leave that field stale).</summary>
+    SettingsDraft NewDraft() => new()
+    {
+        UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, CaptureDiag = _captureDiag,
+        Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays,
+    };
+
     /// <summary>Toggle the settings modal. DEFER-EVERYTHING model: every control edits a draft; nothing
     /// applies until Save. Revert re-seeds the draft from live state; X / backdrop / Esc DISCARD. A
     /// read-only viewer opened from here (Diagnose) parks the draft and returns to it.</summary>
@@ -2316,7 +2326,7 @@ public partial class MainWindow : Window
     {
         if (SettingsHost.Visibility == Visibility.Visible && !_diagShowing) { CloseSettings(); return; }
         _diagShowing = false;
-        _settingsDraft ??= new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, CaptureDiag = _captureDiag, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
+        _settingsDraft ??= NewDraft();
         RenderSettings();
     }
 
@@ -2663,7 +2673,7 @@ public partial class MainWindow : Window
         revertBtn = new Button { Content = "Revert", Padding = new Thickness(16, 7, 16, 7) };
         revertBtn.Click += (_, _) =>
         {
-            _settingsDraft = new SettingsDraft { UseTts = _useTts, UseCapture = _useCapture, DebugMode = _debugMode, CaptureDiag = _captureDiag, Log = _log, LogMaxFileMB = _logMaxFileMB, LogMaxFiles = _logMaxFiles, LogMaxAgeDays = _logMaxAgeDays };
+            _settingsDraft = NewDraft();
             RenderSettings();
         };
         var closeBtn2 = new Button { Content = "Close", Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(8, 0, 12, 0) };   // right margin = gap before Save
@@ -4436,8 +4446,6 @@ public partial class MainWindow : Window
         // rarity-string check never fired for parsed items — IsAncestral is the captured flag)
         var liveIt = s.Gear?.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
         bool ancestral = _dollView is "mine" or "all" && (liveIt?.IsAncestral == true || IsAncestral(liveIt?.Rarity));
-        var frameBrush = rcol;
-        var frameRc = ((SolidColorBrush)frameBrush).Color;
 
         const double boxW = 54, boxH = 76;    // portrait — tall and skinny, like a D4 inventory slot
         const double artW = 34, artH = 50;   // inset: 10px margin each side so placeholder sits inside the frame
@@ -4454,16 +4462,16 @@ public partial class MainWindow : Window
         {
             // dark base + diagonal rarity-colored overlay (top-right → bottom-left, matching D4's slot shading)
             var overlay = new LinearGradientBrush { StartPoint = new Point(1, 0), EndPoint = new Point(0.1, 1) };
-            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, frameRc.R, frameRc.G, frameRc.B), 0));
-            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x28, frameRc.R, frameRc.G, frameRc.B), 0.35));
-            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, frameRc.R, frameRc.G, frameRc.B), 1));
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, rc.R, rc.G, rc.B), 0));
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x28, rc.R, rc.G, rc.B), 0.35));
+            overlay.GradientStops.Add(new GradientStop(Color.FromArgb(0x05, rc.R, rc.G, rc.B), 1));
             grid.Children.Add(new Border { Background = overlay, CornerRadius = new CornerRadius(4) });
         }
 
         // border ring: full rarity colour when art is resolved; dim neutral while the tile is a ghost
         grid.Children.Add(new Border
         {
-            BorderBrush = resolved ? frameBrush : (Brush)Edge,
+            BorderBrush = resolved ? rcol : (Brush)Edge,
             BorderThickness = new Thickness(resolved ? 1.6 : 1), CornerRadius = new CornerRadius(3.5), Margin = new Thickness(1),
         });
 

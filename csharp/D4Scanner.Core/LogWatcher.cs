@@ -17,7 +17,6 @@ public sealed class LogWatcher : IDisposable
     readonly SkillParser _skills = new();     // selected skills/passives + ranks from the skill tree
     readonly CharSelectParser _charSel = new();   // character-select screen: own characters + the picked name/class
     readonly Dictionary<string, Item> _items = new();
-    readonly Dictionary<string, Item> _inv = new();
     // scan-order lists: items appended on EVERY scan (including re-scans of the same item), so
     // Reverse().GroupBy().Take(N) gives the N most recently scanned items per slot — not the N
     // items whose key was first inserted earliest, which is the bug with dict insertion order.
@@ -100,7 +99,7 @@ public sealed class LogWatcher : IDisposable
             // gear, character sheet, and skills. Stale sheet/skills are not just cosmetic: they describe
             // the OLD character, and any class/paragon inference run on them after a switch would pull
             // identity back to the character just left (verified live before this reset existed).
-            _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+            _items.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
             _seg = new GearParser(); _currentPanel = null; _oracle?.Clear();   // drop prior char's panel state
             _pending.Clear(); _recent.Clear(); _recentStart = _lineNo;
             _char.Reset(); _skills.Reset();
@@ -147,7 +146,7 @@ public sealed class LogWatcher : IDisposable
             long size = new FileInfo(_path).Length;
             if (size < _pos)   // log cleared/rotated
             {
-                _pos = 0; _buf = ""; _utf8.Reset(); _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
+                _pos = 0; _buf = ""; _utf8.Reset(); _items.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear();
                 _currentPanel = null; _seg = new GearParser(); _char.Reset(); _skills.Reset(); _oracle?.Clear();
                 _pending.Clear(); _recent.Clear(); _recentStart = 0; _lineNo = 0;
             }
@@ -213,7 +212,7 @@ public sealed class LogWatcher : IDisposable
             // New shim session appended to the same file: drop the prior session's accumulated gear so a
             // stale prior-session loadout doesn't linger on the HAVE side after a restart/relaunch.
             if (rawLine.StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase))
-            { _items.Clear(); _inv.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); _oracle?.Clear(); }
+            { _items.Clear(); _itemsOrdered.Clear(); _invOrdered.Clear(); _currentPanel = null; _pending.Clear(); _oracle?.Clear(); }
             // LIVE session end (game exited) — the rotation-safe moment; replayed history never fires it.
             if (IsCaughtUp && rawLine.StartsWith("=== d4scanner tts shim detached", StringComparison.OrdinalIgnoreCase))
                 SessionEnded?.Invoke();
@@ -291,7 +290,7 @@ public sealed class LogWatcher : IDisposable
         else if (item.Equipped || !_equippedOnly) { _items[key] = item; _itemsOrdered.Add(item); }
         else
         {
-            _inv[key] = item; _invOrdered.Add(item);
+            _invOrdered.Add(item);
             // Self-heal: a fresh, correctly-classified NON-equipped sighting evicts an earlier wrongly-equipped
             // copy of the SAME PHYSICAL ITEM (same content fingerprint). Originally keyed on name+slot alone,
             // which evicted the worn copy whenever the player hovered a DIFFERENT same-name roll in their bags —
@@ -767,6 +766,5 @@ public static class TargetLoader
         return t;
     }
 
-    public static string DefaultLogPath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "d4_tts.log");
+    public static string DefaultLogPath() => Path.Combine(AppPaths.Root, "d4_tts.log");
 }

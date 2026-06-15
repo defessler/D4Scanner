@@ -33,8 +33,7 @@ public static class GameDataIcons
 
     const string DefBase = "https://raw.githubusercontent.com/DiabloTools/d4data/master/json/base/meta/Texture/";
 
-    static string CacheRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache", "icons", "game");
+    static string CacheRoot => Path.Combine(AppPaths.CacheDir, "icons", "game");
     static string DefCacheDir => Path.Combine(CacheRoot, "defs");
 
     static readonly HttpClient Http = Create();

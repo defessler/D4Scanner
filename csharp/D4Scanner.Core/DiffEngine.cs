@@ -275,23 +275,6 @@ public static class DiffEngine
         return present;
     }
 
-    /// <summary>How many of the target slot's wanted affixes the item carries AS Greater Affixes (matched once
-    /// each). A GA on a wanted stat is worth 1.5× that affix's max — a distinct upgrade axis from raw presence.</summary>
-    public static int GreaterOnWanted(TargetGear g, Item item)
-    {
-        var pool = item.Affixes;
-        var used = new bool[pool.Count];
-        int n = 0;
-        foreach (var aff in g.Affixes)
-        {
-            int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
-            if (idx < 0) continue;
-            if (pool[idx].IsGreater) n++;
-            if (!viaU) used[idx] = true;
-        }
-        return n;
-    }
-
     /// <summary>The item's affixes that DON'T match any wanted affix on the slot (the "extras") — the lines an
     /// enchant would reroll. Used to warn when completing a slot would destroy a Greater Affix. Skips the
     /// "quality" meta line.</summary>
@@ -370,13 +353,6 @@ public static class DiffEngine
     static bool IsWeaponType(string? s) => !string.IsNullOrEmpty(s) && WeaponKeywords.Any(k => s.ToLowerInvariant().Contains(k));
     /// <summary>True for ranged weapons (bow / crossbow). Used to keep melee weapons out of ranged slots.</summary>
     static bool IsRangedWeapon(string? s) => !string.IsNullOrEmpty(s) && s.ToLowerInvariant() is var t && (t.Contains("crossbow") || t.Contains("bow"));
-
-    /// <summary>Human-readable weapon type from ItemId.</summary>
-    public static string? WeaponTypeFromItemId(string? itemId) {
-        if (string.IsNullOrEmpty(itemId)) return null;
-        var p = itemId.Split("_")[0]; var h = (p.StartsWith("1H")||p.StartsWith("2H")) ? p.Substring(2) : p;
-        return h.Length > 1 ? char.ToUpperInvariant(h[0]) + h.Substring(1).ToLowerInvariant() : null;
-    }
 
     /// <summary>True for inherently two-handed voiced types ("Two-Handed Sword", polearms, staves…).</summary>
     static bool IsTwoHandedType(string? t)

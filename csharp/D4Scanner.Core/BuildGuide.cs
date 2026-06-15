@@ -94,11 +94,6 @@ public static class BuildGuide
             acts.Add(new GuideStep(1, "IMPRINT", i.Label, aDetail, $"Imprint the {i.Label}", "cat:aspects"));
         }
         // Note: seals/charms have no target in the build schema yet — when added, route here
-        // skills/paragon/mercenary are intentionally hidden from the UI for now (vision-gated, not yet robust
-        // enough for a good user experience). Keep this call-site intact so they can be re-enabled cleanly.
-        // AddVisionCategory(r, acts, "skills",    "SKILL",  "Set up",   "skills & passives");
-        // AddVisionCategory(r, acts, "paragon",   "PARAGON","Work on",  "paragon boards & glyphs");
-        // AddVisionCategory(r, acts, "mercenary", "MERC",   "Hire your","mercenary");
 
         // Deduplicate: if multiple slots require the exact same affix action (e.g. three weapons all
         // need "Damage Over Time Multiplier"), merge them into one step with a combined slot label.
@@ -114,22 +109,6 @@ public static class BuildGuide
             .OrderBy(a => a.Tier)
             .ToList();
         return deduped;
-    }
-
-    // Vision-gated category (skills/paragon): if nothing is confirmed yet, we can't know what's actually
-    // missing — emit ONE "capture to verify" step instead of flooding DO NEXT with false-missing entries.
-    static void AddVisionCategory(DiffReport r, List<GuideStep> acts, string id, string verb, string verbWord, string label)
-    {
-        var cat = r.Categories.FirstOrDefault(c => c.Id == id);
-        if (cat == null) return;
-        var missing = CatItems(r, id).Where(x => !x.i.Done).ToList();
-        if (missing.Count == 0) return;
-        if (cat.Matched == 0)
-            acts.Add(new GuideStep(4, "CAPTURE", label, "screenshot to verify",
-                $"Capture your {label} with a vision screenshot so the app can track them", "cat:" + id));
-        else
-            foreach (var (grp, i) in missing)
-                acts.Add(new GuideStep(4, verb, i.Label, grp, $"{verbWord} {i.Label} ({grp})", "cat:" + id));
     }
 
     /// <summary>Human label for a focus key ("gear:3" → the slot name, "cat:uniques" → "Uniques").</summary>

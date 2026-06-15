@@ -126,13 +126,19 @@ public static class CaptureSetup
     // Bump this constant whenever the DLL changes and the app will auto-reinstall on next launch.
     public const int CurrentShimVersion = 2;
 
-    /// <summary>True if saapi64.dll is somewhere Diablo IV will find it AND its version matches the embedded one.</summary>
-    public static bool Installed()
+    /// <summary>Every location D4 could load saapi64.dll from, in probe order (BinDir, System32, game dir) —
+    /// the single source of truth for Installed/InstalledShimVersion/Uninstall so the three can't drift.</summary>
+    static List<string> ShimPaths()
     {
         var places = new List<string> { Path.Combine(BinDir, "saapi64.dll"), Path.Combine(System32, "saapi64.dll") };
         var g = GameDir(); if (g != null) places.Add(Path.Combine(g, "saapi64.dll"));
-        return places.Any(File.Exists);
+        return places;
     }
+
+    /// <summary>True if saapi64.dll is present anywhere Diablo IV will load it. Deliberately version-AGNOSTIC
+    /// (pure File.Exists): the upgrade flow is <c>Installed() &amp;&amp; NeedsUpgrade()</c>, so checking the version
+    /// here too would hide the upgrade banner. Ask <see cref="NeedsUpgrade"/> for the version question.</summary>
+    public static bool Installed() => ShimPaths().Any(File.Exists);
 
     [System.Runtime.InteropServices.DllImport("kernel32", SetLastError = true)]
     static extern IntPtr LoadLibraryExW([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string path, IntPtr file, uint flags);
@@ -150,9 +156,7 @@ public static class CaptureSetup
     /// Returns 0 for the versionless legacy DLL. Returns -1 if no DLL is installed.</summary>
     public static int InstalledShimVersion()
     {
-        var places = new List<string> { Path.Combine(BinDir, "saapi64.dll") };
-        var gd = GameDir(); if (gd != null) places.Add(Path.Combine(gd, "saapi64.dll"));
-        foreach (var p in places)
+        foreach (var p in ShimPaths())   // BinDir + System32 + game dir — the same set Installed()/Uninstall() probe
         {
             if (!File.Exists(p)) continue;
             try
@@ -266,9 +270,7 @@ public static class CaptureSetup
         var failed  = new List<string>();
 
         // 1) delete DLL from all locations (best-effort)
-        var places = new List<string> { Path.Combine(BinDir, "saapi64.dll"), Path.Combine(System32, "saapi64.dll") };
-        var g = GameDir(); if (g != null) places.Add(Path.Combine(g, "saapi64.dll"));
-        foreach (var p in places)
+        foreach (var p in ShimPaths())
         {
             if (!File.Exists(p)) continue;
             try { File.Delete(p); removed.Add(p); }

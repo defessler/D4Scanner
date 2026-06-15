@@ -19,8 +19,7 @@ public static class IconResolver
         return h;
     }
 
-    public static string CacheDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache");
+    public static string CacheDir => AppPaths.CacheDir;
     static string IconDir => Path.Combine(CacheDir, "icons");
     // IndexPath kept for cache-clear compatibility (file deleted by settings)
     public static string IndexPath => Path.Combine(CacheDir, "icon_index.json");

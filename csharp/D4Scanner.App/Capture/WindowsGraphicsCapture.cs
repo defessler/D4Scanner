@@ -95,7 +95,10 @@ public static class WindowsGraphicsCapture
         Marshal.Release(dxgiPtr);
         if (hr < 0) throw new InvalidOperationException($"CreateDirect3D11DeviceFromDXGIDevice: 0x{hr:X8}");
 
-        var d3dDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(d3dInteropPtr);
+        // `using`: this WinRT device wrapper is built fresh on EVERY grab (up to ~1.5s apart while gear is on
+        // screen) — without disposal its native D3D/DXGI handles leaked until finalization. Declared before
+        // `pool`, so it disposes LAST (the frame pool holds its own ref while capturing).
+        using var d3dDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(d3dInteropPtr);
         Marshal.Release(d3dInteropPtr);
 
         // 3. Frame pool + one capture session
