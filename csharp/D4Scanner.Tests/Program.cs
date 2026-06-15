@@ -563,6 +563,30 @@ Check("Item compact JSON fits on one line", !compact.Contains('\n'));
     Eq("LatestPerSlot: two distinct dual-wield weapons are both kept", 2, LogWatcher.LatestPerSlot(two).Count);
 }
 
+// 4) Ring-slot STABILITY (the "rings swap on hover" fix): D4 re-voices the "Ring" header on every hover, so
+//    the OLD per-header counter renumbered a ring each time it was re-hovered (ring1→ring2→ring1 made ring1
+//    "the 3rd Ring" → position 3 → the two rings swapped slots). Positions are now keyed by NAME: a re-hover
+//    REUSES the ring's position, so the assignment is stable. This feeds the real GearParser block pipeline.
+{
+    var gp = new GearParser();
+    string[] seq = {
+        "Ring", "EQUIPPED", "ALPHA SIGNET", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]", "Right mouse button",
+        "Ring", "EQUIPPED", "BETA BAND",    "Legendary Ring", "810 Item Power", "+90 Dexterity [80 - 120]",  "Right mouse button",
+        "Ring", "EQUIPPED", "ALPHA SIGNET", "Legendary Ring", "800 Item Power", "+100 Dexterity [80 - 120]", "Right mouse button",  // re-hover ring 1
+    };
+    var ringItems = new List<Item>();
+    foreach (var line in seq) { var it = gp.Feed(line); if (it != null) ringItems.Add(it); }
+    Eq("RingStable: three ring hovers parsed", 3, ringItems.Count);
+    Eq("RingStable: first ring -> position 1", 1, ringItems[0].SlotPosition);
+    Eq("RingStable: second distinct ring -> position 2", 2, ringItems[1].SlotPosition);
+    Eq("RingStable: re-hovered first ring REUSES position 1 (old counter renumbered it to 3)", 1, ringItems[2].SlotPosition);
+    var ringLatest = LogWatcher.LatestPerSlot(ringItems);
+    Eq("RingStable: both rings survive (re-hover collapses to one ALPHA)", 2, ringLatest.Count);
+    var ringPos = ringLatest.ToDictionary(i => i.RawName.Length > 0 ? i.RawName : i.Name, i => i.SlotPosition, StringComparer.OrdinalIgnoreCase);
+    Eq("RingStable: ALPHA stays slot 1 after the re-hover (no swap)", 1, ringPos["ALPHA SIGNET"]);
+    Eq("RingStable: BETA stays slot 2", 2, ringPos["BETA BAND"]);
+}
+
 // ---- TTS diagnostics: faithful raw -> parsed -> classified -> final introspection for the in-app view ----
 {
     // The sample fixture parses 5 items but has no nav/EQUIPPED lines (so they classify non-equipped) —
