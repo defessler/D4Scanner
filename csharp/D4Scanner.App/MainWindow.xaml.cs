@@ -221,6 +221,8 @@ public partial class MainWindow : Window
     readonly Dictionary<string, Section> _inventorySections = new();  // synthetic sections for pinned inventory items
     readonly System.Windows.Controls.Primitives.Popup _hoverPopup = new()
     { AllowsTransparency = true, StaysOpen = true, Placement = System.Windows.Controls.Primitives.PlacementMode.Right };
+    FrameworkElement? _hoverTarget;   // the slot currently driving _hoverPopup, for the leave-both hit-test
+    System.Windows.Threading.DispatcherTimer? _hoverCloseTimer;   // deferred close so the card doesn't flicker
 
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
     bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
@@ -4499,6 +4501,24 @@ public partial class MainWindow : Window
         return outer;
     }
 
+    // Defer the hover-card close: a bare MouseLeave→close flickers when the card opens under the cursor (the
+    // slot fires MouseLeave, the card closes, the cursor is back on the slot, it reopens, repeat). Closing on a
+    // short timer and only when the mouse is over NEITHER the slot nor the card breaks the loop and lets the
+    // user move onto the card to read/scroll it.
+    void ScheduleHoverClose()
+    {
+        _hoverCloseTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _hoverCloseTimer.Tick -= HoverCloseTick; _hoverCloseTimer.Tick += HoverCloseTick;   // exactly one handler
+        _hoverCloseTimer.Stop(); _hoverCloseTimer.Start();
+    }
+    void CancelHoverClose() => _hoverCloseTimer?.Stop();
+    void HoverCloseTick(object? sender, EventArgs e)
+    {
+        _hoverCloseTimer?.Stop();
+        if (_hoverTarget?.IsMouseOver != true && _hoverPopup.Child?.IsMouseOver != true)
+            _hoverPopup.IsOpen = false;
+    }
+
     // floating compare card shown while hovering a slot
     void ShowHover(Section s, UIElement target)
     {
@@ -4513,8 +4533,14 @@ public partial class MainWindow : Window
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
         cc.Width = cardW;
         // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
-        _hoverPopup.Child = new ScrollViewer
+        var sv = new ScrollViewer
         { Content = cc, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Max(300, ActualHeight - 60) };
+        // moving the cursor ONTO the card (or the card overlapping the cursor in a narrow window) keeps it open;
+        // the deferred close only fires once the mouse has left both the slot and the card (anti-flicker).
+        sv.MouseEnter += (_, _) => CancelHoverClose();
+        sv.MouseLeave += (_, _) => ScheduleHoverClose();
+        _hoverPopup.Child = sv;
+        _hoverTarget = target as FrameworkElement;
         _hoverPopup.PlacementTarget = target;
         // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the slot,
         // flip LEFT if that would overflow, then clamp BOTH axes inside the window (a tall card near the
@@ -4691,8 +4717,8 @@ public partial class MainWindow : Window
             Cursor = System.Windows.Input.Cursors.Hand,
         };
         // hover → floating compare; click → toggle pin (collects below for side-by-side comparison)
-        b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; ShowHover(s, b); };
-        b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; _hoverPopup.IsOpen = false; };
+        b.MouseEnter += (_, _) => { if (!pinned) b.Background = Card; CancelHoverClose(); ShowHover(s, b); };
+        b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; ScheduleHoverClose(); };
         b.MouseLeftButtonUp += (_, _) =>
         {
             bool wasPinned = _pinned.Remove(s.Key);
