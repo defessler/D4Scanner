@@ -4,8 +4,8 @@ using System.Text.Json.Serialization;
 namespace D4Scanner.Core;
 
 /// <summary>
-/// The season-volatile guidance data — activity copy, Infernal Hordes spoils, the boss ladder, obol
-/// prices, Torment tier gates, masterwork/socket/glyph constants — that the guidance engine reads instead
+/// The season-volatile guidance data — activity copy, Infernal Hordes spoils, the boss ladder, Torment
+/// tier gates, masterwork/socket/glyph constants — that the guidance engine reads instead
 /// of hard-coding. Diablo IV's itemization changes every season and expansion; keeping these tables in one
 /// versioned JSON (embedded, with a user-local override) means a season update is a data edit, not a code
 /// change, and the loaded <see cref="SeasonLabel"/> can be surfaced as an in-app staleness stamp.
@@ -25,8 +25,6 @@ public sealed class SeasonPack
     public Dictionary<string, ActivityCopy> Activities { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<HordesSpoil> HordesSpoils { get; set; } = new();
     public BossLadderData BossLadder { get; set; } = new();
-    public Dictionary<string, int> ObolPrices { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public int ObolCap { get; set; }
     public int AncestralFloorIP { get; set; } = 900;   // endgame IP floor — a sub-floor non-Ancestral item is temporary (centralized here; doc flags hard-coded IP caps as the #1 staleness tripwire)
     public List<TormentGate> TormentGates { get; set; } = new();
     public List<PitTorment> PitToTorment { get; set; } = new();
@@ -58,8 +56,7 @@ public sealed class SeasonPack
     public static SeasonPack Current => _current ??= Load();
 
     /// <summary>Path to the optional user-local override (lets a season's data be corrected without a release).</summary>
-    public static string OverridePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "season_pack.json");
+    public static string OverridePath => Path.Combine(AppPaths.Root, "season_pack.json");
 
     static SeasonPack Load()
     {

@@ -26,9 +26,7 @@ public static class BaseIconIndex
     /// <summary>Test/inject hook for "is this handle extractable" (defaults to the real atlas map).</summary>
     public static Func<long, bool> HasMapping { private get; set; } = h => GameDataIcons.HasMapping(h);
 
-    static string DataPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "d4scanner", "cache", "maxroll_data.min.json");
+    static string DataPath => AppPaths.GameDataCache;
 
     // catalog id substrings that mark a NON-equipment entry (a charm/currency/quest twin of a real item name)
     static readonly string[] NonEquipMarkers =
@@ -46,7 +44,7 @@ public static class BaseIconIndex
         {
             "pant" or "pants" or "trousers" => "legs",
             "torso" or "tunic" => "chest",
-            "focusbookoffhand" or "focusbook" => "focus",
+            // (no "focusbook…" arm: line 42 already strips "book"/"offhand", so it arrives as "focus" → default)
             _ => s,
         };
     }
@@ -54,53 +52,57 @@ public static class BaseIconIndex
     static bool IsEquipmentId(string id) =>
         !NonEquipMarkers.Any(m => id.Contains(m, StringComparison.OrdinalIgnoreCase));
 
+    // Parse a data.min.json-shaped blob into the NAME + TYPE indices. The single source of truth shared by
+    // Build's disk read and the test FromJson seed, so the production path can't silently diverge from the one
+    // the tests exercise. Caller holds _gate.
+    static void ParseCatalog(string json)
+    {
+        var bestType = new Dictionary<string, (int score, long handle)>();
+        var byName = new Dictionary<string, List<Entry>>(StringComparer.Ordinal);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("items", out var items))
+            foreach (var it in items.EnumerateObject())
+            {
+                var v = it.Value;
+                if (!v.TryGetProperty("type", out var ty) || ty.ValueKind != JsonValueKind.String) continue;
+                if (!v.TryGetProperty("image", out var im) || im.ValueKind != JsonValueKind.Number) continue;
+                long handle = im.GetInt64();
+                if (handle <= 0) continue;
+                string id = it.Name;
+                string typeKey = Norm(ty.GetString());
+
+                // NAME index: every named item, for resolving the player's actual gear by name
+                if (v.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String)
+                {
+                    var key = DiffEngine.Normalize(nm.GetString());
+                    if (key.Length > 0)
+                    {
+                        if (!byName.TryGetValue(key, out var lst)) byName[key] = lst = new();
+                        lst.Add(new Entry(handle, typeKey, id, IsEquipmentId(id)));
+                    }
+                }
+
+                // TYPE index: a representative base handle per type (Generic > Normal > other)
+                if (id.Contains(' ') || id.StartsWith("zz", StringComparison.OrdinalIgnoreCase)) continue;
+                if (typeKey.Length == 0) continue;
+                int score = (id.Contains("Generic", StringComparison.OrdinalIgnoreCase) ? 2 : 0)
+                          + (id.Contains("Normal", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
+                if (!bestType.TryGetValue(typeKey, out var cur) || score > cur.score) bestType[typeKey] = (score, handle);
+            }
+        _byName = byName;
+        _byType = bestType.ToDictionary(kv => kv.Key, kv => kv.Value.handle);
+    }
+
     static void Build()
     {
         if (_byType != null) return;
         lock (_gate)
         {
             if (_byType != null) return;
-            var bestType = new Dictionary<string, (int score, long handle)>();
-            var byName = new Dictionary<string, List<Entry>>(StringComparer.Ordinal);
-            try
-            {
-                if (File.Exists(DataPath))
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(DataPath));
-                    if (doc.RootElement.TryGetProperty("items", out var items))
-                        foreach (var it in items.EnumerateObject())
-                        {
-                            var v = it.Value;
-                            if (!v.TryGetProperty("type", out var ty) || ty.ValueKind != JsonValueKind.String) continue;
-                            if (!v.TryGetProperty("image", out var im) || im.ValueKind != JsonValueKind.Number) continue;
-                            long handle = im.GetInt64();
-                            if (handle <= 0) continue;
-                            string id = it.Name;
-                            string typeKey = Norm(ty.GetString());
-
-                            // NAME index: every named item, for resolving the player's actual gear by name
-                            if (v.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String)
-                            {
-                                var key = DiffEngine.Normalize(nm.GetString());
-                                if (key.Length > 0)
-                                {
-                                    if (!byName.TryGetValue(key, out var lst)) byName[key] = lst = new();
-                                    lst.Add(new Entry(handle, typeKey, id, IsEquipmentId(id)));
-                                }
-                            }
-
-                            // TYPE index: a representative base handle per type (Generic > Normal > other)
-                            if (id.Contains(' ') || id.StartsWith("zz", StringComparison.OrdinalIgnoreCase)) continue;
-                            if (typeKey.Length == 0) continue;
-                            int score = (id.Contains("Generic", StringComparison.OrdinalIgnoreCase) ? 2 : 0)
-                                      + (id.Contains("Normal", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
-                            if (!bestType.TryGetValue(typeKey, out var cur) || score > cur.score) bestType[typeKey] = (score, handle);
-                        }
-                }
-            }
+            try { if (File.Exists(DataPath)) ParseCatalog(File.ReadAllText(DataPath)); }
             catch { /* no cached data yet → empty indices → silhouettes exactly as before, no new failure mode */ }
-            _byName = byName;
-            _byType = bestType.ToDictionary(kv => kv.Key, kv => kv.Value.handle);
+            _byName ??= new(StringComparer.Ordinal);   // ParseCatalog skipped (no file) or threw → keep non-null
+            _byType ??= new();
         }
     }
 
@@ -185,35 +187,7 @@ public static class BaseIconIndex
     /// <summary>For tests: build the indices from an inline data.min.json-shaped string (no disk read).</summary>
     public static void FromJson(string json)
     {
-        lock (_gate)
-        {
-            var bestType = new Dictionary<string, (int score, long handle)>();
-            var byName = new Dictionary<string, List<Entry>>(StringComparer.Ordinal);
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("items", out var items))
-                foreach (var it in items.EnumerateObject())
-                {
-                    var v = it.Value;
-                    if (!v.TryGetProperty("type", out var ty) || ty.ValueKind != JsonValueKind.String) continue;
-                    if (!v.TryGetProperty("image", out var im) || im.ValueKind != JsonValueKind.Number) continue;
-                    long handle = im.GetInt64();
-                    if (handle <= 0) continue;
-                    string id = it.Name; string typeKey = Norm(ty.GetString());
-                    if (v.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String)
-                    {
-                        var key = DiffEngine.Normalize(nm.GetString());
-                        if (key.Length > 0) { if (!byName.TryGetValue(key, out var lst)) byName[key] = lst = new(); lst.Add(new Entry(handle, typeKey, id, IsEquipmentId(id))); }
-                    }
-                    if (id.Contains(' ') || id.StartsWith("zz", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (typeKey.Length == 0) continue;
-                    int score = (id.Contains("Generic", StringComparison.OrdinalIgnoreCase) ? 2 : 0)
-                              + (id.Contains("Normal", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
-                    if (!bestType.TryGetValue(typeKey, out var cur) || score > cur.score) bestType[typeKey] = (score, handle);
-                }
-            _byName = byName;
-            _byType = bestType.ToDictionary(kv => kv.Key, kv => kv.Value.handle);
-            _memo.Clear();
-        }
+        lock (_gate) { ParseCatalog(json); _memo.Clear(); }
     }
 
     /// <summary>Drop the cached indices (e.g. after a cache clear or a fresh Maxroll import).</summary>

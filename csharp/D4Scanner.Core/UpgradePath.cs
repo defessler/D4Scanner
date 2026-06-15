@@ -15,8 +15,10 @@ public static class UpgradePath
     static bool IsTwoHand(Item it)
     {
         var t = (it.ItemType ?? "").ToLowerInvariant();
+        // All staffs are 2H, INCLUDING the Spiritborn Quarterstaff (matches DiffEngine.IsTwoHandedType) — the
+        // old "&& !quarter" exclusion mis-costed its masterwork (omitted the ×2) and dropped the 2H imprint note.
         return t.Contains("two-hand") || t.Contains("two hand") || t.Contains("polearm")
-            || (t.Contains("staff") && !t.Contains("quarter")) || t.Contains("bow");   // bows/crossbows are 2H
+            || t.Contains("staff") || t.Contains("bow");   // bows/crossbows are 2H
     }
 
     public static List<PathStep> ForSlot(TargetGear g, Item it)

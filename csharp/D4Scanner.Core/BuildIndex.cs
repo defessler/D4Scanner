@@ -34,8 +34,7 @@ public static class BuildIndex
     static readonly HashSet<string> Small =
         new(StringComparer.OrdinalIgnoreCase) { "of", "the", "and", "to", "in", "on", "a" };
 
-    static string CacheDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache");
+    static string CacheDir => AppPaths.CacheDir;
     /// <summary>Public so the Settings cache section can clear THIS file (it used to delete only a
     /// legacy index path and leave the real cache behind).</summary>
     public static string CachePath => Path.Combine(CacheDir, "build_index.json");

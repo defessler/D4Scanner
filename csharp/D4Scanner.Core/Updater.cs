@@ -13,9 +13,7 @@ public static class Updater
 {
     public const string Repo = "defessler/D4Scanner";
 
-    static readonly string UpdateDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "d4scanner", "update");
+    static readonly string UpdateDir = Path.Combine(AppPaths.Root, "update");
 
     // GitHub API requires a User-Agent; reuse the same string the rest of the app uses.
     static readonly HttpClient Http = CreateHttp();

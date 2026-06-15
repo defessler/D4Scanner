@@ -23,8 +23,7 @@ public static class MaxrollImporter
     const string DataUrl = "https://assets-ng.maxroll.gg/d4-tools/game/data.min.json";
     const string DcAffixUrl = "https://raw.githubusercontent.com/josdemmers/Diablo4Companion/master/D4Companion/Data/Affixes.enUS.json";
 
-    static string CacheDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d4scanner", "cache");
+    static string CacheDir => AppPaths.CacheDir;
 
     static readonly (string key, string slot)[] TypeSlot =
     {
@@ -474,7 +473,7 @@ public static class MaxrollImporter
 
     /// <summary>The local path of the Maxroll game-data DB (the item database BaseIconIndex reads to
     /// resolve item names → icon handles, and that imports consume).</summary>
-    public static string GameDataCachePath => Path.Combine(CacheDir, "maxroll_data.min.json");
+    public static string GameDataCachePath => AppPaths.GameDataCache;
 
     /// <summary>Ensure the Maxroll game-data DB is cached without needing a full build import. It is NOT
     /// a discretionary cache — losing it (a cache clear, a stray delete) silhouettes EVERY gear icon and
