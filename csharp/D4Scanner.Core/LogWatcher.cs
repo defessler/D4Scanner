@@ -538,20 +538,6 @@ public sealed class LogWatcher : IDisposable
 
     public void Dispose() => _timer?.Dispose();
 
-    /// <summary>Feed whole ARCHIVED log files through the live parsing pipeline before tailing begins —
-    /// the full-replay path when rotation has split history across files (without this, "rebuild gear
-    /// by replaying the log" would silently replay only the post-rotation tail). Call before
-    /// <see cref="Start"/>; safe from any thread (Start only arms the timer).</summary>
-    public void Prefeed(IEnumerable<string> archiveFiles)
-    {
-        foreach (var f in archiveFiles)
-        {
-            string[] lines;
-            try { lines = File.ReadAllLines(f); } catch { continue; }
-            FeedChunk(lines);
-        }
-    }
-
     /// <summary>One-shot parse of an entire log file into a LiveBuild (used by the CLI / tests).</summary>
     public static LiveBuild BuildFromFile(string path, bool equippedOnly = true) =>
         BuildFromLines(File.ReadAllLines(path), equippedOnly);
@@ -596,6 +582,98 @@ public sealed class LogWatcher : IDisposable
             ordered.Add(item);
         }
         return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = OwnRoster(charSel) };
+    }
+
+    /// <summary>One archived character's reconstructed worn loadout, keyed by the SAME (name, class) the
+    /// live path turns into a profile slug — so a Rogue and a Barbarian both named "Heoki" stay separate.</summary>
+    public sealed record ReplayedCharacter(string Name, string? Class, LiveBuild Build);
+
+    sealed class ReplayVisit { public string Name = ""; public string? Voiced; public readonly List<Item> Ordered = new(); }
+
+    /// <summary>Rebuild EVERY character's worn loadout from archived log files — the full-replay path
+    /// after a live-gear cache clear, where rotation has split history across the <c>logs\</c> archive
+    /// folder. The live tail only repopulates the CURRENTLY-active character; without this, characters
+    /// whose recent sessions were rotated into archives never come back (their profile stays at the empty
+    /// loadout the clear wrote). Read oldest → newest so later sightings win per slot.</summary>
+    public static List<ReplayedCharacter> ReplayCharacters(IEnumerable<string> archiveFiles)
+    {
+        var all = new List<string>();
+        foreach (var f in archiveFiles)
+        {
+            try { all.AddRange(File.ReadAllLines(f)); } catch { /* unreadable archive — skip */ }
+        }
+        return ReplayCharactersFromLines(all.ToArray());
+    }
+
+    /// <summary>File-free core of <see cref="ReplayCharacters"/> (tests drive raw lines). Splits the
+    /// stream at character-select boundaries, attributes each visit's EQUIPPED gear to the character
+    /// confirmed for that visit, then groups visits by (name, resolved class) — class is the one voiced at
+    /// char-select, else inferred from the visit's gear/skills via <see cref="ClassDetector"/>. Gear seen
+    /// before any character is confirmed (a log that opens mid-session) is unattributable and dropped.</summary>
+    public static List<ReplayedCharacter> ReplayCharactersFromLines(string[] allLines)
+    {
+        var visits = new List<(string Name, string? Voiced, LiveBuild Build)>();
+        ReplayVisit? cur = null;
+        var seg = new GearParser();
+        var ch = new CharacterParser();
+        var sk = new SkillParser();
+        var charSel = new CharSelectParser();
+
+        void Close()
+        {
+            if (cur != null && cur.Ordered.Count > 0)
+                visits.Add((cur.Name, cur.Voiced,
+                    new LiveBuild { Gear = LatestPerSlot(cur.Ordered), Character = ch.Character.Clone(), Skills = sk.Skills.ToList() }));
+            cur = null;
+        }
+
+        // back at char-select: finalize the prior visit, then drop the prior character's parser state so a
+        // stale sheet/skills can't bleed into the next character (mirrors Poll's VisitStarted reset)
+        charSel.VisitStarted += () => { Close(); ch.Reset(); sk.Reset(); seg = new GearParser(); };
+        // entered the world: a new visit begins under this identity (name always; class only when voiced)
+        charSel.Confirmed += id => { if (CharSelectParser.IsValidCharName(id.Name)) cur = new ReplayVisit { Name = id.Name, Voiced = id.Class }; };
+
+        for (int i = 0; i < allLines.Length; i++)
+        {
+            // a new shim session is a hard visit boundary (the prior session's last visit is complete)
+            if (GearParser.Clean(allLines[i]).StartsWith("=== d4scanner tts shim attached", StringComparison.OrdinalIgnoreCase)) Close();
+            charSel.Feed(allLines[i]);
+            if (charSel.InCharSelect) continue;                          // menu narration — never gear/sheet/skills
+            if (RosterParser.ParseLine(allLines[i]) != null) continue;   // other players' nameplates
+            ch.Feed(allLines[i]); sk.Feed(allLines[i]);
+            var item = seg.Feed(allLines[i]);
+            if (item == null) continue;
+            ClassifyContext(item, allLines, i, allLines.Length);
+            if (cur == null) continue;                                   // gear before any confirmed character — unattributable
+            if (!item.Equipped)
+            {
+                // self-heal (mirrors BuildFromLines): a non-equipped sighting evicts an earlier wrongly-equipped
+                // copy of the SAME physical item; profiles store WORN gear, so non-equipped is otherwise skipped
+                var key = (item.Slot ?? "?") + ":" + item.RawName;
+                var fp = GearList.Fingerprint(item);
+                cur.Ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
+                continue;
+            }
+            cur.Ordered.Add(item);
+        }
+        Close();
+
+        // group visits by (name, resolved class); concatenating each character's gear in visit order lets
+        // LatestPerSlot pick the most-recently-scanned item per slot across all of that character's sessions
+        var byChar = new Dictionary<string, (string Name, string? Class, List<Item> Gear, LiveBuild Last)>(StringComparer.Ordinal);
+        foreach (var (name, voiced, build) in visits)
+        {
+            var cls = voiced ?? ClassDetector.Detect(build);
+            var k = name.ToLowerInvariant() + "|" + (cls ?? "");
+            if (!byChar.TryGetValue(k, out var acc)) acc = (name, cls, new List<Item>(), build);
+            acc.Gear.AddRange(build.Gear);
+            acc.Last = build;                          // latest visit's character sheet / skills
+            if (acc.Class == null && cls != null) acc.Class = cls;
+            byChar[k] = acc;
+        }
+
+        return byChar.Values.Select(a => new ReplayedCharacter(a.Name, a.Class,
+            new LiveBuild { Gear = LatestPerSlot(a.Gear), Character = a.Last.Character, Skills = a.Last.Skills })).ToList();
     }
 
     /// <summary>

@@ -865,9 +865,17 @@ public partial class MainWindow : Window
             var w = _watcher;
             var archives = _replayFromZero ? LogStore.Archives(_log) : new List<string>();
             if (archives.Count > 0)
-                // full replay with rotated history: prefeed the archives chronologically through the
-                // SAME pipeline before tailing the active file — off the UI thread (they can be large)
-                Task.Run(() => { w.Prefeed(archives); w.Start(); });
+                // Full replay after a live-gear clear, with rotated history split across archives: rebuild
+                // EACH archived character's worn loadout into its own profile (off the UI thread — archives
+                // can be large), THEN tail the active file. The live tail only repopulates the currently-
+                // active character, so without this restore, characters whose recent sessions were rotated
+                // into the archive folder would never come back (their profile stays at the cleared loadout).
+                Task.Run(() =>
+                {
+                    var replayed = LogWatcher.ReplayCharacters(archives);
+                    Dispatcher.Invoke(() => ApplyReplayedProfiles(replayed));
+                    w.Start();
+                });
             else
                 _watcher.Start();   // first poll runs on the thread pool — the window paints immediately
             // (Render shows "catching up on the capture log…" until the watcher's first pass completes)
@@ -1167,6 +1175,36 @@ public partial class MainWindow : Window
         var cls = ClassDetector.Detect(_live); if (cls != null) prof.Class = cls;   // re-detect each save: resolves once skills stream in (deferred)
         _profiles.Save(prof);
         _profiles.ActiveSlug = _activeSlug;
+    }
+
+    // Restore each archived character's worn loadout into its profile after a live-gear clear (the live
+    // tail only rebuilds the currently-active character). Runs on the UI thread BEFORE the tail starts, so
+    // when the tail later re-binds the active character it merges the newest session OVER this restored
+    // base. The identity/Torment/target the clear preserved are kept — only the wiped gear is filled back.
+    void ApplyReplayedProfiles(IReadOnlyList<LogWatcher.ReplayedCharacter> chars)
+    {
+        foreach (var rc in chars)
+        {
+            if (rc.Build.Gear.Count == 0) continue;   // nothing worn to restore for this character
+            var slug = ProfileStore.Slugify(rc.Name + "-" + (rc.Class ?? ""));
+            var prof = _profiles.Get(slug) ?? new CharacterProfile { Slug = slug, Name = rc.Name, Class = rc.Class };
+            if (string.IsNullOrEmpty(prof.Name)) prof.Name = rc.Name;
+            if (prof.Class == null && rc.Class != null) prof.Class = rc.Class;
+            // This runs BEFORE the live tail, so the profile is still freshly wiped by the clear — fill its
+            // worn loadout/sheet/skills back in from the replay. Gear still goes through MergeGear (existing
+            // wins) so a re-run can never clobber a fresher capture; inventory repopulates as bags are hovered.
+            prof.Live = new LiveBuild
+            {
+                Gear      = MergeGear(rc.Build.Gear, prof.Live.Gear),
+                Inventory = prof.Live.Inventory,
+                Character = rc.Build.Character!,   // non-null (LiveBuild.Character = new()); flow-state is lost through the replay's dictionary round-trip
+                Skills    = rc.Build.Skills,
+            };
+            if (prof.LastSeenUtcTicks == 0) prof.LastSeenUtcTicks = DateTime.UtcNow.Ticks;
+            if (prof.Paragon == null && rc.Build.Character?.ParagonLevel is int pl) prof.Paragon = pl;
+            _profiles.Save(prof);
+        }
+        Render();   // the restored loadouts are now visible when switching to those characters
     }
 
     // Remember which target build the active character is comparing against, so it reloads on switch-back.
