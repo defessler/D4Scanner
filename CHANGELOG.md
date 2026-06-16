@@ -4,11 +4,14 @@ All notable changes to D4Scanner, newest first — consolidated to the significa
 
 > **Versioning:** 0.x line. GitHub (Latest badge) and the in-app auto-updater are semver-aware, so 0.100.0 > 0.99.0; only a bare lexical `git tag` sort misplaces v0.100+ (use `git tag --sort=-v:refname`).
 
+## v0.103.0 — 2026-06-16
+- Hover compare card anchoring — fixed and verified. The card now follows your cursor icon-to-icon, opening beside the hovered icon (right, flipping left, or above at a window edge), always keeping that icon fully visible and the card on-screen. Fixes the real bug v0.101/v0.102 missed: switching to a new icon left the card parked at the previous one (WPF doesn't re-run a popup's placement when only its target changes). Verified numerically with a new `D4_RENDER_HOVER` placement probe across 1400/1000/760px.
+
 ## v0.102.0 — 2026-06-16
-- The hover compare card now anchors to the specific gear icon under the cursor — opening to its right, flipping left, or dropping below as space allows — and never covers the hovered icon. (v0.101.0 still parked the card beside the whole left-aligned paper doll, so armor hovers effectively flipped back to the right; this is the fix that makes per-icon anchoring work.)
+- Reworked the hover compare card to anchor to the specific hovered icon, rather than beside the whole left-aligned paper doll (where v0.101 effectively still opened on the right). Shipped with remaining placement bugs — fully fixed and verified in v0.103.0.
 
 ## v0.101.0 — 2026-06-16
-- Hover compare card gained a side-aware open (armor slots open left, rings/amulet/weapons open right), a ~90 ms open delay to stop flicker on a quick mouse sweep (instant switching once a card is open), a gentle fade-in, and Esc-to-close. Superseded the next day by v0.102.0.
+- Hover compare card gained a side-aware open (armor slots open left, rings/amulet/weapons open right), a ~90 ms open delay to stop flicker on a quick mouse sweep (instant switching once a card is open), a gentle fade-in, and Esc-to-close. Superseded same-day by v0.102/v0.103.
 
 ## v0.98.0–v0.100.0 — 2026-06-16
 - Internal-only cleanup: Core simplifications (GearParser whole-word match helper, redundant DiffEngine.EvalSlot pass removed, de-duplicated replay self-heal) and removal of ~90 lines of dead WPF App code. No behavior change.
