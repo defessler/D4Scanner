@@ -29,7 +29,6 @@ public partial class MainWindow : Window
                           Steel = B("#6E8CA8"),     // cool info blue
                           Crimson = B("#CC3030"),
                           Gold = B("#D4A730"),      // amber gold — used sparingly for section headers / CTAs
-                          GoldHi = B("#F0C04A"),    // bright gold for active state
                           TileSel = B("#22202C");   // subtle purple-dark selected tile
     // item-rarity colors (tuned to match D4's in-game slot coloring)
     // Rare must NOT equal the amber UI accent (#D4A730) — loot must read apart from chrome; legendary reconciled to one hex.
@@ -4185,27 +4184,6 @@ public partial class MainWindow : Window
         return b;
     }
 
-    // Small icon-key legend shown above the paper doll so first-time users understand the badges
-    UIElement IconLegend()
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-        void Entry(string icon, Brush iconBg, string desc)
-        {
-            var badge = new Border
-            {
-                Background = iconBg, CornerRadius = new CornerRadius(3),
-                Padding = new Thickness(5, 1, 5, 2), Margin = new Thickness(0, 0, 5, 0),
-                Child = TB(icon, B("#0C0C0F"), 10, true),
-            };
-            row.Children.Add(badge);
-            row.Children.Add(TB(desc, Faint, 11.5, false, new Thickness(0, 0, 16, 0)));
-        }
-        Entry("↑", Green, "upgrade in bags");
-        Entry("#1", Amber, "priority");
-        Entry("⚠", Amber, "below build min");
-        return row;
-    }
-
     UIElement SummaryStrip(DiffReport r)
     {
         var wp = new WrapPanel { Margin = new Thickness(0, 0, 0, 14) };
@@ -5770,27 +5748,6 @@ public partial class MainWindow : Window
             ? "0%  /  " + need.Replace("roll ≥ ", "").Trim()
             : "0  /  " + need.Replace("≥ ", "").Trim();
 
-    // socket/rune fill progress for a gear slot (runes, gems — and S8 seals/charms when socketed)
-    UIElement SocketProgressRow(Group g)
-    {
-        bool done = g.SocketsDone;
-        var col = done ? Green : Amber;
-        var row = ProgressRowGrid();
-        var mark = TB(done ? "◆" : "◇", col, 13, true); mark.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(mark, 0); row.Children.Add(mark);
-        var lbl = TB("Sockets:  " + string.Join("  ·  ", g.WantSockets), Ink, 12.5, false);
-        lbl.VerticalAlignment = VerticalAlignment.Center; lbl.TextWrapping = TextWrapping.Wrap;
-        Grid.SetColumn(lbl, 1); row.Children.Add(lbl);
-        double sockPct = g.SocketsWanted > 0 ? 100.0 * g.SocketsFilled / g.SocketsWanted : (done ? 100 : 0);
-        var barCol = !g.SocketsKnown && g.SocketsWanted > 0 ? Faint : col;
-        var bar = RollBar(sockPct, barCol, 158, 11); bar.HorizontalAlignment = HorizontalAlignment.Left;
-        Grid.SetColumn(bar, 2); row.Children.Add(bar);
-        var val = TB(g.SocketStatus ?? (done ? "filled" : "empty"), done ? col : Soft, 12, done);
-        val.HorizontalAlignment = HorizontalAlignment.Right; val.VerticalAlignment = VerticalAlignment.Center; val.TextAlignment = TextAlignment.Right;
-        Grid.SetColumn(val, 3); row.Children.Add(val);
-        return row;
-    }
-
     // strip "Rune:" / "Gem:" prefixes and collapse duplicates ("Royal Emerald" ×2 → "Royal Emerald ×2")
     static string CleanSockets(IEnumerable<string> sockets) =>
         string.Join("   +   ", sockets
@@ -5827,81 +5784,6 @@ public partial class MainWindow : Window
         val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.Wrap;
         Grid.SetColumn(val, 3); row.Children.Add(val);
         return row;
-    }
-
-    // ---- game-styled skills & paragon ----
-    static string Monogram(string name)
-    {
-        var w = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (w.Length == 0) return "?";
-        return w.Length == 1 ? w[0][..Math.Min(2, w[0].Length)].ToUpperInvariant()
-                             : ("" + w[0][0] + w[^1][0]).ToUpperInvariant();
-    }
-
-    // a square icon tile (skill / glyph): real art or a monogram, status border, optional rank/level badge
-    UIElement IconTile(ReqItem i)
-    {
-        var col = i.Done ? Green : Miss;
-        string name = i.Label; string? badge = null;
-        var m = System.Text.RegularExpressions.Regex.Match(i.Label, @"^(.*?)\s+(\d+)\s*/\s*(\d+)$");
-        if (m.Success) { name = m.Groups[1].Value.Trim(); badge = m.Groups[2].Value + "/" + m.Groups[3].Value; }
-
-        var box = new Grid { Width = 54, Height = 54, HorizontalAlignment = HorizontalAlignment.Center };
-        box.Children.Add(new Border { Background = B("#0C0C0F"), BorderBrush = col, BorderThickness = new Thickness(1.6), CornerRadius = new CornerRadius(6) });
-        var art = RealIcon(name, 44, 44);
-        if (art != null) { art.Margin = new Thickness(4); box.Children.Add(art); }
-        else { var mono = TB(Monogram(name), col, 17, true); mono.HorizontalAlignment = HorizontalAlignment.Center; mono.VerticalAlignment = VerticalAlignment.Center; box.Children.Add(mono); }
-        if (badge != null)
-        {
-            var bt = TB(badge, B("#0C0C0F"), 9.5, true);
-            box.Children.Add(new Border { Background = col, CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 0, 4, 1), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -3, -4), Child = bt });
-        }
-        var cap = TB(name, i.Done ? Soft : Ink, 11, false);
-        cap.TextWrapping = TextWrapping.Wrap; cap.TextAlignment = TextAlignment.Center; cap.Width = 82; cap.Margin = new Thickness(0, 5, 0, 0);
-        var stack = new StackPanel { Width = 90, Margin = new Thickness(0, 0, 6, 12) };
-        stack.Children.Add(box); stack.Children.Add(cap);
-        return stack;
-    }
-
-    UIElement Chip(ReqItem i)
-    {
-        var col = i.Done ? Green : Miss;
-        var sp2 = new StackPanel { Orientation = Orientation.Horizontal };
-        var dot = TB("◆", col, 11, true, new Thickness(0, 0, 7, 0)); dot.VerticalAlignment = VerticalAlignment.Center;
-        var t = TB(i.Label, i.Done ? Soft : Ink, 12.5, false); t.VerticalAlignment = VerticalAlignment.Center;
-        sp2.Children.Add(dot); sp2.Children.Add(t);
-        return new Border { Child = sp2, Background = Card, BorderBrush = Edge, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(12, 7, 14, 7), Margin = new Thickness(0, 0, 8, 8) };
-    }
-
-    void SkillsView(StackPanel sp, Category cat)
-    {
-        foreach (var g in cat.Groups)
-        {
-            sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Gold, 11.5, true, new Thickness(0, 10, 0, 6)));
-            if (g.Name == "Key Passives")
-            {
-                var wrap = new WrapPanel();
-                foreach (var i in g.Items) wrap.Children.Add(Chip(i));
-                sp.Children.Add(wrap);
-            }
-            else
-            {
-                var bar = new WrapPanel();
-                foreach (var i in g.Items) bar.Children.Add(IconTile(i));
-                sp.Children.Add(bar);
-            }
-        }
-    }
-
-    void ParagonView(StackPanel sp, Category cat)
-    {
-        foreach (var g in cat.Groups)
-        {
-            sp.Children.Add(TBs(g.Name.ToUpperInvariant(), Gold, 11.5, true, new Thickness(0, 10, 0, 6)));
-            var wrap = new WrapPanel();
-            foreach (var i in g.Items) wrap.Children.Add(g.Name == "Glyphs" ? IconTile(i) : Chip(i));
-            sp.Children.Add(wrap);
-        }
     }
 
     void GroupRows(StackPanel sp, Group g)
