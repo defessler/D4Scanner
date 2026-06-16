@@ -2021,8 +2021,13 @@ public partial class MainWindow : Window
             if (latest == null) return;
             if (!Updater.IsNewer(latest, Updater.RunningVersion())) return;   // already current
 
-            // Already staged from a prior check?
-            if (Updater.FindStagedUpdate().HasValue) { ShowUpdateReady(latest); return; }
+            // Already staged from a prior check — but only skip the download if the STAGED tag IS the
+            // latest. A staged update deferred across a later release leaves an older exe lingering (the
+            // staging dir is never pruned); advertising `latest` while only the older file is staged would
+            // mislead the user and apply the wrong version. When the staged tag is older, fall through and
+            // download `latest`. Always advertise the tag that will actually be applied.
+            if (Updater.FindStagedUpdate() is { } staged && !Updater.IsNewer(latest, staged.tag))
+            { ShowUpdateReady(staged.tag); return; }
 
             // Download in background; ~70 MB — show Toast when done
             bool ok = await Task.Run(() => Updater.DownloadUpdateAsync(latest));

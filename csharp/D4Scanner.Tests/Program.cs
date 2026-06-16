@@ -2082,6 +2082,26 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("Updater: IsNewer not-newer when cores tie across a suffix", !Updater.IsNewer("v1.0.0", "v1.0.0-rc1"));
 }
 
+// ---- Updater.BestStaged: pick the NEWEST staged tag, not the first match (stale-staged mismatch fix) ----
+{
+    // a staged update deferred across a later release leaves BOTH exes lingering (the dir is never pruned);
+    // BestStaged must return the newest so the UI advertises — and the apply step installs — the right version
+    var files = new[]
+    {
+        "u/D4Scanner-v0.95.0-win-x64.exe",
+        "u/D4Scanner-v0.96.0-win-x64.exe",
+        "u/D4Scanner-v0.40.0-win-x64.exe",   // older than running -> ignored
+        "u/not-an-asset.exe",                // not the asset shape -> ignored
+    };
+    Check("Updater.BestStaged: returns the NEWEST newer-than-running tag (not the first match)",
+        Updater.BestStaged(files, "v0.94.0") is { } b && b.tag == "v0.96.0");
+    Check("Updater.BestStaged: newest wins regardless of enumeration order",
+        Updater.BestStaged(new[] { "u/D4Scanner-v0.96.0-win-x64.exe", "u/D4Scanner-v0.95.0-win-x64.exe" }, "v0.94.0") is { } b2 && b2.tag == "v0.96.0");
+    Check("Updater.BestStaged: a staged tag older-or-equal to running is ignored",
+        Updater.BestStaged(new[] { "u/D4Scanner-v0.40.0-win-x64.exe" }, "v0.94.0") == null);
+    Check("Updater.BestStaged: empty set -> null", Updater.BestStaged(System.Array.Empty<string>(), "v0.94.0") == null);
+}
+
 // ---- Salvage upgrades, sort tiers, rarity rank, stale-copy exclusion ----
 {
     Eq("RarityRank: mythic top", 5, GearList.RarityRank("Mythic Unique"));
