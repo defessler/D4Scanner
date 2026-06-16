@@ -315,6 +315,48 @@ Check("Activities: masterwork for under-rolled", acts2.Any(a => a.Title.Contains
         spNull.TormentGates != null && spNull.TormentGates.FirstOrDefault(g => g.Tier > 5) == null);
 }
 
+// ---- InfernalHordesAdvisor.RecommendOffering: each priority branch picks the right spoil ----
+{
+    Category Gear(int pct, int under, params Group[] groups) => new Category { Id = "gear", Pct = pct, Under = under, Groups = groups.ToList() };
+    Category Uniques(params ReqItem[] items) => new Category { Id = "uniques", Groups = { new Group { Items = items.ToList() } } };
+    DiffReport Rep(params Category[] cats) => new DiffReport { Categories = cats.ToList() };
+    string Spoil(string k) => SeasonPack.Current.Spoil(k).Name;
+    string Pick(DiffReport r) => InfernalHordesAdvisor.RecommendOffering(r).Offering;
+
+    // precondition: the four spoils must be distinct, else the per-branch assertions below prove nothing
+    Check("Hordes: the four spoils resolve to distinct names",
+        new[] { Spoil("gear"), Spoil("materials"), Spoil("gold"), Spoil("bartuc") }.Distinct().Count() == 4);
+
+    // 1. gear incomplete (<60%) + >=2 missing uniques -> the Greater Equipment chest fills slots fastest
+    Eq("Hordes: empty slots + missing uniques -> gear spoil", Spoil("gear"),
+        Pick(Rep(Gear(50, 0), Uniques(new ReqItem { Done = false }, new ReqItem { Done = false }))));
+    // priority (first-match-wins): branch 1 outranks the crafting branch when both qualify
+    Eq("Hordes: gear-spoil branch outranks crafting", Spoil("gear"),
+        Pick(Rep(Gear(50, 0, new Group { Items = { new ReqItem { Status = "missing" }, new ReqItem { Status = "missing" } } }),
+                 Uniques(new ReqItem { Done = false }, new ReqItem { Done = false }))));
+
+    // 2. gear mostly present but >=2 affixes to enchant/temper -> Materials (Forgotten Souls / Obducite)
+    var off2 = InfernalHordesAdvisor.RecommendOffering(
+        Rep(Gear(80, 0, new Group { Items = { new ReqItem { Status = "missing" }, new ReqItem { Status = "under", Tempered = false } } }), Uniques()));
+    Eq("Hordes: affixes to craft -> materials spoil", Spoil("materials"), off2.Offering);
+    Check("Hordes: crafting reason mentions enchant/temper",
+        off2.Reason.Contains("enchant", StringComparison.OrdinalIgnoreCase) || off2.Reason.Contains("temper", StringComparison.OrdinalIgnoreCase));
+
+    // 3. no craftable affixes but >=2 slots want gems -> Materials (gem fragments) — same spoil, DIFFERENT reason than #2
+    var off3 = InfernalHordesAdvisor.RecommendOffering(
+        Rep(Gear(80, 0, new Group { WantSockets = { "Gem" } }, new Group { WantSockets = { "Rune" } }), Uniques()));
+    Eq("Hordes: sockets to fill -> materials spoil", Spoil("materials"), off3.Offering);
+    Check("Hordes: socket reason mentions gems", off3.Reason.Contains("gem", StringComparison.OrdinalIgnoreCase));
+
+    // 4. gear in place (>=70%) but >=3 under-rolled that are ALREADY TEMPERED (not a crafting need) -> Bartuc/Neathiron
+    Eq("Hordes: under-rolled-but-crafted -> bartuc spoil", Spoil("bartuc"),
+        Pick(Rep(Gear(75, 3, new Group { Items = { new ReqItem { Status = "under", Tempered = true }, new ReqItem { Status = "under", Tempered = true }, new ReqItem { Status = "under", Tempered = true } } }), Uniques())));
+
+    // 5. nothing pressing -> Gold is never a wasted pick
+    Eq("Hordes: complete build -> gold fallback", Spoil("gold"),
+        Pick(Rep(Gear(90, 0), Uniques())));
+}
+
 // ---- Stale-term tripwire: guidance output must never reintroduce pre-2026 mechanics ----
 {
     string Gather(DiffReport rep, TargetBuild tgt, LiveBuild lv)
