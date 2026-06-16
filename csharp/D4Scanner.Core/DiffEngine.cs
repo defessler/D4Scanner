@@ -187,12 +187,13 @@ public static class DiffEngine
     {
         var pool = it?.Affixes ?? new List<Affix>();
         var used = new bool[pool.Count];
+        var umbrella = new bool[pool.Count];   // accumulated inline (same rule as MatchSlot) so extras needs no 2nd walk
         var items = new List<ReqItem>();
         foreach (var aff in g.Affixes)
         {
             int idx = MatchIndex(aff.Name, pool, used, out bool viaU);
             Affix? match = idx >= 0 ? pool[idx] : null;
-            if (idx >= 0 && !viaU) used[idx] = true;
+            if (idx >= 0) { if (viaU) umbrella[idx] = true; else used[idx] = true; }
             var req = new ReqItem { Label = aff.Name, Tempered = aff.Tempered };
             // the target is known even when the piece is missing the affix — always show what the build wants
             if (aff.Min != null) { req.TargetNum = aff.Min.Value; req.Need = "≥ " + aff.Min.Value.ToString("#,0.##"); }
@@ -249,7 +250,7 @@ public static class DiffEngine
             items.Add(req);
         }
         // extras = pool affixes that are neither consumed by an exact match nor a load-bearing umbrella
-        var (_, umbrella) = MatchSlot(g, pool);
+        // (both arrays were filled inline in the loop above, identically to MatchSlot — no second walk)
         extras = new List<string>();
         for (int i = 0; i < pool.Count; i++)
         {

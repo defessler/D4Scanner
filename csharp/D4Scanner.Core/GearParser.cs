@@ -173,11 +173,16 @@ public class GearParser
         return double.TryParse(x, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
     }
 
+    // Whole-word, case-insensitive containment: \b<word>\b with the word regex-escaped. The single idiom
+    // used for TypeSlot keys, rarities, the 'Ancestral' flag and the charm-type designations.
+    static bool WordIn(string ln, string word) =>
+        Regex.IsMatch(ln, @"\b" + Regex.Escape(word) + @"\b", RegexOptions.IgnoreCase);
+
     static bool DetectRarityType(string ln, Item item)
     {
         (string key, string slot)? hit = null;
         foreach (var ts in TypeSlot)
-            if (Regex.IsMatch(ln, @"\b" + Regex.Escape(ts.key) + @"\b", RegexOptions.IgnoreCase)) { hit = ts; break; }
+            if (WordIn(ln, ts.key)) { hit = ts; break; }
         // Talisman charms are detected here (anchored) rather than as unanchored TypeSlot keys — see ReCharmType.
         // Keep the specific designation: "Set Charm"/"Unique Charm" drive downstream set/inventory logic (and the
         // parser tests), every other rarity collapses to plain "Charm" (as the prior fallback did).
@@ -185,14 +190,14 @@ public class GearParser
         if (hit == null) return false;
         item.ItemType = hit.Value.key; item.Slot = hit.Value.slot;
         foreach (var r in Rarities)
-            if (Regex.IsMatch(ln, @"\b" + Regex.Escape(r) + @"\b", RegexOptions.IgnoreCase))
+            if (WordIn(ln, r))
             {
                 item.Rarity = r;
                 if (r.StartsWith("Mythic", StringComparison.OrdinalIgnoreCase)) { item.IsMythic = true; item.IsUnique = true; item.IsAncestral = true; }   // Mythics are always Ancestral (doc §2), even when the tooltip doesn't voice the word
                 else if (r.Equals("Unique", StringComparison.OrdinalIgnoreCase)) item.IsUnique = true;
                 break;
             }
-        if (Regex.IsMatch(ln, @"\bAncestral\b", RegexOptions.IgnoreCase)) item.IsAncestral = true;
+        if (WordIn(ln, "Ancestral")) item.IsAncestral = true;
         return true;
     }
 
@@ -200,8 +205,8 @@ public class GearParser
     // inventory grouping and the parser tests depend on the exact designation); every other charm rarity
     // ("Rare Charm", "Charm (Ancestral)", bare "Charm") collapses to "Charm", matching the old fallback.
     static string CanonCharmType(string ln) =>
-        Regex.IsMatch(ln, @"\bSet Charm\b", RegexOptions.IgnoreCase) ? "Set Charm"
-        : Regex.IsMatch(ln, @"\bUnique Charm\b", RegexOptions.IgnoreCase) ? "Unique Charm"
+        WordIn(ln, "Set Charm") ? "Set Charm"
+        : WordIn(ln, "Unique Charm") ? "Unique Charm"
         : "Charm";
 
     static Affix? ParseAffix(string ln)
