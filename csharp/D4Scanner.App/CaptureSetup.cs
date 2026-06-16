@@ -147,7 +147,6 @@ public static class CaptureSetup
     [System.Runtime.InteropServices.DllImport("kernel32")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     static extern bool FreeLibrary(IntPtr module);
-    const uint LOAD_LIBRARY_AS_DATAFILE = 0x00000002;
 
     /// <summary>Reads the shim version from an installed DLL.
     /// Scans the raw PE bytes for the "SA_GetVersion" export name (ASCII string in the export table).
