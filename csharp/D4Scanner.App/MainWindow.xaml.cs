@@ -1187,7 +1187,7 @@ public partial class MainWindow : Window
         {
             if (rc.Build.Gear.Count == 0) continue;   // nothing worn to restore for this character
             var slug = ProfileStore.Slugify(rc.Name + "-" + (rc.Class ?? ""));
-            var prof = _profiles.Get(slug) ?? new CharacterProfile { Slug = slug, Name = rc.Name, Class = rc.Class };
+            var prof = _profiles.Get(slug) ?? new CharacterProfile { Slug = slug };   // existing profile keeps its identity; a new one fills in below
             if (string.IsNullOrEmpty(prof.Name)) prof.Name = rc.Name;
             if (prof.Class == null && rc.Class != null) prof.Class = rc.Class;
             // This runs BEFORE the live tail, so the profile is still freshly wiped by the clear — fill its
