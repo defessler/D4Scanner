@@ -224,9 +224,9 @@ public partial class MainWindow : Window
     FrameworkElement? _hoverTarget;   // the slot currently driving _hoverPopup, for the leave-both hit-test
     System.Windows.Threading.DispatcherTimer? _hoverCloseTimer;   // deferred close so the card doesn't flicker
     System.Windows.Threading.DispatcherTimer? _hoverOpenTimer;    // deferred OPEN so a quick graze across the grid doesn't flash a card
-    Section? _hoverPendingSection; FrameworkElement? _hoverPendingTarget; bool _hoverPendingPreferLeft;   // the open-delay's pending hover
-    double _hoverCardW;               // the open card's width — a STABLE input to the left/right placement
-    bool? _hoverOpenLeft;             // side the card committed to this hover; kept across re-placements (hysteresis)
+    FrameworkElement? _hoverIcon;   // the hovered icon tile — the card anchors BESIDE it so that icon stays fully visible
+    Section? _hoverPendingSection; FrameworkElement? _hoverPendingTarget, _hoverPendingIcon;   // the open-delay's pending hover
+    double _hoverCardW;               // the open card's width — a STABLE input to the placement decision
     string? _hoverKey;                // section the card is showing — don't rebuild/re-decide on a re-enter
     FrameworkElement? _dollElement;   // the paper-doll icon grid; the hover card sits BESIDE it, never over the icons
     double _dollLeft = -1, _dollRight = -1;   // its window-space X bounds, measured at hover time (-1 = unknown)
@@ -4599,9 +4599,9 @@ public partial class MainWindow : Window
     // Symmetric deferred OPEN: arm a short timer on enter, show the card only if the cursor is still on the same
     // cell when it fires — so sweeping the cursor across the tight icon grid doesn't flash a card per cell.
     // (When a card is ALREADY open, SlotCell switches instantly instead of arming this — no delay between icons.)
-    void ScheduleHoverOpen(Section s, FrameworkElement target, bool preferLeft)
+    void ScheduleHoverOpen(Section s, FrameworkElement target, FrameworkElement? icon)
     {
-        _hoverPendingSection = s; _hoverPendingTarget = target; _hoverPendingPreferLeft = preferLeft;
+        _hoverPendingSection = s; _hoverPendingTarget = target; _hoverPendingIcon = icon;
         _hoverOpenTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
         _hoverOpenTimer.Tick -= HoverOpenTick; _hoverOpenTimer.Tick += HoverOpenTick;   // exactly one handler
         _hoverOpenTimer.Stop(); _hoverOpenTimer.Start();
@@ -4611,12 +4611,13 @@ public partial class MainWindow : Window
     {
         _hoverOpenTimer?.Stop();
         if (_hoverPendingSection is { } s && _hoverPendingTarget is { } t && t.IsMouseOver)
-            ShowHover(s, t, _hoverPendingPreferLeft);
+            ShowHover(s, t, _hoverPendingIcon);
     }
 
-    // floating compare card shown while hovering a slot. preferLeft = open on the icon's column-outboard side
-    // (armor→left, jewelry→right) so the card connects to the hovered icon; always beside the doll, never over icons.
-    void ShowHover(Section s, UIElement target, bool preferLeft)
+    // floating compare card shown while hovering a slot. The card anchors BESIDE the hovered ICON (opening to its
+    // right, flipping left / below at the window edge) so that icon stays fully visible — it may cover NEIGHBOURING
+    // icons/panels, which is fine for a transient hover card. `icon` = the hovered tile (null → legacy beside-the-doll).
+    void ShowHover(Section s, UIElement target, FrameworkElement? icon)
     {
         if (s.Gear == null) return;
         var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
@@ -4635,21 +4636,17 @@ public partial class MainWindow : Window
             && de is Visual dv && target is Visual tv && dv.IsAncestorOf(tv))
             try { double dl = de.TransformToAncestor(this).Transform(new Point(0, 0)).X; _dollLeft = dl; _dollRight = dl + de.RenderSize.Width; }
             catch { }
-        // Choose the side by the hovered icon's COLUMN (armor→left, jewelry→right) so the card connects to that
-        // icon, and BUDGET the width to that outboard margin. Both candidate sides sit beyond the whole doll, so
-        // the card never covers an icon either way; if the column's side is too narrow for a readable card, fall
-        // back to whichever side has room. The side is frozen in _hoverOpenLeft (ClampPopupInWindow just honours it).
-        bool side; double cardW;
-        if (_dollRight >= 0)
-        {
-            double leftRoom = _dollLeft - dollGap - scrollPad, rightRoom = ActualWidth - _dollRight - dollGap - scrollPad;
-            side = preferLeft;
-            if ((side ? leftRoom : rightRoom) < 420)                       // preferred side can't fit a readable card…
-                side = (side ? rightRoom : leftRoom) >= 420 ? !side        // …flip if the other side fits…
-                     : leftRoom >= rightRoom;                              // …else take the wider side
-            cardW = Math.Clamp(Math.Min(ActualWidth - 80, Math.Max(side ? leftRoom : rightRoom, 0)), 420, 760);
-        }
-        else { side = preferLeft; cardW = Math.Clamp(ActualWidth - 80, 420, 760); }   // non-doll hover: old full-width budget
+        // Budget the card width to the clear space BESIDE THE HOVERED ICON (the larger of right-or-left of it) so it
+        // fits whichever side it lands on; fall back to beside-the-whole-doll only when the icon isn't measured.
+        _hoverIcon = icon;
+        var ir = WinRect(icon);
+        double cardW;
+        if (!ir.IsEmpty)
+            cardW = Math.Clamp(Math.Min(ActualWidth - 80, Math.Max(Math.Max(ActualWidth - ir.Right, ir.Left) - dollGap - scrollPad, 0)), 420, 760);
+        else if (_dollRight >= 0)
+            cardW = Math.Clamp(Math.Min(ActualWidth - 80, Math.Max(ActualWidth - _dollRight - dollGap - scrollPad, _dollLeft - dollGap - scrollPad)), 420, 760);
+        else
+            cardW = Math.Clamp(ActualWidth - 80, 420, 760);
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
         cc.Width = cardW;
         // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
@@ -4663,7 +4660,6 @@ public partial class MainWindow : Window
         _hoverTarget = target as FrameworkElement;
         _hoverCardW = cardW;        // a fixed width for the placement decision (independent of the live popup size)
         _hoverKey = s.Key;
-        _hoverOpenLeft = side;      // side chosen above from the icon's column; frozen for this hover (no re-decide)
         _hoverPopup.PlacementTarget = target;
         // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the slot,
         // flip LEFT if that would overflow, then clamp BOTH axes inside the window (a tall card near the
@@ -4676,15 +4672,13 @@ public partial class MainWindow : Window
         _hoverPopup.IsOpen = true;
     }
 
-    /// <summary>Placement callback that keeps a Popup's child fully inside the window AND clear of the doll icons:
-    /// it sits just to the RIGHT of the whole paper-doll (so it never overlaps the icon grid), flips to the LEFT
-    /// of the doll if the right overflows, then clamps both axes into the window; vertically it tracks the hovered
-    /// cell. (When the doll wasn't measured — a non-doll hover — it falls back to beside the target cell.) Two
-    /// anti-oscillation measures keep it from blinking side-to-side: (1) a STABLE width (the card's own width +
-    /// scrollbar allowance) instead of the live popup size, whose ~17px jump when the auto vertical scrollbar
-    /// appears/disappears was flipping the side; (2) HYSTERESIS — once a side is chosen it's held across
-    /// re-placements and only flips when it genuinely stops fitting. DIP units throughout, so the window being
-    /// on-screen makes within-window == on-screen — no DPI/monitor math needed.</summary>
+    /// <summary>Placement callback: anchor the card BESIDE THE HOVERED ICON so that icon stays fully visible. Prefer
+    /// opening to the icon's RIGHT; if a full-width card would run off the right edge, flip to its LEFT; if neither
+    /// side fits, drop BELOW the icon (or ABOVE near the bottom) — the hovered icon is never covered and the card
+    /// stays fully on-screen (covering NEIGHBOURING icons/panels is fine for a transient card). Side placements align
+    /// the card top to the icon (sliding up near the bottom). Uses the STABLE width (_hoverCardW) so the
+    /// auto-scrollbar's ~17px jump can't change the side. DIP units (window on-screen ⇒ within-window == on-screen).
+    /// Falls back to beside-the-whole-doll if the icon wasn't measured.</summary>
     System.Windows.Controls.Primitives.CustomPopupPlacement[] ClampPopupInWindow(UIElement target, Size popupSize, Size targetSize)
     {
         var fallback = new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
@@ -4693,21 +4687,40 @@ public partial class MainWindow : Window
         Point tw;
         try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
         catch { return fallback; }
-        double w = ActualWidth, h = ActualHeight;
+        double w = ActualWidth, h = ActualHeight, gap = dollGap;
         double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + scrollPad;   // stable width (+scrollbar allowance)
-        // Sit BESIDE the whole doll (clears every icon), not beside the hovered cell; fall back to the cell when
-        // the doll wasn't measured. Vertically the card still tracks the hovered icon's row.
-        double rightX = (_dollRight >= 0 ? _dollRight : tw.X + targetSize.Width) + dollGap;   // just past the doll's right edge
-        double leftX  = (_dollLeft  >= 0 ? _dollLeft  : tw.X) - pw - dollGap;                 // just left of the doll
-        // The side was chosen ONCE in ShowHover from the hovered icon's column and frozen in _hoverOpenLeft, so the
-        // card opens on that icon's side and cannot oscillate; with the STABLE width (pw, above) the ~17px
-        // scrollbar jump no longer flips it either. Fall back to right-unless-it-overflows only if somehow unset.
-        bool openLeft = _hoverOpenLeft ?? (rightX + pw > w && leftX >= 0);
-        double x = Math.Max(0, Math.Min(openLeft ? leftX : rightX, w - pw));   // clamp within the window width
-        double y = Math.Max(0, Math.Min(tw.Y, h - popupSize.Height));          // align top, slide up if needed
-        return new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(
-            new Point(x - tw.X, y - tw.Y), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
+        double ph = popupSize.Height;
+        var V  = System.Windows.Controls.Primitives.PopupPrimaryAxis.Vertical;
+        var Hz = System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal;
+        var ir = WinRect(_hoverIcon);
+        if (!ir.IsEmpty)
+        {
+            double yBeside = Math.Max(0, Math.Min(ir.Top, h - ph));                       // align card top to the icon; slide up near the bottom
+            if (ir.Right + gap + pw <= w) return One(ir.Right + gap, yBeside, tw, V);     // RIGHT of the icon (preferred)
+            if (ir.Left - gap - pw >= 0)  return One(ir.Left - gap - pw, yBeside, tw, V);  // flip LEFT of the icon
+            // neither side fits a full card → go BELOW the icon (it stays visible above), or ABOVE near the bottom
+            double xb = Math.Max(0, Math.Min(ir.Left, w - pw));
+            double yb = ir.Bottom + gap + ph <= h ? ir.Bottom + gap : Math.Max(0, ir.Top - gap - ph);
+            return One(xb, yb, tw, Hz);
+        }
+        // legacy fallback: beside the whole doll (icon wasn't measured)
+        double rX = (_dollRight >= 0 ? _dollRight : tw.X + targetSize.Width) + gap;
+        double lX = (_dollLeft  >= 0 ? _dollLeft  : tw.X) - pw - gap;
+        bool openLeft = rX + pw > w && lX >= 0;
+        return One(Math.Max(0, Math.Min(openLeft ? lX : rX, w - pw)), Math.Max(0, Math.Min(tw.Y, h - ph)), tw, Hz);
     }
+
+    // window-space rect of a live element, or Rect.Empty if it isn't measured / no longer in this window's visual tree.
+    Rect WinRect(FrameworkElement? fe)
+    {
+        if (fe is null || fe.RenderSize.Width < 1 || !IsAncestorOf(fe)) return Rect.Empty;
+        try { return new Rect(fe.TransformToAncestor(this).Transform(new Point(0, 0)), fe.RenderSize); }
+        catch { return Rect.Empty; }
+    }
+
+    // one placement at an ABSOLUTE window-space top-left, returned RELATIVE to the popup's PlacementTarget origin (tw).
+    static System.Windows.Controls.Primitives.CustomPopupPlacement[] One(double x, double y, Point tw, System.Windows.Controls.Primitives.PopupPrimaryAxis axis) =>
+        new[] { new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(x - tw.X, y - tw.Y), axis) };
 
     // the All Items comparison card — the SAME two-panel compare card as hovering a paper-doll slot:
     // the candidate (left) vs the currently equipped piece (right), both evaluated against the slot's
@@ -4857,10 +4870,10 @@ public partial class MainWindow : Window
             if (!pinned) b.Background = Card;
             CancelHoverClose();
             // A card is already up → switch INSTANTLY to this slot (no delay). Nothing open → arm the open delay so
-            // a quick graze across the grid doesn't flash a card. preferLeft = the icon's column-outboard side
-            // (armor docks left → open left; jewelry docks right → open right), so the card connects to this icon.
-            if (_hoverPopup.IsOpen) { if (_hoverKey != s.Key) ShowHover(s, b, !alignRight); }
-            else ScheduleHoverOpen(s, b, !alignRight);
+            // a quick graze across the grid doesn't flash a card. The card anchors beside `icon` (the hovered tile),
+            // opening to its right (flipping left / below at the edge), so the hovered icon stays fully visible.
+            if (_hoverPopup.IsOpen) { if (_hoverKey != s.Key) ShowHover(s, b, icon); }
+            else ScheduleHoverOpen(s, b, icon);
         };
         b.MouseLeave += (_, _) => { if (!pinned) b.Background = System.Windows.Media.Brushes.Transparent; CancelHoverOpen(); ScheduleHoverClose(); };
         b.MouseLeftButtonUp += (_, _) =>
