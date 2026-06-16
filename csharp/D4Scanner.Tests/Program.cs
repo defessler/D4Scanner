@@ -3694,16 +3694,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         var pruned = LogStore.Prune(active, maxFiles: 1, maxAgeDays: 3650);
         Eq("LogStore: count cap pruned the oldest archive", 1, pruned);
         Eq("LogStore: one archive remains", 1, LogStore.Archives(active).Count);
-
-        // prefeed: a full replay materializes gear from ARCHIVES before tailing the active file
-        var w = new LogWatcher(Path.Combine(tmpLog, "does_not_exist.log"), equippedOnly: true);
-        w.Prefeed(LogStore.Archives(active));
-        w.FeedChunk(File.ReadAllLines(active));
-        // (each archived session ends detached and the next attach clears accumulated gear — the
-        // prefeed VALUE is that every archived update streams through Updated -> profile persistence;
-        // at the Core level the observable contract is the final ACTIVE session's gear:)
-        Check("Prefeed: the active session's gear is present after prefeed + tail",
-            w.Build.Gear.Any(g => g.RawName == "CURRENT HELM"));
+        // (full-replay reconstruction of each archived character is covered by the ReplayCharacters block below)
     }
     finally { try { Directory.Delete(tmpLog, recursive: true); } catch { } }
 }
@@ -3766,6 +3757,54 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         Eq("MoveArchives: same-folder move is a no-op", 3, Directory.GetFiles(dstArch).Length);
     }
     finally { try { Directory.Delete(srcRoot, recursive: true); } catch { } try { Directory.Delete(dstRoot, recursive: true); } catch { } }
+}
+
+// ---- v0.96: LogWatcher.ReplayCharacters — rebuild EACH character from archived sessions (data-loss fix) ----
+{
+    // one shim session: char-select highlights HEOKI of class `cls`, enters the world, equips `helm`.
+    string[] Session(string cls, string helm, string iso) => new[]
+    {
+        $"[{iso}]=== d4scanner tts shim attached ===",
+        $"[{iso}]R Undo Character Delete",
+        $"[{iso}]HEOKI", $"[{iso}]Seasonal", $"[{iso}]{cls}", $"[{iso}]Paragon 186", $"[{iso}]Torment XI",
+        $"[{iso}]R Undo Character Delete      D Delete Character      C Change Difficulty",
+        $"[{iso}]START GAME", $"[{iso}]QUEUED FOR GAME - START GAME PENDING...",
+        $"[{iso}]Head", $"[{iso}]EQUIPPED", $"[{iso}]{helm}", $"[{iso}]Legendary Helm", $"[{iso}]800 Item Power",
+        $"[{iso}]+100 Dexterity [80 - 120]", $"[{iso}]Right mouse button", $"[{iso}]Unequip",
+        $"[{iso}]=== d4scanner tts shim detached ===",
+    };
+    // Heoki·Rogue (old helm) -> Heoki·Barbarian -> Heoki·Rogue again (newer helm). Same NAME, two classes,
+    // and the Rogue spans two sessions. Each must rebuild into its OWN loadout, newest gear winning per slot.
+    var lines = Session("Rogue", "OLD ROGUE HELM", "2026-06-10T09:00:00Z")
+        .Concat(Session("Barbarian", "BARB HELM", "2026-06-11T09:00:00Z"))
+        .Concat(Session("Rogue", "NEW ROGUE HELM", "2026-06-12T09:00:00Z")).ToArray();
+    var replayed = LogWatcher.ReplayCharactersFromLines(lines);
+
+    Eq("ReplayCharacters: two same-named characters of different classes stay SEPARATE (no merge)", 2, replayed.Count);
+    var rogue = replayed.FirstOrDefault(r => r.Class == "Rogue");
+    var barb = replayed.FirstOrDefault(r => r.Class == "Barbarian");
+    Check("ReplayCharacters: the Rogue was rebuilt under its name", rogue != null && rogue.Name == "HEOKI");
+    Check("ReplayCharacters: the Barbarian was rebuilt under its name", barb != null && barb.Name == "HEOKI");
+    Check("ReplayCharacters: cross-session merge keeps the NEWEST helm (session 3 over session 1)",
+        rogue!.Build.Gear.Any(g => g.RawName == "NEW ROGUE HELM") && rogue.Build.Gear.All(g => g.RawName != "OLD ROGUE HELM"));
+    Check("ReplayCharacters: the Barbarian has its OWN helm, never the Rogue's (no cross-contamination)",
+        barb!.Build.Gear.Any(g => g.RawName == "BARB HELM") && barb.Build.Gear.All(g => !g.RawName.Contains("ROGUE")));
+
+    // file-based entry point reads + concatenates archives oldest -> newest
+    var tmp = Path.Combine(Path.GetTempPath(), "d4s_replay_" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(tmp);
+        var f1 = Path.Combine(tmp, "a1.log"); var f2 = Path.Combine(tmp, "a2.log");
+        File.WriteAllLines(f1, Session("Rogue", "OLD ROGUE HELM", "2026-06-10T09:00:00Z"));
+        File.WriteAllLines(f2, Session("Rogue", "NEW ROGUE HELM", "2026-06-12T09:00:00Z"));
+        var fromFiles = LogWatcher.ReplayCharacters(new[] { f1, f2 });
+        Check("ReplayCharacters (files): one Rogue, newest helm wins across files",
+            fromFiles.Count == 1 && fromFiles[0].Build.Gear.Any(g => g.RawName == "NEW ROGUE HELM"));
+        Check("ReplayCharacters: a missing archive file is skipped, not thrown",
+            LogWatcher.ReplayCharacters(new[] { Path.Combine(tmp, "nope.log") }).Count == 0);
+    }
+    finally { try { Directory.Delete(tmp, recursive: true); } catch { } }
 }
 
 // ---- report ----
