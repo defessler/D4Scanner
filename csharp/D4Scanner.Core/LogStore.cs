@@ -27,7 +27,10 @@ public static class LogStore
     public static string ArchiveDir(string activeLog) =>
         Path.Combine(Path.GetDirectoryName(activeLog) ?? ".", "logs");
 
-    /// <summary>Archived log files, oldest → newest (the rotation naming sorts lexically by date).</summary>
+    /// <summary>Archived log files, oldest → newest. Sorted by parsed (date, counter) — NOT raw lexical
+    /// order — so chronology holds even when the counter isn't zero-padded: a plain string sort places
+    /// "_10".."_12" (the newest of a heavy day) BEFORE "_2".."_9", which would make Prune delete the
+    /// newest archives and the session list show them out of order.</summary>
     public static List<string> Archives(string activeLog)
     {
         try
@@ -35,15 +38,30 @@ public static class LogStore
             var dir = ArchiveDir(activeLog);
             if (!Directory.Exists(dir)) return new();
             var stem = Path.GetFileNameWithoutExtension(activeLog);
-            return Directory.GetFiles(dir, stem + ".*.log").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+            return Directory.GetFiles(dir, stem + ".*.log")
+                .OrderBy(f => ArchiveSortKey(Path.GetFileName(f)), StringComparer.Ordinal).ToList();
         }
         catch { return new(); }
     }
 
+    /// <summary>A lexically-sortable key "{date}_{counter:D6}" for an archive filename, so ordinal order
+    /// matches chronological order regardless of the counter's zero-padding (legacy "_1" and new "_001"
+    /// both map to "..._000001"). Unparseable names sort last (treated as newest, so Prune won't delete
+    /// them first) by their raw name.</summary>
+    static string ArchiveSortKey(string fileName)
+    {
+        var noExt = Path.GetFileNameWithoutExtension(fileName);   // "{stem}.{yyyy-MM-dd}_{n}"
+        int us = noExt.LastIndexOf('_');
+        if (us > 0 && long.TryParse(noExt.AsSpan(us + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var n))
+            return string.Concat(noExt.AsSpan(0, us), "_", n.ToString("D6", CultureInfo.InvariantCulture));
+        return "~" + fileName;
+    }
+
     /// <summary>Move the active log into the archive folder under a dated name
-    /// (<c>logs\d4_tts.2026-06-12_1.log</c>; the counter suffix de-collides multiple rotations per
-    /// day). The shim recreates the active file on its next write. Returns the archive path, or null
-    /// when there was nothing to rotate / the move failed (e.g. a reader mid-poll — retry later).</summary>
+    /// (<c>logs\d4_tts.2026-06-12_001.log</c>; the zero-padded counter de-collides multiple rotations
+    /// per day AND keeps lexical order chronological). The shim recreates the active file on its next
+    /// write. Returns the archive path, or null when there was nothing to rotate / the move failed
+    /// (e.g. a reader mid-poll — retry later).</summary>
     public static string? Rotate(string activeLog, DateTime? nowUtc = null)
     {
         try
@@ -55,7 +73,7 @@ public static class LogStore
             var date = (nowUtc ?? DateTime.UtcNow).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             for (int n = 1; n < 1000; n++)
             {
-                var candidate = Path.Combine(dir, $"{stem}.{date}_{n}.log");
+                var candidate = Path.Combine(dir, $"{stem}.{date}_{n:D3}.log");
                 if (File.Exists(candidate)) continue;
                 File.Move(activeLog, candidate);
                 return candidate;
@@ -63,6 +81,35 @@ public static class LogStore
             return null;
         }
         catch { return null; }
+    }
+
+    /// <summary>Relocate the archive folder beside <paramref name="oldActiveLog"/> to sit beside
+    /// <paramref name="newActiveLog"/> as part of a log MOVE. Cross-volume-safe (a plain
+    /// <see cref="Directory.Move"/> throws across drives) and MERGES into an existing destination
+    /// <c>logs\</c> folder instead of silently stranding the archives (which left a user's rotated
+    /// history orphaned and un-prunable). Existing same-named files at the destination are preserved.
+    /// No-op when there are no archives or source and destination resolve to the same folder. Copies
+    /// before deleting, so a mid-move failure leaves the SOURCE archives intact (caller can roll back).</summary>
+    public static void MoveArchives(string oldActiveLog, string newActiveLog)
+    {
+        var src = ArchiveDir(oldActiveLog);
+        var dst = ArchiveDir(newActiveLog);
+        if (!Directory.Exists(src) || string.Equals(src, dst, StringComparison.OrdinalIgnoreCase)) return;
+        if (!Directory.Exists(dst))
+        {
+            try { Directory.Move(src, dst); return; }       // fast path: same volume, destination absent
+            catch (IOException) { /* cross-volume, or dst appeared — fall through to copy + delete */ }
+        }
+        Directory.CreateDirectory(dst);
+        var copied = new List<string>();
+        foreach (var f in Directory.GetFiles(src))
+        {
+            var target = Path.Combine(dst, Path.GetFileName(f));
+            if (File.Exists(target)) continue;              // never clobber an archive already at the destination
+            File.Copy(f, target); copied.Add(f);
+        }
+        foreach (var f in copied) { try { File.Delete(f); } catch { } }   // only delete sources we successfully copied
+        try { if (!Directory.EnumerateFileSystemEntries(src).Any()) Directory.Delete(src); } catch { }
     }
 
     /// <summary>Retention: delete the OLDEST archives beyond <paramref name="maxFiles"/> and anything
