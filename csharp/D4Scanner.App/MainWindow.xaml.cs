@@ -666,7 +666,12 @@ public partial class MainWindow : Window
         // Retire the full-replay flag only once the replay actually CAUGHT UP — never inside
         // StartWatching. A graceful close mid-replay persists it still-pending (Closing saves
         // settings), so the next launch resumes the rebuild instead of stranding wiped profiles.
-        if (_replayFromZero && _watcher is { IsCaughtUp: true }) { _replayFromZero = false; SaveSettings(); }
+        // Retire the one-shot replay flag once the TTS replay has caught up — OR immediately when there is
+        // no TTS watcher at all (OCR-only mode). With TTS off the flag can never be consumed/retired by a
+        // replay (its only consumers live inside StartWatching's `if (_useTts)`), so it would otherwise stay
+        // stuck-true across restarts and permanently gate tombstone observation above (re-acquired items
+        // would never un-hide). A null watcher here means TTS is off, so there is no in-flight replay to strand.
+        if (_replayFromZero && (_watcher is null || _watcher.IsCaughtUp)) { _replayFromZero = false; SaveSettings(); }
         CheckLogMoveSentinel();
         // Show last scanned item in status bar
         var newest = merged.Gear.OrderByDescending(g => g.LastScannedTicks).FirstOrDefault();
@@ -1270,6 +1275,7 @@ public partial class MainWindow : Window
     void SwitchToProfile(string slug)
     {
         if (slug == _activeSlug) return;
+        _sessionPreview = null; _sessionPreviewLabel = null;   // a real profile switch exits any past-session preview (else EffectiveLive() keeps showing the old session and the switch is a silent on-screen no-op)
         PersistActiveProfile();
         BindTargetToActiveProfile();
         _pendingChars = new();
@@ -2565,8 +2571,14 @@ public partial class MainWindow : Window
         var sessLog = d.Log;
         _ = Task.Run(() => LogStore.Sessions(sessLog)).ContinueWith(t => Dispatcher.Invoke(() =>
         {
-            if (t.IsFaulted || t.Result.Count == 0) return;
+            if (t.IsFaulted) return;   // a genuine index error: leave "loading…" rather than mask the fault
             sessCombo.Items.Clear();
+            if (t.Result.Count == 0)   // otherwise the "loading sessions…" placeholder would sit there forever
+            {
+                sessCombo.Items.Add(new ComboBoxItem { Content = "no past sessions yet", IsEnabled = false });
+                sessCombo.SelectedIndex = 0;
+                return;
+            }
             foreach (var s in Enumerable.Reverse(t.Result).Take(40))   // newest first
                 sessCombo.Items.Add(new ComboBoxItem { Content = s.Label, Tag = s });
             sessCombo.SelectedIndex = 0;
@@ -2757,15 +2769,23 @@ public partial class MainWindow : Window
         // on a marker TIMESTAMPED AFTER the move (or explicit adopt/dismiss).
         if (moving)
         {
+            var dest = d.MoveLogTo!;
+            bool fileMoved = false;
             try
             {
-                var dest = d.MoveLogTo!;
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 if (File.Exists(dest))
                 { MessageBox.Show($"A file already exists at:\n{dest}\n\nPick a different location.", "Move blocked", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-                if (File.Exists(_log)) File.Move(_log, dest);
-                var oldArch = LogStore.ArchiveDir(_log); var newArch = LogStore.ArchiveDir(dest);
-                if (Directory.Exists(oldArch) && !Directory.Exists(newArch)) Directory.Move(oldArch, newArch);
+                // Move the active file FIRST (a single, easily-reversible op), then the archives. If the
+                // archive step throws we roll the active file back, so the "nothing was applied" message
+                // below stays TRUE and the log is never stranded. (Previously a cross-volume move stranded
+                // the active file — File.Move copies+deletes across drives and succeeds, but the old
+                // Directory.Move then threw, leaving the file at dest while _log still pointed at the gone
+                // source and the user was told nothing happened.)
+                if (File.Exists(_log)) { File.Move(_log, dest); fileMoved = true; }
+                // Relocate archives cross-volume-safely, MERGING into any existing destination logs\ folder
+                // rather than silently skipping (which used to strand the rotated history, un-prunable).
+                LogStore.MoveArchives(_log, dest);
                 Environment.SetEnvironmentVariable("D4TTS_LOG", dest, EnvironmentVariableTarget.User);
                 _logOldPath = _log; _logMovedUtcTicks = DateTime.UtcNow.Ticks;
                 _log = dest;
@@ -2774,6 +2794,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
+                if (fileMoved) { try { File.Move(dest, _log); } catch { } }   // un-strand the active log so the move is truly atomic
                 MessageBox.Show("Moving the log failed: " + ex.Message + "\n\nNothing was applied; your changes are still staged.",
                     "Move failed", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;

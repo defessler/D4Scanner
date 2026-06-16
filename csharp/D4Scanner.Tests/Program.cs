@@ -3660,7 +3660,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         // rotation: active -> dated archive; the active file is gone until the shim recreates it
         File.WriteAllLines(active, SessionLines("2026-06-10T08:00:00Z", "OLD SESSION HELM"));
         var archived = LogStore.Rotate(active, new DateTime(2026, 6, 10, 9, 0, 0, DateTimeKind.Utc));
-        Check("LogStore: rotation produces a dated archive", archived != null && archived.Contains("2026-06-10_1"));
+        Check("LogStore: rotation produces a dated archive", archived != null && archived.Contains("2026-06-10_001"));
         Check("LogStore: the active file is moved away", !File.Exists(active));
         Eq("LogStore: archives lists the rotated file", 1, LogStore.Archives(active).Count);
         Check("LogStore: rotating a missing active file is a no-op", LogStore.Rotate(active) == null);
@@ -3668,7 +3668,7 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
         // a second rotation the same day de-collides with the counter suffix
         File.WriteAllLines(active, SessionLines("2026-06-10T10:00:00Z", "SECOND HELM"));
         var archived2 = LogStore.Rotate(active, new DateTime(2026, 6, 10, 11, 0, 0, DateTimeKind.Utc));
-        Check("LogStore: same-day rotation de-collides", archived2 != null && archived2.Contains("2026-06-10_2"));
+        Check("LogStore: same-day rotation de-collides", archived2 != null && archived2.Contains("2026-06-10_002"));
 
         // session index spans archives + active, oldest -> newest, with parsed [ISO] start times
         File.WriteAllLines(active, SessionLines("2026-06-12T09:00:00Z", "CURRENT HELM"));
@@ -3706,6 +3706,66 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
             w.Build.Gear.Any(g => g.RawName == "CURRENT HELM"));
     }
     finally { try { Directory.Delete(tmpLog, recursive: true); } catch { } }
+}
+
+// ---- v0.95: LogStore archive ORDERING survives >=10 same-day rotations (data-loss fix) ----
+{
+    var tmpLog = Path.Combine(Path.GetTempPath(), "d4s_logorder_" + Guid.NewGuid().ToString("N"));
+    var arch = Path.Combine(tmpLog, "logs");
+    var active = Path.Combine(tmpLog, "d4_tts.log");
+    try
+    {
+        Directory.CreateDirectory(arch);
+        // 12 same-day archives created OUT OF ORDER on disk, MIXING zero-padded (new) and unpadded
+        // (legacy) counters. A raw lexical sort would place _10/_11/_12 BEFORE _2.._9 — making Prune
+        // delete the newest and the session list show them out of order. The parsed (date,counter) sort must not.
+        foreach (var n in new[] { "010", "2", "001", "012", "9", "011", "003", "004", "005", "006", "007", "008" })
+            File.WriteAllText(Path.Combine(arch, $"d4_tts.2026-06-12_{n}.log"), "x");
+        int Counter(string f) { var s = Path.GetFileNameWithoutExtension(f); return int.Parse(s.Substring(s.LastIndexOf('_') + 1)); }
+        var ordered = LogStore.Archives(active).Select(Counter).ToList();
+        Eq("LogStore: all 12 same-day archives listed", 12, ordered.Count);
+        bool ascending = true; for (int i = 1; i < ordered.Count; i++) if (ordered[i] <= ordered[i - 1]) ascending = false;
+        Check("LogStore: >=10 same-day archives sort by NUMERIC counter, not lexical (_2 before _10)", ascending);
+        Check("LogStore: newest same-day archive (_12) sorts last", ordered[^1] == 12);
+
+        // retention deletes the OLDEST (lowest counter) and KEEPS the newest — the actual data-loss fix
+        LogStore.Prune(active, maxFiles: 3, maxAgeDays: 3650);
+        var kept = LogStore.Archives(active).Select(Counter).OrderBy(x => x).ToList();
+        Check("LogStore.Prune: keeps the 3 NEWEST same-day archives (_10,_11,_12), not _1.._3",
+            kept.Count == 3 && kept[0] == 10 && kept[1] == 11 && kept[2] == 12);
+    }
+    finally { try { Directory.Delete(tmpLog, recursive: true); } catch { } }
+}
+
+// ---- v0.95: LogStore.MoveArchives — merge into an existing dest logs\, preserve collisions, no-op safely ----
+{
+    var srcRoot = Path.Combine(Path.GetTempPath(), "d4s_movesrc_" + Guid.NewGuid().ToString("N"));
+    var dstRoot = Path.Combine(Path.GetTempPath(), "d4s_movedst_" + Guid.NewGuid().ToString("N"));
+    var srcArch = Path.Combine(srcRoot, "logs");
+    var dstArch = Path.Combine(dstRoot, "logs");
+    try
+    {
+        Directory.CreateDirectory(srcArch);
+        Directory.CreateDirectory(dstArch);
+        File.WriteAllText(Path.Combine(srcArch, "d4_tts.2026-06-10_001.log"), "A");
+        File.WriteAllText(Path.Combine(srcArch, "d4_tts.2026-06-10_002.log"), "B");
+        File.WriteAllText(Path.Combine(dstArch, "d4_tts.2026-06-09_001.log"), "PRE");    // dest already HAS a logs\ folder (old code silently stranded the source archives)
+        File.WriteAllText(Path.Combine(dstArch, "d4_tts.2026-06-10_002.log"), "KEEP");   // a name collision that must be preserved, not clobbered
+
+        LogStore.MoveArchives(Path.Combine(srcRoot, "d4_tts.log"), Path.Combine(dstRoot, "d4_tts.log"));
+
+        Eq("MoveArchives: merges into an existing dest logs\\ (was: silently stranded)", 3, Directory.GetFiles(dstArch).Length);
+        Check("MoveArchives: a non-colliding source archive moved in", File.Exists(Path.Combine(dstArch, "d4_tts.2026-06-10_001.log")));
+        Check("MoveArchives: the pre-existing dest archive survived", File.Exists(Path.Combine(dstArch, "d4_tts.2026-06-09_001.log")));
+        Check("MoveArchives: a name collision at dest is PRESERVED, not clobbered",
+            File.ReadAllText(Path.Combine(dstArch, "d4_tts.2026-06-10_002.log")) == "KEEP");
+        Check("MoveArchives: the colliding SOURCE archive is not lost (left at source)", File.Exists(Path.Combine(srcArch, "d4_tts.2026-06-10_002.log")));
+        Check("MoveArchives: the moved source archive is gone from source", !File.Exists(Path.Combine(srcArch, "d4_tts.2026-06-10_001.log")));
+
+        LogStore.MoveArchives(Path.Combine(dstRoot, "d4_tts.log"), Path.Combine(dstRoot, "d4_tts.log"));   // src==dst -> no-op, no throw
+        Eq("MoveArchives: same-folder move is a no-op", 3, Directory.GetFiles(dstArch).Length);
+    }
+    finally { try { Directory.Delete(srcRoot, recursive: true); } catch { } try { Directory.Delete(dstRoot, recursive: true); } catch { } }
 }
 
 // ---- report ----
