@@ -1,8 +1,24 @@
 # Changelog
 
-Every released version of D4Scanner, newest first — consolidated from the GitHub release notes in strict version order (v0.100.0 → v0.1.0).
+Every released version of D4Scanner, newest first — consolidated from the GitHub release notes in strict version order (newest → v0.1.0).
 
-> **Version ordering:** GitHub correctly marks **v0.100.0** as Latest (it is semver-aware), and the in-app auto-updater compares with `System.Version`, so 0.100.0 > 0.99.0 everywhere it matters. Only *plain lexical* tag sorting (`git tag` with no flags) misplaces v0.100.0 before v0.11 — use `git tag --sort=-v:refname` (or `sort -V`) for correct order.
+> **Version ordering:** GitHub correctly marks the latest release as Latest (it is semver-aware), and the in-app auto-updater compares with `System.Version`, so 0.100.0 > 0.99.0 everywhere it matters. Only *plain lexical* tag sorting (`git tag` with no flags) misplaces v0.100+ before v0.11 — use `git tag --sort=-v:refname` (or `sort -V`) for correct order.
+
+## v0.101.0 — 2026-06-16
+
+
+The floating compare card now connects to the **specific gear icon** under your cursor, instead of always parking on the right side of the paper doll.
+
+- **Anchored to the hovered icon's side.** Hover an armor slot (left column) and the card opens to the **left**, beside that icon; hover a ring/amulet/weapon (right column) and it opens to the **right**. The card still sits *beside* the doll — it never covers any icon, always stays fully on-screen, and its width is budgeted to fit (falling back to whichever side has room on a narrow window).
+- **No more flashing on a quick mouse pass.** A short (~90 ms) open delay means sweeping the cursor across the tight icon grid no longer flickers a card per slot — but when a card is already open, moving to another icon **switches instantly** (no delay).
+- **Gentle fade-in** when the card appears.
+- **Esc closes the card** (after any real modal).
+
+Dismiss-on-leave and switch-on-new-icon (the existing deferred-close + both-targets hit-test) are unchanged — they were already solid.
+
+### Notes
+- Build warning-free; the static paper-doll render is byte-identical (the change is purely hover behavior).
+- A small connector "beak" pointing from the card at the icon was scoped but deferred: its vertical alignment needs one round of live visual confirmation (the hover popup can't be exercised by the headless render harness), so it's a fast follow rather than something shipped unverified.
 
 ## v0.100.0 — 2026-06-16
 
