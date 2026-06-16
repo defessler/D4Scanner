@@ -570,18 +570,24 @@ public sealed class LogWatcher : IDisposable
             ClassifyContext(item, allLines, i, allLines.Length);
             if (!item.Equipped)
             {
-                // Self-heal (mirrors Poll's Commit): a non-equipped sighting evicts an earlier wrongly-equipped
-                // copy of the SAME PHYSICAL ITEM (same content fingerprint) — never a genuinely different roll the
-                // player also owns under the same name. Matching name+slot alone knocked the worn item off the
-                // doll whenever a different-stat copy was hovered in the bags.
-                var key = (item.Slot ?? "?") + ":" + item.RawName;
-                var fp = GearList.Fingerprint(item);
-                ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
+                EvictStaleEquippedCopy(ordered, item);
                 if (equippedOnly) continue;
             }
             ordered.Add(item);
         }
         return new LiveBuild { Gear = LatestPerSlot(ordered), Character = ch.Character.Clone(), Skills = sk.Skills, Roster = OwnRoster(charSel) };
+    }
+
+    /// <summary>Self-heal for the one-shot replay paths: a non-equipped sighting of an item evicts an earlier
+    /// wrongly-equipped copy of the SAME physical item (same content fingerprint) from <paramref name="ordered"/>
+    /// — never a genuinely different roll the player also owns under the same name (matching name+slot alone
+    /// used to knock the worn item off the doll when a different-stat copy was hovered in the bags). Mirrors
+    /// Poll's <see cref="Commit"/>.</summary>
+    static void EvictStaleEquippedCopy(List<Item> ordered, Item nonEquipped)
+    {
+        var key = (nonEquipped.Slot ?? "?") + ":" + nonEquipped.RawName;
+        var fp = GearList.Fingerprint(nonEquipped);
+        ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
     }
 
     /// <summary>One archived character's reconstructed worn loadout, keyed by the SAME (name, class) the
@@ -647,11 +653,7 @@ public sealed class LogWatcher : IDisposable
             if (cur == null) continue;                                   // gear before any confirmed character — unattributable
             if (!item.Equipped)
             {
-                // self-heal (mirrors BuildFromLines): a non-equipped sighting evicts an earlier wrongly-equipped
-                // copy of the SAME physical item; profiles store WORN gear, so non-equipped is otherwise skipped
-                var key = (item.Slot ?? "?") + ":" + item.RawName;
-                var fp = GearList.Fingerprint(item);
-                cur.Ordered.RemoveAll(x => x.Equipped && ((x.Slot ?? "?") + ":" + x.RawName) == key && GearList.Fingerprint(x) == fp);
+                EvictStaleEquippedCopy(cur.Ordered, item);   // profiles store WORN gear; non-equipped is otherwise skipped
                 continue;
             }
             cur.Ordered.Add(item);
@@ -667,8 +669,7 @@ public sealed class LogWatcher : IDisposable
             var k = name.ToLowerInvariant() + "|" + (cls ?? "");
             if (!byChar.TryGetValue(k, out var acc)) acc = (name, cls, new List<Item>(), build);
             acc.Gear.AddRange(build.Gear);
-            acc.Last = build;                          // latest visit's character sheet / skills
-            if (acc.Class == null && cls != null) acc.Class = cls;
+            acc.Last = build;                          // latest visit's character sheet / skills (class is fixed by the key)
             byChar[k] = acc;
         }
 
