@@ -3869,6 +3869,52 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     finally { try { Directory.Delete(tmp, recursive: true); } catch { } }
 }
 
+// ---- Parser robustness: the untrusted-input entry points never THROW on adversarial lines ----
+{
+    // GearParser (TTS) and ParseTooltipLines (OCR) ingest UNTRUSTED text — noisy OCR, malformed TTS,
+    // mojibake. The contract is fail-safe: bad input yields null/skips, never an unhandled exception
+    // (a throw here crashes the live capture loop). This deterministic fuzz (fixed seed → reproducible)
+    // hammers the entry points with malformed/extreme/corrupted lines and asserts NO throw escapes.
+    var rng = new Random(20260615);
+    string[] toks = {
+        "", " ", "\t", "EQUIPPED", "Item Power", "Legendary", "Mythic Unique", "Helm", "Ring", "Two-Handed Sword",
+        "+1,540 Maximum Life [1,300 - 1,600]", "[2026-06-15T09:00:00Z]", "=== d4scanner tts shim attached", "Set Charm",
+        "999999999999999999999999999", "-", "[", "]", "()", "%", "★", "◆", "Requires Level 70", "RANK 20/15",
+        "50 (+30/25) Quality", "Two-Handed", "1e308", "0x10", ",,,,", "[ - ]", "+. [.]", "NaN", "∞", "  800  Item  Power  ",
+    };
+    string Fuzz(int maxLen)
+    {
+        switch (rng.Next(4))
+        {
+            case 0: return toks[rng.Next(toks.Length)];
+            case 1: var sb = new System.Text.StringBuilder(); int n = rng.Next(maxLen); for (int i = 0; i < n; i++) sb.Append((char)rng.Next(32, 0x2600)); return sb.ToString();
+            case 2: var p = new List<string>(); int m = rng.Next(6); for (int i = 0; i < m; i++) p.Add(toks[rng.Next(toks.Length)]); return string.Join(" ", p);
+            default: return new string((char)rng.Next(32, 127), rng.Next(maxLen * 4));   // long single-char runs
+        }
+    }
+
+    bool threw = false; string? crash = null;
+    var seg = new GearParser();
+    for (int i = 0; i < 5000 && !threw; i++)
+    {
+        var line = Fuzz(40);
+        try { seg.Feed(line); }
+        catch (Exception ex) { threw = true; crash = $"Feed threw {ex.GetType().Name} on «{line}»"; }
+    }
+    Check("Parser robustness: GearParser.Feed never throws on 5000 fuzzed lines" + (crash != null ? " — " + crash : ""), !threw);
+
+    threw = false; crash = null;
+    for (int i = 0; i < 2000 && !threw; i++)
+    {
+        var block = new List<string>();
+        int n = rng.Next(12);
+        for (int j = 0; j < n; j++) block.Add(Fuzz(30));
+        try { GearParser.ParseTooltipLines(block); LogWatcher.BuildFromLines(block.ToArray()); LogWatcher.ReplayCharactersFromLines(block.ToArray()); }
+        catch (Exception ex) { threw = true; crash = $"{ex.GetType().Name}: {ex.Message}"; }
+    }
+    Check("Parser robustness: ParseTooltipLines / BuildFromLines / ReplayCharacters never throw on fuzzed blocks" + (crash != null ? " — " + crash : ""), !threw);
+}
+
 // ---- report ----
 Console.WriteLine($"D4Scanner.Core tests: {passed} passed, {failed} failed");
 foreach (var f in failures) Console.WriteLine("  FAIL: " + f);
