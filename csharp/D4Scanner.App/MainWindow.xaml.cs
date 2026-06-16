@@ -232,6 +232,15 @@ public partial class MainWindow : Window
     double _dollLeft = -1, _dollRight = -1;   // its window-space X bounds, measured at hover time (-1 = unknown)
     const double dollGap = 12, scrollPad = 18;   // hover-card placement: gap from the doll + scrollbar allowance (shared by ShowHover + ClampPopupInWindow)
 
+    // ---- hover-placement render-test probe (env-gated; ZERO effect live — _renderW stays 0) ----
+    double _renderW, _renderH;   // headless render dimensions; 0 live so WinW/WinH fall through to ActualWidth/Height
+    System.Collections.Generic.List<(string key, FrameworkElement icon, FrameworkElement row, Section sec)>? _rhCapture;   // non-null only during D4_RENDER_HOVER probe
+    double WinW => _renderW > 0 ? _renderW : ActualWidth;   // window width for placement math (live: ActualWidth; headless: requested W)
+    double WinH => _renderH > 0 ? _renderH : ActualHeight;  // window height for placement math
+    Visual? _renderRoot;   // headless: the laid-out Content visual (the Window itself never participates in layout,
+                           // so TransformToAncestor(this) throws); placement transforms use this instead. Null live.
+    Visual PlacementRoot => _renderRoot ?? this;   // transform target for window-space coords (live: the Window)
+
     long _logSkipToPos;    // when > 0, next LogWatcher starts here (skips old log data after a live-cache clear)
     bool _replayFromZero;  // one-shot (persisted): next LogWatcher replays the WHOLE TTS log to rebuild gear;
                            // retired in OnLiveUpdate only once the replay actually caught up (a graceful
@@ -1428,6 +1437,8 @@ public partial class MainWindow : Window
         else if (seed == "steps") _stepsView = true;
         else if (seed == "raw") _rawView = true;
         else if (seed == "target") _dollView = "target";
+        bool hoverProbe = System.Environment.GetEnvironmentVariable("D4_RENDER_HOVER") == "1";
+        if (hoverProbe) { _renderW = w; _renderH = h; _rhCapture = new(); }   // capture slot icon/row geometry during Render()
         Render();
         if (seed == "help" || System.Environment.GetEnvironmentVariable("D4_RENDER_HELP") == "1") ToggleHelp();
         try
@@ -1455,9 +1466,46 @@ public partial class MainWindow : Window
 
         var content = (FrameworkElement)Content;
         var size = new Size(w, h);
+        // Re-render once with a FRESH capture list so the probe only holds rows from the tree we're about to lay
+        // out (earlier Render() calls — modals, reflow — would otherwise leave detached rows in the list).
+        if (hoverProbe) { _rhCapture = new(); Render(); }
         content.Measure(size);
         content.Arrange(new Rect(size));
         content.UpdateLayout();
+        if (hoverProbe) _renderRoot = content;   // headless transform target (the Window never participates in layout)
+
+        // ---- hover-placement probe (render-test-only): for each captured gear slot, build the real card via the
+        // same helper ShowHover uses, run the real ClampPopupInWindow, and report icon/card geometry numerically.
+        // The live Popup is a separate HWND not captured by rtb.Render, so this is how placement gets VERIFIED.
+        if (hoverProbe && _rhCapture is { } caps)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var (key, icon, row, sec) in caps)
+            {
+                if (sec.Gear == null) continue;
+                try
+                {
+                    _hoverIcon = icon;
+                    var (card, cardW) = BuildHoverCard(sec, icon);
+                    if (card == null) continue;
+                    _hoverCardW = cardW;
+                    double pw = cardW + scrollPad;
+                    card.Measure(new Size(pw, WinH));
+                    double ch = Math.Min(card.DesiredSize.Height, Math.Max(300, WinH - 60));
+                    var pl = ClampPopupInWindow(row, new Size(pw, ch), row.RenderSize)[0];
+                    var rp = row.TransformToAncestor(PlacementRoot).Transform(new Point(0, 0));
+                    double ax = rp.X + pl.Point.X, ay = rp.Y + pl.Point.Y;
+                    var icr = WinRect(icon);
+                    var cardRect = new Rect(ax, ay, pw, ch);
+                    bool onScreen = ax >= -1 && ay >= -1 && ax + cardRect.Width <= WinW + 1 && ay + cardRect.Height <= WinH + 1;
+                    sb.AppendLine($"{key}: icon=({icr.Left:0},{icr.Top:0},{icr.Width:0}x{icr.Height:0}) "
+                        + $"card=({ax:0},{ay:0},{pw:0}x{ch:0}) axis={pl.PrimaryAxis} "
+                        + $"coversIcon={cardRect.IntersectsWith(icr)} onScreen={onScreen}");
+                }
+                catch (Exception ex) { sb.AppendLine($"{key}: ERROR {ex.Message}"); }
+            }
+            try { File.WriteAllText(Path.GetFullPath(outPng) + ".hover.txt", sb.ToString()); } catch { }
+        }
 
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(content);
@@ -4617,41 +4665,54 @@ public partial class MainWindow : Window
     // floating compare card shown while hovering a slot. The card anchors BESIDE the hovered ICON (opening to its
     // right, flipping left / below at the window edge) so that icon stays fully visible — it may cover NEIGHBOURING
     // icons/panels, which is fine for a transient hover card. `icon` = the hovered tile (null → legacy beside-the-doll).
-    void ShowHover(Section s, UIElement target, FrameworkElement? icon)
+    // Build the floating compare card + decide its budgeted width for the given hovered icon. Extracted from
+    // ShowHover so the render-test probe can build the exact same card headlessly. Returns (card, cardW); card
+    // is null only when the slot carries no gear. Reads WinW (live ActualWidth; headless render-W) so the probe
+    // can exercise real window sizes — behaviour is identical live because _renderW stays 0.
+    (ScrollViewer? card, double cardW) BuildHoverCard(Section s, FrameworkElement? icon)
     {
-        if (s.Gear == null) return;
+        if (s.Gear == null) return (null, 0);
         var it = s.Gear.LiveItems.Count > 0 ? s.Gear.LiveItems[0] : null;
         // EXPLICIT width, budgeted to the window (not Min/Max bounds): a Popup measures its child with
         // INFINITE space, where the card's star columns size to their content — long affix rows pushed
         // the card past the window edge and the right panel rendered clipped mid-word. A fixed width
         // forces the two panels to split it evenly and their text to wrap; small windows get a
         // proportionally narrower card instead of a cut-off one.
-        // Measure the paper-doll icon grid so the card sits in the CLEAR space beside it (the rail/margin),
-        // never over the icons. cardW is budgeted to that gap; falls back to the old full-width budget when the
-        // doll isn't measured (e.g. a non-doll hover) or the window is too narrow for a readable card beside it.
-        _dollLeft = _dollRight = -1;
-        // Only measure when this hover's target is genuinely inside the CURRENT doll grid (guards a stale ref
-        // from a previous render / a non-doll hover, which would otherwise place the card at a phantom doll).
-        if (_dollElement is { } de && de.RenderSize.Width > 1
-            && de is Visual dv && target is Visual tv && dv.IsAncestorOf(tv))
-            try { double dl = de.TransformToAncestor(this).Transform(new Point(0, 0)).X; _dollLeft = dl; _dollRight = dl + de.RenderSize.Width; }
-            catch { }
-        // Budget the card width to the clear space BESIDE THE HOVERED ICON (the larger of right-or-left of it) so it
-        // fits whichever side it lands on; fall back to beside-the-whole-doll only when the icon isn't measured.
-        _hoverIcon = icon;
+        // Budget the card width to the clear space BESIDE THE HOVERED ICON: prefer the RIGHT of the icon (where
+        // the card lands by default), then fall back to the LEFT, then to the wider of the two. With the doll
+        // left-aligned, the right space is always the roomy side, so this normally yields the full 760 budget.
         var ir = WinRect(icon);
         double cardW;
         if (!ir.IsEmpty)
-            cardW = Math.Clamp(Math.Min(ActualWidth - 80, Math.Max(Math.Max(ActualWidth - ir.Right, ir.Left) - dollGap - scrollPad, 0)), 420, 760);
-        else if (_dollRight >= 0)
-            cardW = Math.Clamp(Math.Min(ActualWidth - 80, Math.Max(ActualWidth - _dollRight - dollGap - scrollPad, _dollLeft - dollGap - scrollPad)), 420, 760);
+        {
+            double rightRoom = WinW - ir.Right - dollGap - scrollPad;
+            double leftRoom = ir.Left - dollGap - scrollPad;
+            double room = rightRoom >= 420 ? rightRoom : leftRoom >= 420 ? leftRoom : Math.Max(rightRoom, leftRoom);
+            cardW = Math.Clamp(Math.Min(WinW - 80, room), 420, 760);
+        }
         else
-            cardW = Math.Clamp(ActualWidth - 80, 420, 760);
+            cardW = Math.Clamp(WinW - 80, 420, 760);
         var cc = (FrameworkElement)CompareCard(s.Gear, it, s.Label, s.Key);
         cc.Width = cardW;
         // tall cards (uniques with powers + NOT-IN-BUILD extras) must scroll, not run off the screen
         var sv = new ScrollViewer
-        { Content = cc, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Max(300, ActualHeight - 60) };
+        { Content = cc, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Max(300, WinH - 60) };
+        return (sv, cardW);
+    }
+
+    void ShowHover(Section s, UIElement target, FrameworkElement? icon)
+    {
+        if (s.Gear == null) return;
+        // The doll is left-aligned; the LEGACY beside-the-whole-doll bounds are no longer used for placement
+        // (the card anchors to the icon), but keep them measured for the icon-not-measured fallback branch.
+        _dollLeft = _dollRight = -1;
+        if (_dollElement is { } de && de.RenderSize.Width > 1
+            && de is Visual dv && target is Visual tv && dv.IsAncestorOf(tv))
+            try { double dl = de.TransformToAncestor(PlacementRoot).Transform(new Point(0, 0)).X; _dollLeft = dl; _dollRight = dl + de.RenderSize.Width; }
+            catch { }
+        _hoverIcon = icon;
+        var (sv, cardW) = BuildHoverCard(s, icon);
+        if (sv == null) return;
         // moving the cursor ONTO the card (or the card overlapping the cursor in a narrow window) keeps it open;
         // the deferred close only fires once the mouse has left both the slot and the card (anti-flicker).
         sv.MouseEnter += (_, _) => CancelHoverClose();
@@ -4661,15 +4722,30 @@ public partial class MainWindow : Window
         _hoverCardW = cardW;        // a fixed width for the placement decision (independent of the live popup size)
         _hoverKey = s.Key;
         _hoverPopup.PlacementTarget = target;
-        // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the slot,
-        // flip LEFT if that would overflow, then clamp BOTH axes inside the window (a tall card near the
-        // bottom slides up instead of running off below). The width clamp above keeps cardW < window and the
-        // MaxHeight keeps it < window, so the clamp always yields a fully-visible card. A Custom placement is
-        // clamped explicitly because WPF only auto-nudges the BUILT-IN modes, and that nudge proved unreliable
-        // for this transparent popup — the manual Left/Right flip it replaces could still run off the far edge.
+        // Keep the WHOLE card on-screen for any slot position / window size: open to the RIGHT of the icon,
+        // flip LEFT if that would overflow, then drop below/above; the clamp keeps it fully visible. A Custom
+        // placement is clamped explicitly because WPF only auto-nudges the BUILT-IN modes, and that nudge proved
+        // unreliable for this transparent popup. The popup is already open when switching to a NEW icon, so
+        // re-assign the callback (a fresh delegate captures the new `target`) and force a reposition below.
         _hoverPopup.CustomPopupPlacementCallback = (popupSize, targetSize, _) => ClampPopupInWindow(target, popupSize, targetSize);
         _hoverPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Custom;
+        bool wasOpen = _hoverPopup.IsOpen;
         _hoverPopup.IsOpen = true;
+        // When switching icons the popup was ALREADY open, so assigning a new Child/PlacementTarget/callback
+        // does NOT re-run placement — the card would stay parked at the previous icon. Nudge it to recompute.
+        if (wasOpen) ReanchorHoverPopup();
+    }
+
+    // Force the open popup to re-evaluate CustomPopupPlacementCallback. Assigning a new Child / PlacementTarget
+    // to an already-open Popup does NOT re-run placement, so a card switched to a new icon stays at the old
+    // position. Nudging HorizontalOffset (set then restore) makes WPF recompute placement against the current
+    // target — the documented way to reposition an open custom-placed popup.
+    void ReanchorHoverPopup()
+    {
+        if (!_hoverPopup.IsOpen) return;
+        double off = _hoverPopup.HorizontalOffset;
+        _hoverPopup.HorizontalOffset = off + 1;
+        _hoverPopup.HorizontalOffset = off;
     }
 
     /// <summary>Placement callback: anchor the card BESIDE THE HOVERED ICON so that icon stays fully visible. Prefer
@@ -4685,9 +4761,9 @@ public partial class MainWindow : Window
             new Point(targetSize.Width, 0), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
         if (target is not FrameworkElement fe) return fallback;
         Point tw;
-        try { tw = fe.TransformToAncestor(this).Transform(new Point(0, 0)); }   // target top-left, window DIPs
+        try { tw = fe.TransformToAncestor(PlacementRoot).Transform(new Point(0, 0)); }   // target top-left, window DIPs
         catch { return fallback; }
-        double w = ActualWidth, h = ActualHeight, gap = dollGap;
+        double w = WinW, h = WinH, gap = dollGap;
         double pw = (_hoverCardW > 0 ? _hoverCardW : popupSize.Width) + scrollPad;   // stable width (+scrollbar allowance)
         double ph = popupSize.Height;
         var V  = System.Windows.Controls.Primitives.PopupPrimaryAxis.Vertical;
@@ -4695,9 +4771,10 @@ public partial class MainWindow : Window
         var ir = WinRect(_hoverIcon);
         if (!ir.IsEmpty)
         {
-            double yBeside = Math.Max(0, Math.Min(ir.Top, h - ph));                       // align card top to the icon; slide up near the bottom
-            if (ir.Right + gap + pw <= w) return One(ir.Right + gap, yBeside, tw, V);     // RIGHT of the icon (preferred)
-            if (ir.Left - gap - pw >= 0)  return One(ir.Left - gap - pw, yBeside, tw, V);  // flip LEFT of the icon
+            double yBeside = Math.Max(0, Math.Min(ir.Top, h - ph));                          // align card top to the icon; slide up near the bottom
+            const double eps = 0.5;                                                          // subpixel slack: the width budget fills to the exact edge, so a fit test of == must be tolerant
+            if (ir.Right + gap + pw <= w + eps) return One(ir.Right + gap, yBeside, tw, V);   // RIGHT of the icon (preferred)
+            if (ir.Left - gap - pw >= -eps)     return One(ir.Left - gap - pw, yBeside, tw, V);  // flip LEFT of the icon
             // neither side fits a full card → go BELOW the icon (it stays visible above), or ABOVE near the bottom
             double xb = Math.Max(0, Math.Min(ir.Left, w - pw));
             double yb = ir.Bottom + gap + ph <= h ? ir.Bottom + gap : Math.Max(0, ir.Top - gap - ph);
@@ -4713,8 +4790,8 @@ public partial class MainWindow : Window
     // window-space rect of a live element, or Rect.Empty if it isn't measured / no longer in this window's visual tree.
     Rect WinRect(FrameworkElement? fe)
     {
-        if (fe is null || fe.RenderSize.Width < 1 || !IsAncestorOf(fe)) return Rect.Empty;
-        try { return new Rect(fe.TransformToAncestor(this).Transform(new Point(0, 0)), fe.RenderSize); }
+        if (fe is null || fe.RenderSize.Width < 1 || (_renderRoot == null && !IsAncestorOf(fe))) return Rect.Empty;
+        try { return new Rect(fe.TransformToAncestor(PlacementRoot).Transform(new Point(0, 0)), fe.RenderSize); }
         catch { return Rect.Empty; }
     }
 
@@ -4883,6 +4960,7 @@ public partial class MainWindow : Window
             _hoverPopup.IsOpen = false; Render();
             Toast(wasPinned ? $"Unpinned  {s.Label}" : $"Pinned  {s.Label}");
         };
+        if (_rhCapture != null) _rhCapture.Add((s.Key, (FrameworkElement)icon, b, s));   // render-test probe: collect icon/row geometry
         return b;
     }
 
