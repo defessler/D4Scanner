@@ -86,17 +86,29 @@ public static class Updater
     static string StagedPath(string tag) =>
         Path.Combine(UpdateDir, $"D4Scanner-{tag}-win-x64.exe");
 
-    /// <summary>Returns the staged update file and its tag if one is newer than the running version, else null.</summary>
+    /// <summary>Returns the staged update file with the NEWEST tag that is still newer than the running
+    /// version, else null.</summary>
     public static (string path, string tag)? FindStagedUpdate()
     {
         if (!Directory.Exists(UpdateDir)) return null;
-        var running = RunningVersion();
-        foreach (var f in Directory.GetFiles(UpdateDir, "D4Scanner-v*-win-x64.exe"))
+        return BestStaged(Directory.GetFiles(UpdateDir, "D4Scanner-v*-win-x64.exe"), RunningVersion());
+    }
+
+    /// <summary>From a set of staged-asset paths, the one with the NEWEST tag that is still newer than
+    /// <paramref name="running"/>, or null. Must pick the MAX (not the first match): nothing prunes the
+    /// staging dir, so a staged update deferred across a later release leaves an older exe lingering, and
+    /// returning that older file would apply — and the UI would mis-advertise — the wrong version. Pure
+    /// (no I/O) so the selection is unit-testable; <see cref="FindStagedUpdate"/> globs the dir and delegates.</summary>
+    public static (string path, string tag)? BestStaged(IEnumerable<string> files, string running)
+    {
+        (string path, string tag)? best = null;
+        foreach (var f in files)
         {
             var tag = TagFromAssetFile(f);
-            if (tag != null && IsNewer(tag, running)) return (f, tag);
+            if (tag == null || !IsNewer(tag, running)) continue;
+            if (best == null || IsNewer(tag, best.Value.tag)) best = (f, tag);
         }
-        return null;
+        return best;
     }
 
     /// <summary>Download the release asset for <paramref name="tag"/> to the staging directory.
