@@ -29,6 +29,19 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // "--autohover <slot index>": show a REAL window and auto-open the hover compare-card for one paper-doll slot,
+        // so a screen capture (which sees the popup's own HWND, unlike --render's RenderTargetBitmap) can verify the
+        // card lands BESIDE the icon and never over it. Bypasses the single-instance guard so it can run alongside the
+        // user's live app; the window reads D4_AUTOHOVER to arm the seam (MainWindow.MaybeArmAutoHover).
+        int aidx = System.Array.IndexOf(e.Args, "--autohover");
+        if (aidx >= 0)
+        {
+            string slot = (aidx + 1 < e.Args.Length && !e.Args[aidx + 1].StartsWith("--")) ? e.Args[aidx + 1] : "0";
+            System.Environment.SetEnvironmentVariable("D4_AUTOHOVER", slot);
+            base.OnStartup(e);   // StartupUri shows MainWindow; its Loaded handler arms the auto-hover
+            return;
+        }
+
         // Single-instance guard. An update restart hands off to a NEW process while the old one is still
         // shutting down — "--from-update" lets the successor WAIT for the mutex instead of losing the race
         // and silently exiting (the old "app never came back after updating" failure). A plain duplicate

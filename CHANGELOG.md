@@ -4,14 +4,12 @@ All notable changes to D4Scanner, newest first — consolidated to the significa
 
 > **Versioning:** 0.x line. GitHub (Latest badge) and the in-app auto-updater are semver-aware, so 0.100.0 > 0.99.0; only a bare lexical `git tag` sort misplaces v0.100+ (use `git tag --sort=-v:refname`).
 
-## v0.103.0 — 2026-06-16
-- Hover compare card anchoring — fixed and verified. The card now follows your cursor icon-to-icon, opening beside the hovered icon (right, flipping left, or above at a window edge), always keeping that icon fully visible and the card on-screen. Fixes the real bug v0.101/v0.102 missed: switching to a new icon left the card parked at the previous one (WPF doesn't re-run a popup's placement when only its target changes). Verified numerically with a new `D4_RENDER_HOVER` placement probe across 1400/1000/760px.
+## v0.104.0 — 2026-06-16
+- Hover compare card anchoring — genuinely fixed, and verified on-screen this time. Hovering a paper-doll slot opens the compare card *beside* the icon (never over it), it dismisses when you move off, and it follows you icon-to-icon. The fix replaces the hand-rolled absolute-coordinate math (the real source of the card landing on top of the icon) with WPF's standard popup placement: the card is anchored to the icon and offered only icon-relative positions — right, left, below, above — every one entirely outside the icon, so whichever WPF picks, the hovered icon is structurally never covered. Verified by launching the real app and screen-capturing the live popup. (A transparent popup is its own top-level window, invisible to the headless `--render` harness — which is why the "verified" claims in v0.101–v0.103 were false: their probe only tested the placement math, not the real popup.)
+- Fixed two regressions a stuck card caused: the Settings ✕ button did nothing and the version vanished from the status bar. A mispositioned card that stayed open floated over the UI as a transparent always-on-top window and swallowed the ✕ click; modals (Settings, All-Items) now dismiss any open hover card first, and the status bar always shows the running version.
 
-## v0.102.0 — 2026-06-16
-- Reworked the hover compare card to anchor to the specific hovered icon, rather than beside the whole left-aligned paper doll (where v0.101 effectively still opened on the right). Shipped with remaining placement bugs — fully fixed and verified in v0.103.0.
-
-## v0.101.0 — 2026-06-16
-- Hover compare card gained a side-aware open (armor slots open left, rings/amulet/weapons open right), a ~90 ms open delay to stop flicker on a quick mouse sweep (instant switching once a card is open), a gentle fade-in, and Esc-to-close. Superseded same-day by v0.102/v0.103.
+## v0.101.0–v0.103.0 — 2026-06-16
+- Three same-day attempts at the hover-card anchoring above, each shipped as "verified" but still covering the hovered icon (and v0.103 also introduced the Settings ✕ / status-bar regressions). Superseded by v0.104.0; the "verification" was false because the headless render harness cannot capture a transparent popup's separate window.
 
 ## v0.98.0–v0.100.0 — 2026-06-16
 - Internal-only cleanup: Core simplifications (GearParser whole-word match helper, redundant DiffEngine.EvalSlot pass removed, de-duplicated replay self-heal) and removal of ~90 lines of dead WPF App code. No behavior change.
