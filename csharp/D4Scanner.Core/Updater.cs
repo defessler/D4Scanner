@@ -137,6 +137,14 @@ public static class Updater
                     if (total > 0) progress?.Report(downloaded * 100.0 / total);
                 }
             }
+            // Reject an empty or truncated body: a connection-close-delimited response with no Content-Length
+            // can end early without throwing, and a 0-byte 200 writes nothing. Staging a partial exe would let
+            // the next-launch swap rename the working binary out and fail to relaunch — a wedged update.
+            if (downloaded == 0 || (total > 0 && downloaded != total))
+            {
+                try { File.Delete(tmp); } catch { }
+                return false;
+            }
             File.Move(tmp, dest, overwrite: true);
             progress?.Report(100);
             return true;

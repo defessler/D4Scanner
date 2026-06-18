@@ -137,10 +137,17 @@ public static class GameDataIcons
 
     static void Enqueue(uint handle)
     {
-        lock (_qGate) { if (!_queued.Add(handle)) return; }
-        if (Interlocked.CompareExchange(ref _workerStarted, 1, 0) == 0)
-            new Thread(Worker) { IsBackground = true, Name = "d4-icon-extract" }.Start();
-        _queue.Add(handle);
+        // The de-dup add, the worker-start decision, and the queue add must be ONE critical section so they
+        // can't interleave with Worker()'s failure-teardown (clear + drain + reset) below — otherwise a handle
+        // can be added to _queued and drained from _queue with no worker left to process it, stranding its
+        // icon as a silhouette for the rest of the session. _queue is unbounded, so Add never blocks here.
+        lock (_qGate)
+        {
+            if (!_queued.Add(handle)) return;
+            if (Interlocked.CompareExchange(ref _workerStarted, 1, 0) == 0)
+                new Thread(Worker) { IsBackground = true, Name = "d4-icon-extract" }.Start();
+            _queue.Add(handle);
+        }
     }
 
     static void Worker()
@@ -150,9 +157,14 @@ public static class GameDataIcons
             // Open failed: don't strand the queued handles or the worker slot. Clearing the de-dup set
             // and freeing _workerStarted lets the retry path (Get → Enqueue after the backoff) spin up
             // a fresh worker; leaving them latched meant no icon could EVER extract again this session.
-            lock (_qGate) { _queued.Clear(); }
-            while (_queue.TryTake(out _)) { }
-            Interlocked.Exchange(ref _workerStarted, 0);
+            // Clear + drain + reset under _qGate (the same lock Enqueue holds) so the teardown is atomic
+            // w.r.t. a concurrent Enqueue and can't leave a handle in _queued with no worker running.
+            lock (_qGate)
+            {
+                _queued.Clear();
+                while (_queue.TryTake(out _)) { }
+                Interlocked.Exchange(ref _workerStarted, 0);
+            }
             return;
         }
         foreach (var handle in _queue.GetConsumingEnumerable())

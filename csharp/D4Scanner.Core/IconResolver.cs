@@ -49,6 +49,16 @@ public static class IconResolver
 
     static string Safe(string s) => new(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 
+    /// <summary>Collision-resistant cache filename for a per-source value. <see cref="Safe"/> folds every
+    /// non-alphanumeric to '_', so "Andariel's Visage" and "Andariels Visage" would otherwise share one file
+    /// (and one item's icon would show for the other). Appending a short hash of the ORIGINAL value keeps
+    /// distinct names distinct. Public so the de-collision is headlessly unit-testable.</summary>
+    public static string SafeFile(string val)
+    {
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(val)));
+        return Safe(val) + "_" + hash[..8] + ".img";
+    }
+
     static void LoadSources()
     {
         try
@@ -87,7 +97,7 @@ public static class IconResolver
         {
             var val = s.Key.ToLowerInvariant() switch { "name" => name, "id" => id, "image" => image?.ToString(), _ => null };
             if (string.IsNullOrWhiteSpace(val)) continue;
-            var cacheFile = Path.Combine(IconDir, "src", Safe(s.Name), Safe(val!) + ".img");
+            var cacheFile = Path.Combine(IconDir, "src", Safe(s.Name), SafeFile(val!));
             if (File.Exists(cacheFile)) return cacheFile;
             Download(s.UrlTemplate.Replace("{key}", Uri.EscapeDataString(val!)), cacheFile);
         }

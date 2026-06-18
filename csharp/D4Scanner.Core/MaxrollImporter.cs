@@ -83,13 +83,13 @@ public static class MaxrollImporter
             ?? throw new InvalidOperationException("No build (plannerProfile) found on that page.");
 
         var (data, dataDoc) = GetData(pp);
-        log("loading game data …");
-        using var dm = await LoadJsonCached(DataUrl, "maxroll_data.min.json", ct);
-        using var dc = await LoadJsonCached(DcAffixUrl, "d4companion_affixes.json", ct);
-        var maps = BuildMaps(dm.RootElement, dc.RootElement);
-
         try
         {
+            log("loading game data …");
+            using var dm = await LoadJsonCached(DataUrl, "maxroll_data.min.json", ct);
+            using var dc = await LoadJsonCached(DcAffixUrl, "d4companion_affixes.json", ct);
+            var maps = BuildMaps(dm.RootElement, dc.RootElement);
+
             var profiles = data.GetProperty("profiles");
             var prof = ChooseProfile(profiles, profileName);
             var target = BuildTarget(pp, data, prof, dm.RootElement, maps);
@@ -463,9 +463,22 @@ public static class MaxrollImporter
         if (!File.Exists(path))
         {
             var bytes = await Http.GetByteArrayAsync(url, ct);
-            var tmp = path + ".tmp";
-            await File.WriteAllBytesAsync(tmp, bytes, ct);
-            File.Move(tmp, path, overwrite: true);   // atomic — a partial/truncated download must never land at `path`
+            // Unique temp name per attempt: the startup self-heal (EnsureGameDataCachedAsync) and a user
+            // import can both populate the SAME fname concurrently on a cold cache. A shared "<fname>.tmp"
+            // made the second writer throw a sharing violation (or lose the File.Move) and fail the import.
+            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                await File.WriteAllBytesAsync(tmp, bytes, ct);
+                File.Move(tmp, path, overwrite: true);   // atomic — a partial/truncated download must never land at `path`
+            }
+            catch (Exception e)
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                // Benign race: a concurrent caller already populated `path`. Only rethrow if it didn't
+                // (or on cancellation) — otherwise fall through and read the file the winner wrote.
+                if (e is OperationCanceledException || !File.Exists(path)) throw;
+            }
         }
         try { return JsonDocument.Parse(await File.ReadAllBytesAsync(path, ct)); }
         catch { try { File.Delete(path); } catch { } throw; }   // a corrupt cache breaks every future call; drop it so the next call re-downloads

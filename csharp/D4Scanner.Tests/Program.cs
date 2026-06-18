@@ -3511,6 +3511,22 @@ Check("ShouldHideDuplicateWeapon empty set is false", !LiveGearResolver.ShouldHi
     Check("CascRetry: exactly at the backoff -> retry", GameDataIcons.ShouldRetryCasc(t0 + backoff.Ticks, t0, backoff));
 }
 
+// ---- IconResolver per-source cache key must not collide when Safe() folds punctuation to '_' ----
+// Safe() maps every non-alphanumeric to '_', so "X-Bow", "X Bow" and "X.Bow" all fold to "X_Bow" and would
+// share ONE cache file (one item's icon shown for the others). SafeFile() appends a hash of the ORIGINAL value.
+{
+    Check("IconResolver.SafeFile: hyphen/space/dot that fold to the same Safe() stay distinct files",
+        IconResolver.SafeFile("X-Bow") != IconResolver.SafeFile("X Bow")
+        && IconResolver.SafeFile("X Bow") != IconResolver.SafeFile("X.Bow")
+        && IconResolver.SafeFile("X-Bow") != IconResolver.SafeFile("X.Bow"));
+    Check("IconResolver.SafeFile: apostrophe vs backtick variants stay distinct",
+        IconResolver.SafeFile("Mother's Embrace") != IconResolver.SafeFile("Mother`s Embrace"));
+    Check("IconResolver.SafeFile: identical input -> identical, stable file name",
+        IconResolver.SafeFile("Harlequin Crest") == IconResolver.SafeFile("Harlequin Crest"));
+    Check("IconResolver.SafeFile: keeps the readable stem and the .img extension",
+        IconResolver.SafeFile("X-Bow").StartsWith("X_Bow_") && IconResolver.SafeFile("X-Bow").EndsWith(".img"));
+}
+
 // ---- v0.39: stateful tooltip lines (durability / sell value / menu hints) stay out of PowerText ----
 // Item identity must be content-only: two captures of the SAME item differ only when the item differs.
 {

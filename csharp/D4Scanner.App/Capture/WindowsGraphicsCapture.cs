@@ -137,21 +137,26 @@ public static class WindowsGraphicsCapture
 
     internal static Task<System.Drawing.Bitmap?> SoftwareBitmapToBitmapAsync(SoftwareBitmap sb)
     {
-        // Convert SoftwareBitmap → pixel array → System.Drawing.Bitmap directly (no stream extension needed)
-        var converted = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        // Convert SoftwareBitmap → pixel array → System.Drawing.Bitmap directly (no stream extension needed).
+        // `using`: the converted native-backed bitmap must be freed on EVERY exit, including if CopyToBuffer /
+        // LockBits / Copy throws — a manual Dispose() leaked a full-frame native bitmap on the exception path.
+        using var converted = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
         int w = converted.PixelWidth, h = converted.PixelHeight;
         var buf = new byte[w * h * 4];
         converted.CopyToBuffer(buf.AsBuffer());
-        converted.Dispose();
         var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        var bits = bmp.LockBits(new System.Drawing.Rectangle(0, 0, w, h),
-            System.Drawing.Imaging.ImageLockMode.WriteOnly,
-            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        System.Runtime.InteropServices.Marshal.Copy(buf, 0, bits.Scan0, buf.Length);
-        bmp.UnlockBits(bits);
-        var mid = bmp.GetPixel(w / 2, h / 2);
-        if (mid.R < 5 && mid.G < 5 && mid.B < 5) { bmp.Dispose(); return Task.FromResult<System.Drawing.Bitmap?>(null); }
-        return Task.FromResult<System.Drawing.Bitmap?>(bmp);
+        try
+        {
+            var bits = bmp.LockBits(new System.Drawing.Rectangle(0, 0, w, h),
+                System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            System.Runtime.InteropServices.Marshal.Copy(buf, 0, bits.Scan0, buf.Length);
+            bmp.UnlockBits(bits);
+            var mid = bmp.GetPixel(w / 2, h / 2);
+            if (mid.R < 5 && mid.G < 5 && mid.B < 5) { bmp.Dispose(); return Task.FromResult<System.Drawing.Bitmap?>(null); }
+            return Task.FromResult<System.Drawing.Bitmap?>(bmp);
+        }
+        catch { bmp.Dispose(); throw; }   // don't leak the GDI bitmap if LockBits/Copy fails
     }
 
     static System.Drawing.Bitmap? GrabViaPrintWindow(IntPtr hwnd)

@@ -126,12 +126,17 @@ public static class CaptureSetup
     // Bump this constant whenever the DLL changes and the app will auto-reinstall on next launch.
     public const int CurrentShimVersion = 2;
 
-    /// <summary>Every location D4 could load saapi64.dll from, in probe order (BinDir, System32, game dir) —
-    /// the single source of truth for Installed/InstalledShimVersion/Uninstall so the three can't drift.</summary>
+    /// <summary>Every location D4 could load saapi64.dll from, in D4'S ACTUAL LOAD ORDER (game dir, then
+    /// System32, then our PATH bin) — the single source of truth for Installed/InstalledShimVersion/Uninstall
+    /// so the three can't drift. Order matters for InstalledShimVersion(), which reports the FIRST copy found:
+    /// it must be the copy D4 will actually load (the game-folder copy shadows System32/PATH), else a stale
+    /// game-dir DLL is masked by a healthy BinDir copy and the upgrade banner wrongly stays hidden.</summary>
     static List<string> ShimPaths()
     {
-        var places = new List<string> { Path.Combine(BinDir, "saapi64.dll"), Path.Combine(System32, "saapi64.dll") };
+        var places = new List<string>();
         var g = GameDir(); if (g != null) places.Add(Path.Combine(g, "saapi64.dll"));
+        places.Add(Path.Combine(System32, "saapi64.dll"));
+        places.Add(Path.Combine(BinDir, "saapi64.dll"));
         return places;
     }
 
@@ -155,7 +160,7 @@ public static class CaptureSetup
     /// Returns 0 for the versionless legacy DLL. Returns -1 if no DLL is installed.</summary>
     public static int InstalledShimVersion()
     {
-        foreach (var p in ShimPaths())   // BinDir + System32 + game dir — the same set Installed()/Uninstall() probe
+        foreach (var p in ShimPaths())   // game dir + System32 + BinDir (D4's load order) — same set Installed()/Uninstall() probe
         {
             if (!File.Exists(p)) continue;
             try
@@ -187,9 +192,6 @@ public static class CaptureSetup
         }
         return -1;   // no installed DLL found
     }
-
-    /// <summary>Cached installed shim version for display (populated by NeedsUpgrade()).</summary>
-    public static int? CachedInstalledVersion { get; private set; }
 
     /// <summary>True if an installed saapi64.dll is confirmed outdated. Returns false when the version
     /// cannot be determined (avoids a spurious banner when D4 locks the DLL or other load failures).</summary>
@@ -298,13 +300,29 @@ public static class CaptureSetup
         return (true, $"TTS capture removed:\n{string.Join("\n", removed)}");
     }
 
+    // Edit the User PATH directly in the registry (HKCU\Environment) instead of round-tripping through
+    // Environment.Get/SetEnvironmentVariable. The .NET getter EXPANDS %VAR% tokens and the setter always
+    // writes REG_SZ, so the round-trip would bake every %USERPROFILE%/%JAVA_HOME%/… reference to a literal
+    // and downgrade the value from REG_EXPAND_SZ — a lossy, persistent corruption of the user's PATH.
+    static (string raw, RegistryValueKind kind) ReadRawUserPath(RegistryKey key)
+    {
+        var raw = key.GetValue("Path", "", RegistryValueOptions.DoNotExpandEnvironmentNames) as string ?? "";
+        RegistryValueKind kind;
+        try { kind = key.GetValueKind("Path"); } catch { kind = RegistryValueKind.ExpandString; }
+        // Preserve the existing kind; default a new/absent PATH to ExpandString (Windows' native type for it).
+        if (kind != RegistryValueKind.ExpandString && kind != RegistryValueKind.String) kind = RegistryValueKind.ExpandString;
+        return (raw, kind);
+    }
+
     static void AddToUserPath(string dir)
     {
         try
         {
-            var p = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
-            if (!p.Split(';').Contains(dir, StringComparer.OrdinalIgnoreCase))
-                Environment.SetEnvironmentVariable("Path", p.TrimEnd(';') + ";" + dir, EnvironmentVariableTarget.User);
+            using var key = Registry.CurrentUser.OpenSubKey("Environment", writable: true) ?? Registry.CurrentUser.CreateSubKey("Environment");
+            var (raw, kind) = ReadRawUserPath(key);
+            if (raw.Split(';').Any(s => string.Equals(s.Trim(), dir.Trim(), StringComparison.OrdinalIgnoreCase))) return;
+            key.SetValue("Path", raw.TrimEnd(';') + ";" + dir, kind);
+            BroadcastEnvChange();
         }
         catch { }
     }
@@ -313,9 +331,28 @@ public static class CaptureSetup
     {
         try
         {
-            var p = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
-            var parts = p.Split(';').Where(s => !string.Equals(s.Trim(), dir.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
-            Environment.SetEnvironmentVariable("Path", string.Join(";", parts), EnvironmentVariableTarget.User);
+            using var key = Registry.CurrentUser.OpenSubKey("Environment", writable: true);
+            if (key == null) return;
+            var (raw, kind) = ReadRawUserPath(key);
+            if (raw.Length == 0) return;
+            var parts = raw.Split(';').Where(s => !string.Equals(s.Trim(), dir.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            key.SetValue("Path", string.Join(";", parts), kind);
+            BroadcastEnvChange();
+        }
+        catch { }
+    }
+
+    // Environment.SetEnvironmentVariable broadcast WM_SETTINGCHANGE for us; a raw registry write doesn't,
+    // so do it explicitly or new processes won't see the updated PATH until the next sign-in.
+    [System.Runtime.InteropServices.DllImport("user32", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
+
+    static void BroadcastEnvChange()
+    {
+        try
+        {
+            const uint WM_SETTINGCHANGE = 0x001A, SMTO_ABORTIFHUNG = 0x0002;
+            SendMessageTimeoutW((IntPtr)0xFFFF, WM_SETTINGCHANGE, IntPtr.Zero, "Environment", SMTO_ABORTIFHUNG, 5000, out _);
         }
         catch { }
     }

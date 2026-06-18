@@ -99,8 +99,6 @@ public sealed class OcrCaptureEngine : IDisposable
                 _oracle?.Observe(_lastPanel, DateTime.UtcNow.Ticks);
                 return;
             }
-            _lastHash = hash;
-
             // `using`: the SoftwareBitmap is consumed by RecognizeAsync and not referenced afterward.
             using var sb = await BitmapToSoftwareBitmapAsync(bmp).ConfigureAwait(false);
             if (sb == null) return;
@@ -108,6 +106,10 @@ public sealed class OcrCaptureEngine : IDisposable
             if (engine == null) return;
             var result = await engine.RecognizeAsync(sb).AsTask().ConfigureAwait(false);
             if (result == null) return;
+            // Commit the dedup hash ONLY after OCR succeeds. If a transient decode/recognize failure (sb/engine/
+            // result == null) committed it first, the next tick on the SAME static frame would hit the hash-skip
+            // path and never re-OCR it — silently dropping a held tooltip until the on-screen pixels change.
+            _lastHash = hash;
 
             var lines = result.Lines.Select(l => l.Text).ToList();
             var panel = PanelOracle.Detect(lines);   // computed ONCE — fed to the oracle, the items, AND the diag
