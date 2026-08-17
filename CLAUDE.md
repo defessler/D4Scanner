@@ -1,194 +1,198 @@
-# CLAUDE.md — D4Scanner contributor guide
+# D4Scanner Contributor Guide
 
-D4Scanner is a live Diablo IV build tracker: a WPF desktop app (.NET 8, C#) that reads
-the game's screen-reader (TTS) output and optionally OCRs the game window, comparing the
-player's equipped gear against a target build imported from Maxroll.
+D4Scanner is a Windows-only WPF desktop app (.NET 8, C#) that tracks a Diablo IV
+character's equipped gear against a target build imported from Maxroll, then renders
+it as a paper doll plus a prioritised "do this next" plan. It never reads game memory.
+Gear arrives two ways: a signed TTS shim (`dll/saapi64.cpp`) that makes D4's screen
+reader append tooltips to `%LOCALAPPDATA%\d4scanner\d4_tts.log`, and an optional local
+`Windows.Media.Ocr` scan of the game window.
 
-## Project-specific slash commands
+Repo state when this was written: branch `main`, HEAD `dcb0898` (v0.105.0), csproj
+`<Version>0.105.0</Version>`.
 
-These live in `.claude/commands/` and are available in any Claude Code session in this repo:
+## Commands
 
-| Command | What it does |
-|---|---|
-| `/build` | Build the app (`--no-incremental -c Release`) and report errors / unexpected warnings |
-| `/test` | Run the Core test suite (~624 assertions); report pass/fail and any failing names |
-| `/ship` | Full release workflow: build → test → bump version → commit → tag → push → CI → release notes |
-| `/parse-check` | Feed raw TTS tooltip lines through GearParser and show the parsed Item fields |
-| `/diff-report` | Run the CLI diff against the current target + live log without launching the WPF app |
-| `/add-setting` | Step-by-step guide to adding a new persisted setting (field + load + save + UI toggle) |
-| `/add-activity` | Step-by-step guide to adding a new recommended activity to the guidance system |
+There is no `.sln`. Every command targets a project directory. All of them run from
+the repo root.
 
-## Build & test — run these after every change
+- Build - `dotnet build csharp/D4Scanner.App --no-incremental -c Release`. Verified:
+  0 warnings, 0 errors. Treat any warning out of a `D4Scanner.*` project as a failure.
+  CascLib's `SYSLIB0014` is already suppressed by
+  `csharp/third_party/Directory.Build.props`, scoped to `third_party/` only.
+- Test - `dotnet run --project csharp/D4Scanner.Tests`. Verified: 1029 assertions pass,
+  exit 0. CI runs the same command with `-c Release`.
+- Headless diff - `dotnet run --project csharp/D4Scanner.Cli -- --target <t.json>
+  [--log <l>] [--watch] [--all] [--maxroll <url>] [--profile <n>] [--save <out.json>]
+  [--live <live.json>]`. Switch names come from the arg loop in `Cli/Program.cs`.
+- Publish locally - copy the exact command from the "Publish single-file self-contained
+  exe" step of `.github/workflows/release.yml`. Leaving off
+  `-p:IncludeNativeLibrariesForSelfExtract=true` gives you a different exe than ships.
+- Release - `git tag v0.X.Y && git push origin v0.X.Y`. release.yml fires on any `v*`
+  tag, rebuilds and self-signs the shim, publishes, and creates the GitHub release.
 
-```powershell
-# Build (must be error-free before shipping)
-dotnet build csharp/D4Scanner.App --no-incremental -c Release
+Bump `<Version>` in `csharp/D4Scanner.App/D4Scanner.App.csproj` before tagging. CI
+overrides it with `-p:Version` from the tag. The csproj value only affects local
+builds. Keeping the two in sync is still what everyone reads.
 
-# Tests (~624 assertions; must all pass)
-dotnet run --project csharp/D4Scanner.Tests
+Seven project slash commands live in `.claude/commands/`: `/build`, `/test`, `/ship`,
+`/parse-check`, `/diff-report`, `/add-setting`, and `/add-activity`. `/ship` is where
+the release workflow is actually written down. `/parse-check` feeds raw TTS lines
+through `GearParser` so you can see the parsed fields. Their step lists still hold up.
+What's stale is the inline line numbers, the 92-assertion figure in `test.md`, and
+`add-setting.md`'s UI step, which predates the v0.43.0 draft model described under
+Gotchas.
 
-# Publish local exe (use to smoke-test before a release commit)
-dotnet publish csharp/D4Scanner.App -c Release -r win-x64 --self-contained \
-  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
-  -p:PublishReadyToRun=true -o publish
-```
+## How work lands
 
-The build should be **warning-free**. The vendored CascLib emits `SYSLIB0014`
-(obsolete `WebRequest`); that's suppressed via `csharp/third_party/Directory.Build.props`
-(scoped to `third_party/` only, so our own code still flags the obsolete API). If you see
-any warning from `D4Scanner.*`, fix it — don't suppress it.
+Changes go on a side branch and merge into `main` with a `Merge: <summary> (vX.Y.Z)`
+commit. `CHANGELOG.md` is the release record and gets its own `docs:` commit. The root
+`RELEASE_NOTES_v0.*.md` files stop at v0.81.0 and are abandoned. Please don't start a
+new one. `AUDIT-2026-06.md` (5-lens, file:line grounded) and `TODO.md` are the live
+backlog, worth checking before proposing work. `docs/contributing.md` lists the
+files in the tree that will mislead you, `docs/architecture.md` first among them.
 
-Releases are built and published automatically by GitHub Actions on every `v*` tag push:
-```powershell
-git tag v0.X.Y && git push origin v0.X.Y   # CI does the rest
-```
-Always bump `<Version>` in `csharp/D4Scanner.App/D4Scanner.App.csproj` before tagging.
+## Architecture
 
-## Repository layout
+- `D4Scanner.Core` targets plain `net8.0` and has no WPF reference. Keep it that way.
+  New parsing, diff, scoring, or guidance logic belongs there so the assertion console
+  can test it headlessly.
+- `MainWindow.xaml.cs` is 6,033 lines holding the whole UI by design. That's accepted
+  here, not debt waiting to be split.
+- `D4Scanner.Cli` is the headless verifier, `D4Scanner.Tests` the assertion console.
+  `csharp/tools/{IconIndexGen,MakeIcon}` are one-off consoles. `csharp/third_party/CascLib`
+  is vendored. Leave it alone.
+- The real design rationale lives in `/// <summary>` blocks in Core, not in the .md
+  files. `LogWatcher.ClassifyContext`, `LiveGearResolver`, `Tombstones`, `PanelOracle`,
+  `UpgradePath`, `LogWatcher.LatestPerSlot`, and `CaptureSetup.InstalledShimVersion`
+  each record which live bug forced their shape. `ClassifyContext` is the most
+  bug-forced of them. Its summary carries a bias note you'll want before you touch it.
+  Read the summary before changing the method.
+- `Core/AppPaths.cs` is the single source of truth for on-disk locations
+  (`%LOCALAPPDATA%\d4scanner` and its `cache`). Go through it rather than hand-rolling
+  `Environment.GetFolderPath`.
+- Two palettes exist. `Theme.xaml` x:Keys (Bg, Ink, Soft, Edge, Green, Red, Accent,
+  Amber, Surface, Primary, plus rarity keys) drive `{StaticResource}` in
+  `MainWindow.xaml`. The `static readonly Brush` fields at `MainWindow.xaml.cs:18-32`
+  drive everything built in code. `Card` and `Gold` exist only in the C# set. Almost
+  all UI is code-built, which makes those fields the ones you usually want.
 
-```
-csharp/
-  D4Scanner.Core/         business logic (no UI — fully headless-testable)
-    Models.cs               Item, Affix, LiveBuild, TargetBuild, UiContext, ItemSource
-    GearParser.cs           TTS log lines → Item objects; also ParseTooltipLines() for OCR
-    LogWatcher.cs           tails d4_tts.log; emits LiveBuild; Diagnose() capture-health report
-    LiveGearResolver.cs     live-gear merge (Tts>Ocr) + inventory dedup/merge + weapon de-dup
-    Tombstones.cs           account-wide name|slot record of items the player cleared (resurrect-proof)
-    DiffEngine.cs           HAVE-vs-NEED per slot, value-aware scoring; Greater-Affix helpers
-    UpgradeScorer.cs        scores owned items vs the build (IsUpgrade/RawUpgrade/GA/salvage)
-    Verdicts.cs             per-item verdict: Equip/Fixable/KeepSalvage/KeepDupe/Stash/Junk + action
-    UpgradePath.cs          per-slot ordered crafting plan (temper→enchant→masterwork→socket→imprint)
-    BuildGuide.cs           prioritised "Do Next" steps (FIND/GET/IMPROVE/TEMPER/…)
-    Substitutes.cs          best-owned stand-ins + Now/Better/Best ladder
-    Activities.cs           farming/crafting recommendations (reads SeasonPack)
-    InfernalHordesAdvisor.cs  Hordes-spoil heuristic based on build gaps (reads SeasonPack)
-    SeasonPack.cs           season-volatile guidance data (Assets/season_pack.json + local override)
-    LootFilter.cs           export: markdown checklist + D4Companion JSON
-    GameDataIcons.cs        real item icons from the local D4 install (CASC + BCn decode)
-    IconResolver.cs         multi-source icon resolver (game-data → GitHub CDN → silhouette)
-    MaxrollImporter.cs      Maxroll planner URL → TargetBuild
-    Updater.cs              GitHub release check + in-place staged-update mechanism
-  D4Scanner.App/            WPF front-end
-    MainWindow.xaml(.cs)    the entire UI (paper doll, detail panel, modals, settings)
-    Theme.xaml              palette + control styles (colour names: Bg, Card, Ink, Gold, …)
-    App.xaml(.cs)           startup; applies staged update before the window opens
-    CaptureSetup.cs         TTS shim install/uninstall (saapi64.dll + cert + PATH)
-    Capture/
-      WindowsGraphicsCapture.cs  WGC frame grab (exclusive fullscreen + borderless)
-      OcrCaptureEngine.cs        periodic OCR scan → LiveBuild; also auto-saves portrait
-  D4Scanner.Cli/            console verify/watch (headless)
-  D4Scanner.Tests/          dependency-free assertion console (run with dotnet run)
-dll/                        saapi64.cpp — the TTS shim source + build scripts
-```
+Per-file map of `D4Scanner.Core` and the TTS/OCR capture-channel walkthrough:
+`docs/contributing.md`. Short version: no Vision LLM and no Anthropic API anywhere
+under `csharp/`, and `LiveGearResolver.Merge` lets Tts win over Ocr per slot.
 
-## Architecture decisions
+### Where a common change goes
 
-### Two capture channels — TTS and OCR, independently toggled
-- **TTS** (`LogWatcher`): reads `%LOCALAPPDATA%\d4scanner\d4_tts.log`, stamped
-  `ItemSource.Tts`. Most accurate (exact text); requires the DLL shim + D4 accessibility settings.
-- **OCR** (`OcrCaptureEngine`): grabs the game window via `WindowsGraphicsCapture`
-  (falls back to `PrintWindow`), runs `Windows.Media.Ocr`, feeds tooltip blocks through
-  `GearParser.ParseTooltipLines`. No DLL, no API key, no network. Stamped `ItemSource.Ocr`.
-- **Merge rule** in `MergeGear()`: Tts wins over Ocr per slot-basename. TTS data for a
-  slot is never replaced by OCR data for the same slot.
-- **No Vision LLM / no Anthropic API** — the app is fully offline for all capture.
-  `VisionCapture.cs` was deleted in v0.8.0; do not re-add it.
-
-### Core is UI-free
-`D4Scanner.Core` has no WPF dependency. Keep it that way — all UI lives in `D4Scanner.App`.
-New parsing, diff, or guidance logic goes in Core so it can be tested headlessly.
-
-### Data flow
-```
-d4_tts.log → LogWatcher.Feed → Item (Source=Tts) → Updated event
-game window → OcrCaptureEngine.ScanCoreAsync → Item (Source=Ocr) → Updated event
-                     ↓
-         MainWindow.OnLiveUpdate → MergeGear → _live (LiveBuild) → Render()
-```
-
-### Settings persistence
-`app.json` in `%LOCALAPPDATA%\d4scanner\`. Flat `Dictionary<string, string>` serialized
-as JSON. Booleans use `"1"` / `"0"`; doubles use `InvariantCulture`. Pattern to add a
-new persisted setting (copy the `_debugMode` pattern in `LoadSettings` / `SaveSettings`):
-```csharp
-// LoadSettings: add
-if (s.TryGetValue("myKey", out var v)) _myField = v == "1";
-
-// SaveSettings: add to the dict
-["myKey"] = _myField ? "1" : "0"
-```
-
-### Adding a Settings toggle (UI pattern)
-Copy the debug-toggle block in `ShowSettings()` (~line 1410). It's a `DockPanel` with a
-`CheckBox` (docked left) + a `StackPanel` of `TBs(title)` / `TB(description)`. The
-`Checked`/`Unchecked` handlers set the field, call `SaveSettings()`, then `Render()` or
-`StartWatching()` as appropriate.
-
-### Render cycle
-`Render()` rebuilds the entire `Body` StackPanel from scratch on every call. It is
-idempotent and cheap enough to call after any state change. Do not cache partial renders.
-
-### Text display rules
-- **Never clip text with `TextTrimming.CharacterEllipsis` or `MaxHeight`** unless the
-  element is inside a deliberate scroll container or has specific design treatment.
-- Use `TextWrapping = TextWrapping.Wrap` and let cell height expand naturally.
-- Reduce font size if something needs to fit a fixed space; never truncate.
-
-### Colours
-Use the named brushes from `Theme.xaml` wherever possible (`Gold`, `Card`, `Ink`, `Soft`,
-`Faint`, `Edge`, `Green`, `Red`, …). The palette is **cool dark near-black with selective
-amber accent** — do not add warm brown or heavy gold fills to large areas.
-
-## Key files for common tasks
-
-| Task | File |
-|---|---|
-| Parse a new item field from TTS | `GearParser.cs` — add regex + `ParseBlock` branch |
-| Add a new affix / slot type | `GearParser.cs` — `TypeSlot`, `Rarities`, `LooksLikeItem` |
-| Change diff scoring | `DiffEngine.cs` — `ScoreSlot`, `AffixMet`, `WeaponTypeMatch` |
-| Add a "Do Next" step verb | `BuildGuide.cs` — `Steps()` |
-| Add a recommended activity | `Activities.cs` — `Recommend()` |
-| Add a UI panel / modal | `MainWindow.xaml.cs` — follow `ToggleHelp()` or `ShowSettings()` pattern |
-| Add a settings key | `LoadSettings()` + `SaveSettings()` + a backing field |
-| Add a test assertion | `csharp/D4Scanner.Tests/Program.cs` — add `Check()` / `Eq()` calls |
-
-## Season-specific notes
-
-- **Game-mechanics ground truth lives in `docs/d4-gearing-knowledge.md`** (researched June 2026,
-  Season 13 / Lord of Hatred expansion). Read it before touching guidance logic (`BuildGuide`,
-  `Activities`, `InfernalHordesAdvisor`, `Substitutes`, scoring) — its §8 gap table lists which
-  encoded assumptions are stale, and its tripwire list (IP 750/800 caps, Torment I–IV, 12-rank
-  masterworking, 2 temper slots, fixed unique affixes, …) flags pre-2026 data that must not be
-  (re-)introduced.
-- Item types `seal`/`charm`/`rune` in `GearParser.TypeSlot` were added for Season 8 but still
-  apply: seals/charms are now the permanent **Talisman** system's items (Lord of Hatred), runes
-  are permanent since Vessel of Hatred. These pass `LooksLikeItem` without an ItemPower line.
-  The Item Quality score (`ReQuality`, `"50 +50/25 Quality"` / `"50 (+30/25) Quality"`) is the
-  masterworking **Quality 0–25** system (Season 11 rework).
-- TTS format changes each season — the `GearParser` test against `sample_tts.log` is the
-  primary regression net. Update the fixture when the live format changes.
+- Parse a new TTS field - `GearParser.cs`, a regex plus a branch in `ParseBlock`
+  (`:291`).
+- Add an item type or slot - `GearParser.TypeSlot`, `Rarities`, `LooksLikeItem`. Read
+  the charm gotcha below first.
+- Change diff scoring - `DiffEngine.ScoreSlot` (`:154`), with `AffixMet` (`:337`) and
+  `WeaponTypeMatch` (`:354`) alongside it.
+- Add a "Do Next" verb - `BuildGuide.Steps()` (`:26`).
+- Add a recommended activity - `Activities.Recommend()` (`:18`). The copy usually
+  belongs in `Assets/season_pack.json` rather than in code.
+- Add a settings key - four sites, listed in the Settings gotchas below.
+- Add a test assertion - `csharp/D4Scanner.Tests/Program.cs`, under a
+  `// ---- Section ----` banner.
 
 ## Gotchas
 
-- `LogWatcher.Poll` and `BuildFromFile` clear accumulated gear on a `=== d4scanner tts shim
-  attached` marker so a prior session's loadout doesn't linger on the HAVE side after a relaunch.
-- `LatestPerSlot` deduplicates by `(name, SlotPosition)` for character-panel items and by
-  `name` only for bag hovers. Multi-ring / multi-weapon slots require `SlotPosition > 0`.
-  Same-position ties break by recency (LogTimeUtc/LastScannedTicks), never alphabetically.
-- `ClassifyContext` is fail-safe (v0.38): a bare standalone `EQUIPPED` voice line is NOT worn
-  evidence — D4 voices it before most bag/stash/vendor hover names too. Worn needs a slot header
-  with a Character/unknown panel, the Character panel itself, or an `Unequip` action tail. Items
-  parsed at a poll-chunk edge wait in `LogWatcher._pending` until their action tail arrives (~2
-  quiet polls force the safe default). Bare item-type words (Helm/Ring/Boots/…) are deliberately
-  NOT `PanelMarkers` — the Purveyor's gamble categories voice exactly those words, which used to
-  flip the panel Vendor→Character and stamp vendor hovers as worn (the v0.37 vendor-gear leak).
-- `StartWatching()` is idempotent — it disposes and recreates all watchers. Re-call it
-  when any capture setting changes (same pattern as `PickLog()`).
-- The D3D/WGC capture path requires `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` in
-  `D4Scanner.App.csproj` and `net8.0-windows10.0.19041.0` as the TFM. `IsBorderRequired`
-  is Win11-only — it's set via reflection so the SDK 19041 TFM compiles.
-- `InstalledShimVersion()` in `CaptureSetup` byte-scans the PE for `"SA_GetVersion"`.
-  If the scan succeeds but `LoadLibraryExW` fails, it returns `CurrentShimVersion` to
-  avoid a false upgrade prompt.
-- When updating the version: bump `<Version>` in `csharp/D4Scanner.App/D4Scanner.App.csproj`,
-  commit, tag, push. CI injects the tag into the published assembly.
+Each of these cost someone a debugging session.
+
+- `ClassifyContext` treats a bare standalone `EQUIPPED` voice line as no evidence at
+  all that an item is worn (`Core/LogWatcher.cs:373-378`). D4 voices that line
+  immediately before the name of nearly every comparison-enabled bag, stash, or vendor
+  hover, because it labels the comparison overlay rather than the hovered item. Worn
+  needs a slot header with a positive Character panel, the Character panel itself, an
+  `Unequip` action tail, or the `PanelOracle` rescue. With nothing corroborating, the
+  default is not-equipped. A missed genuine item self-corrects on the next
+  character-panel hover. A vendor item stamped as worn silently replaces real gear and
+  persists, which is the v0.37 leak the v0.38 rewrite fixed. Items whose tooltip ends at
+  a poll-chunk edge wait in `LogWatcher._pending` (`:36-42`, `:258-280`) until the
+  action tail arrives, or until a couple of quiet polls force the safe default.
+- Bare item-type words (Helm, Ring, Boots) are deliberately absent from `PanelMarkers`.
+  The Purveyor of Curiosities voices exactly those as gamble categories, which used to
+  flip the panel Vendor to Character and stamp vendor hovers as worn. That's the other
+  half of the same v0.38 fix. Pinned by a regression test at
+  `csharp/D4Scanner.Tests/Program.cs:3069` onward.
+- Settings are defer-everything since v0.43.0. Every control in `ShowSettings()`
+  (`MainWindow.xaml.cs:2384`) edits a `SettingsDraft`. Nothing applies until Save.
+  Revert re-seeds the draft from live state. X, backdrop, and Esc all discard it. A
+  new draftable field also has to be registered in `NewDraft()` at `:2375`, whose
+  comment records that a missed site already left Revert stale once.
+- Persistence is a separate contract from that draft. Values live in `app.json` under
+  `%LOCALAPPDATA%\d4scanner` as a flat `Dictionary<string, string>` serialized to JSON.
+  Bools go in as `"1"` or `"0"`. Doubles go through `CultureInfo.InvariantCulture` on
+  both the write and the parse, which keeps a comma-decimal locale from corrupting
+  `zoom` or `winW`. So a new setting is four edits: a backing field, a `TryGetValue`
+  read in `LoadSettings` (`:505-546`), a key in the `SaveSettings` dictionary (`:565`),
+  and a `NewDraft()` entry if it's user-editable.
+- `SaveSettings` writes `SettingsPath + ".tmp"` then `File.Move(..., overwrite: true)`
+  (`:566-568`). That's atomic on purpose. Don't reduce it to a direct `WriteAllText`.
+- No text clipping anywhere in the UI. That's an app-wide rule from v0.8.2. The tree
+  still honours it: `TextTrimming` appears nowhere under `csharp/`. Use
+  `TextWrapping.Wrap` and let the height grow. Reduce the font size when something has
+  to fit a fixed space. Don't truncate. A bare `MaxHeight` outside a deliberate
+  scroll container counts as clipping too. The last literal violation was the status
+  bar, fixed in v0.45.0 (`AUDIT-2026-06.md`, item C3).
+- `Render()` (`:1478`) sets `_hoverPopup.IsOpen = false` first, ahead of every early
+  return. A background TTS or OCR update mid-hover otherwise strands the popup pinned
+  to a detached cell. `ShowSettings()` carries the mirror constraint at `:2386`, since
+  the hover card is a transparent always-on-top Popup HWND that would float over the
+  modal and swallow the close click.
+- `LatestPerSlot`'s tiebreak is recency, never alphabet. `Core/LogWatcher.cs:516`
+  records the live failure: with an alphabetical tiebreak, one misclassified
+  "Adventurer's ..." owned a one-cap slot for a whole session because the genuine item,
+  re-hovered later, still lost the A-vs-C compare. Per-slot caps are ring 2, weapon 4,
+  charm 6, everything else 1.
+- Charms are detected by the anchored `ReCharmType` regex, not a `TypeSlot` key.
+  `Core/GearParser.cs:27` and `:110` explain why: Horadric Cube lines like "1x Set
+  Charm" would otherwise manufacture a phantom charm out of a crafting panel. Re-adding
+  "Set Charm" to `TypeSlot` reopens that bug. `seal`, `charm`, and `rune` all pass
+  `LooksLikeItem` without an ItemPower line.
+- `PanelOracle.PanelAt` is fail-closed. A non-positive tick, or anything outside the
+  ~25s tolerance, returns null and never the most recent panel. One oracle per
+  `StartWatching()` call, shared by that call's TTS and OCR watchers, never static, so
+  a stale `Observe` from a disposed engine can't reach the new watcher.
+- The TTS watcher doesn't replay the whole log by default. Once any character profile
+  exists it starts at `LogWatcher.LastSessionStartPos(_log)`
+  (`MainWindow.xaml.cs:858`), because logs reach 18MB and a full replay measured about
+  4s of parse. `_replayFromZero` and `_logSkipToPos` are the overrides.
+- `LogWatcher` clears all accumulated gear on a `=== d4scanner tts shim attached`
+  marker, on the live path and in `BuildFromLines`. A prior session's loadout can't
+  linger on the HAVE side that way.
+- `CaptureSetup.ShimPaths()` is ordered game dir, System32, PATH bin dir, matching D4's
+  own load order. `InstalledShimVersion()` reports the first copy it finds. Reordering
+  that list silently changes which shim the upgrade banner sees. When the PE byte-scan
+  for `SA_GetVersion` succeeds but `LoadLibraryExW` fails, it returns
+  `CurrentShimVersion` rather than 0, which would re-trigger the banner falsely.
+- `dll/saapi64.dll` and `dll/d4scanner-tts.cer` are committed binaries and load-bearing.
+  The App csproj embeds them as resources. release.yml falls back to `git checkout --`
+  on both when the runner-side rebuild fails.
+- `.gitignore` has a blanket `*.log` with one `!samples/*.log` escape. A new TTS fixture
+  placed anywhere but `samples/` is silently untracked. CI then passes against a fixture
+  that isn't in the repo.
+- A Transfigured item is a terminal state. Temper, enchant, masterwork, socket, and
+  imprint are all impossible there. `UpgradePath.ForSlot` returns one LOCKED note
+  rather than an empty list, because empty reads as "already perfect".
+- Rare must not equal the amber UI accent `#D4A730`. `RRare` is `#ECE07C` so that loot
+  reads apart from chrome (`MainWindow.xaml.cs:34`).
+
+## Conventions, as measured
+
+No `.editorconfig` and no linter, so these come from the tree itself.
+
+- Indentation - 4 spaces, zero tabs. `rg '^\t' -g '*.cs' csharp/` returns nothing.
+- Line endings - LF, on a Windows checkout with no `.gitattributes`. Keep new files LF.
+- Naming - PascalCase for types and members, leading-underscore camelCase for private
+  instance fields (`_watcher`, `_pending`, `_settingsDraft`).
+- Line length - no cap, and the long tail is deliberate. Median 51, p95 121, max 4,353.
+  `MainWindow.xaml.cs:565` packs the entire settings dictionary onto one line on
+  purpose. Aim under roughly 120 for new code. Don't reflow existing long lines.
+- All four projects set `Nullable`, `ImplicitUsings`, and `LangVersion latest`. Only
+  `D4Scanner.App` sets `AllowUnsafeBlocks` and the `net8.0-windows10.0.19041.0` TFM,
+  both required by the D3D/WGC capture path. `IsBorderRequired` is Win11-only and gets
+  set through reflection so that SDK 19041 TFM still compiles.
+- Tests are top-level statements with two local helpers, `Check(name, cond)` and
+  `Eq<T>(name, expected, actual)`. No xUnit, no NUnit, no attributes. Append new
+  assertions to the same file under a `// ---- Section ----` banner.
