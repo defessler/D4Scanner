@@ -3,8 +3,7 @@
 Reference material moved out of `CLAUDE.md` on 2026-08-16 to keep the standing
 load small. `CLAUDE.md` keeps the commands, the architecture rules, the gotchas,
 and the measured conventions. This page holds the parts you look up rather than
-need on every turn. Same maintenance rule as `CLAUDE.md`: if a claim here stops
-being true, fix it here.
+need on every turn. If a claim here stops being true, fix it here.
 
 ## What the Core files are for
 

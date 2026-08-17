@@ -7,9 +7,6 @@ Gear arrives two ways: a signed TTS shim (`dll/saapi64.cpp`) that makes D4's scr
 reader append tooltips to `%LOCALAPPDATA%\d4scanner\d4_tts.log`, and an optional local
 `Windows.Media.Ocr` scan of the game window.
 
-Repo state when this was written: branch `main`, HEAD `dcb0898` (v0.105.0), csproj
-`<Version>0.105.0</Version>`.
-
 ## Commands
 
 There is no `.sln`. Every command targets a project directory. All of them run from
@@ -37,10 +34,7 @@ builds. Keeping the two in sync is still what everyone reads.
 Seven project slash commands live in `.claude/commands/`: `/build`, `/test`, `/ship`,
 `/parse-check`, `/diff-report`, `/add-setting`, and `/add-activity`. `/ship` is where
 the release workflow is actually written down. `/parse-check` feeds raw TTS lines
-through `GearParser` so you can see the parsed fields. Their step lists still hold up.
-What's stale is the inline line numbers, the 92-assertion figure in `test.md`, and
-`add-setting.md`'s UI step, which predates the v0.43.0 draft model described under
-Gotchas.
+through `GearParser` so you can see the parsed fields.
 
 ## How work lands
 
